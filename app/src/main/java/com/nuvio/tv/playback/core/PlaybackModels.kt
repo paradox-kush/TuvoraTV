@@ -952,6 +952,12 @@ sealed interface PlaybackCommand {
             require(rate.isFinite() && rate in 0.25f..4f) { "Playback rate must be between 0.25 and 4" }
         }
     }
+    /** Runtime demuxer cache sizes for live pause / rewind (mpv only; other engines ignore it). */
+    data class SetLiveCacheBudget(val maxBytes: Long, val maxBackBytes: Long, val cacheSecs: Long) : PlaybackCommand {
+        init {
+            require(maxBytes > 0 && maxBackBytes >= 0 && cacheSecs >= 0) { "Live cache budget must be positive (cacheSecs 0 = restore the plan's own)" }
+        }
+    }
     data class SelectAudioTrack(val trackId: PlaybackTrackId) : PlaybackCommand
     data class SelectSubtitleTrack(val trackId: PlaybackTrackId) : PlaybackCommand
     data object DisableSubtitles : PlaybackCommand
@@ -1047,6 +1053,9 @@ data class PlaybackSnapshot(
     val statusCode: PlaybackStatusCode? = null,
     val previewAvailability: PreviewAvailability = PreviewAvailability.Unknown,
     val streamAvailability: StreamAvailability = StreamAvailability.Unknown,
+    /** Live time-shift window the engine reports (mpv); null when it has none. */
+    val seekableStartMs: Long? = null,
+    val seekableEndMs: Long? = null,
 )
 
 enum class PlaybackStatusCode { RESOLVING, STARTING, BUFFERING, RECONNECTING, HANDING_OFF, STOPPED }

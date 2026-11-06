@@ -12,6 +12,9 @@ internal fun PlayerRuntimeController.maybeAutoSwitchInternalPlayerOnStartupError
     detailedError: String,
     allowEngineFailover: Boolean
 ): Boolean {
+    // A single-use replay link (Stalker archive) is spent: the other engine would open the same URL again.
+    // End with Retry (a fresh mint) instead - this covers an mpv init failure falling back to Exo.
+    if (failSingleUseCatchUp(startupHang = false)) return true
     if (!allowEngineFailover) return false
     if (!autoSwitchInternalPlayerOnErrorEnabled) return false
     if (startupEngineFailoverTriggered) return false

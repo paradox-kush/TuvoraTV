@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.player.clean.live
 
 import androidx.compose.ui.input.key.Key
+import com.nuvio.tv.core.contracts.LivePausePhase
 
 /**
  * F28: every decision of the TV live overlay, in one place, without Compose.
@@ -32,6 +33,10 @@ internal object LiveControlsPolicy {
         ZAP_BACK,
         OPEN_CHANNEL_MENU,
         OPEN_CHANNEL_LIST,
+
+        /** Time-shifted with the controls hidden: LEFT / RIGHT scrub inside the saved window. */
+        SCRUB_BACK,
+        SCRUB_FORWARD,
     }
 
     private val directional = setOf(
@@ -57,6 +62,8 @@ internal object LiveControlsPolicy {
          * that hid the channel name mid-zap and left only a spinner.
          */
         zapReveal: Boolean = false,
+        /** Time-shifted (live pause / rewind): the saved window can be scrubbed. */
+        scrubbable: Boolean = false,
     ): KeyAction {
         if (panelOpen) return KeyAction.PASS
         val ours = key in directional || key in media || key in channelKeys || key == Key.Menu
@@ -73,6 +80,10 @@ internal object LiveControlsPolicy {
                 Key.ChannelDown -> KeyAction.ZAP_PREVIOUS
                 else -> KeyAction.ZAP_BACK
             }
+        }
+        if (scrubbable && !controlsVisible && (key == Key.DirectionLeft || key == Key.DirectionRight)) {
+            if (!isKeyDown) return KeyAction.CONSUME
+            return if (key == Key.DirectionLeft) KeyAction.SCRUB_BACK else KeyAction.SCRUB_FORWARD
         }
         if (key == Key.DirectionLeft && hasLineup && !controlsVisible) {
             return if (isKeyDown && !isRepeat) KeyAction.OPEN_CHANNEL_LIST else KeyAction.CONSUME
@@ -122,7 +133,56 @@ internal object LiveControlsPolicy {
     fun revealForTrouble(failed: Boolean, reconnecting: Boolean, controlsVisible: Boolean, panelOpen: Boolean): Boolean =
         (failed || reconnecting) && !controlsVisible && !panelOpen
 
-    enum class Status { LIVE, PAUSED, TUNING, RECONNECTING, FAILED }
+    enum class Status { LIVE, PAUSED, TUNING, RECONNECTING, FAILED, PREPARING, SHIFTED }
+
+    /** Live pause / rewind takes over the badge while it is in play; otherwise the base status stands. */
+    fun withLivePause(base: Status, phase: LivePausePhase, paused: Boolean): Status = when (phase) {
+        LivePausePhase.OFF -> base
+        LivePausePhase.PREPARING -> Status.PREPARING
+        LivePausePhase.SHIFTED -> if (paused) Status.PAUSED else Status.SHIFTED
+        LivePausePhase.FAILED -> Status.PAUSED
+    }
+
+    /** Only a shifted stream has a saved window to scrub (Preparing has none yet, Failed lost it). */
+    fun isScrubbable(phase: LivePausePhase): Boolean = phase == LivePausePhase.SHIFTED
+
+    /** While the saved part is in play its own state is the truth; the session may be stopped under it. */
+    fun effectivePaused(phase: LivePausePhase, controlPaused: Boolean, hostPaused: Boolean): Boolean =
+        if (phase != LivePausePhase.OFF) controlPaused else hostPaused
+
+    enum class ChipLabel { BEHIND, GO_LIVE }
+
+    /** The chip names the offset ("-00:00 Live") from the moment a shift begins; Failed offers the way back. */
+    fun chipLabel(phase: LivePausePhase): ChipLabel? = when (phase) {
+        LivePausePhase.OFF -> null
+        LivePausePhase.PREPARING, LivePausePhase.SHIFTED -> ChipLabel.BEHIND
+        LivePausePhase.FAILED -> ChipLabel.GO_LIVE
+    }
+
+    enum class ScrubDirection { BACK, FORWARD }
+
+    /** 10 s a press; a held key speeds up (30 s, then 60 s). */
+    fun scrubStepMs(repeatCount: Int): Long = when {
+        repeatCount >= 8 -> 60_000L
+        repeatCount >= 3 -> 30_000L
+        else -> 10_000L
+    }
+
+    /** Where a scrub lands: always inside the saved window. */
+    fun scrubTarget(positionMs: Long, windowStartMs: Long, windowEndMs: Long, direction: ScrubDirection, stepMs: Long): Long {
+        val raw = if (direction == ScrubDirection.BACK) positionMs - stepMs else positionMs + stepMs
+        return raw.coerceIn(windowStartMs, maxOf(windowStartMs, windowEndMs))
+    }
+
+    /** "−03:12" (or "−1:03:12" past an hour): how far behind live the viewer is. */
+    fun behindLabel(behindMs: Long): String {
+        val total = (behindMs.coerceAtLeast(0L) + 500L) / 1000L
+        val h = total / 3600
+        val m = (total % 3600) / 60
+        val s = total % 60
+        val ss = s.toString().padStart(2, '0')
+        return if (h > 0) "\u2212$h:${m.toString().padStart(2, '0')}:$ss" else "\u2212${m.toString().padStart(2, '0')}:$ss"
+    }
 
     /** Tuning first (an error may still belong to the channel being left), then failure. */
     fun status(tuning: Boolean, reconnecting: Boolean, paused: Boolean, failed: Boolean): Status = when {

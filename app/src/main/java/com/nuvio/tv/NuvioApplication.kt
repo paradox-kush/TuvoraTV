@@ -86,6 +86,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore
     @Inject lateinit var deviceClaimCoordinator: com.nuvio.tv.core.iptv.DeviceClaimCoordinator
     @Inject lateinit var recordingsPort: com.nuvio.tv.core.recordings.api.RecordingsPort
+    @Inject lateinit var calendarComingUpContributor: com.nuvio.tv.core.calendar.CalendarComingUpContributor
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -132,6 +133,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         // Before super.onCreate(): Hilt creates injected services there, and the budget is read once.
         MemoryBudget.init(this)
         super.onCreate()
+        // Calendar's optional Home "Coming up" row (off by default); registered before Home first collects changes.
+        com.nuvio.tv.core.contracts.HomeSectionContributorRegistry.register(calendarComingUpContributor)
         com.nuvio.tv.data.mediaserver.ServerMediaRouting.router = com.nuvio.tv.data.mediaserver.ServerMediaRouter(serverTrust)
         // Unverified TLS for playback is an IPTV-panel-only fallback; a media-server host is never eligible.
         com.nuvio.tv.core.contracts.PlaybackTrustHosts.registerMediaServerHostPredicate("servers") { host ->

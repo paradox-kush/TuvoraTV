@@ -73,4 +73,10 @@ class PlaylistKeyTest {
         assertEquals("m3u|http://example.com/l.m3u?x=1", m3uAccountFromUrl("example.com/l.m3u?x=1")!!.id)
         assertEquals("m3u_file|tv.m3u|7", newM3UFilePlaylistId("tv.m3u", nowMs = 7L))
     }
+
+    @Test
+    fun `two xtream panels on the same host and user but different ports get different ids`() {
+        assertEquals("http://10.0.2.2:8932|u", PlaylistKey.xtream("http://10.0.2.2:8932", "u"))
+        assertTrue(PlaylistKey.xtream("http://10.0.2.2:8932", "u") != PlaylistKey.xtream("http://10.0.2.2:8933", "u"))
+    }
 }

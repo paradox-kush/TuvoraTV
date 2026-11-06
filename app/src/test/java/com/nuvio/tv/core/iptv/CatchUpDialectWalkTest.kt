@@ -317,4 +317,47 @@ class CatchUpDialectWalkTest {
         assertEquals(Step.Unavailable, CatchUpDialectWalk(FakeMemory()).begin(request(username = "")))
         assertEquals(Step.Unavailable, CatchUpDialectWalk(FakeMemory()).begin(request(password = "  ")))
     }
+
+    // --- continuation (a fresh window past the one served) ---------------------------------------
+
+    @Test
+    fun `a continuation asks for a fresh window from the playhead and keeps the rest of the ask`() {
+        val now = end + 60 * 60_000L
+        val atMs = end + 10 * 60_000L
+
+        val next = CatchUpDialectWalk.continuationRequest(request(), atMs, now)
+
+        assertEquals(atMs, next.startMs)
+        assertEquals(
+            com.nuvio.tv.core.contracts.CatchUpContinuationPolicy.replayWindowEndMs(
+                com.nuvio.tv.core.contracts.CatchUpContinuationPolicy.Programme(atMs, atMs + 1L), now,
+            ),
+            next.endMs,
+        )
+        assertEquals(request().copy(startMs = next.startMs, endMs = next.endMs), next)
+    }
+
+    @Test
+    fun `an abandoned walk frees the account slot and its token goes stale`() {
+        val memory = FakeMemory()
+        val walk = CatchUpDialectWalk(memory)
+        val first = next(walk.begin(request()))
+
+        walk.abandon(first.token)
+
+        assertEquals("a late result for it is ignored", Step.Stale, walk.onFailure(first.token, FailureKind.TRANSPORT))
+        assertEquals("and it proved nothing", 0, memory.rememberCalls)
+        // The same ask starts a NEW walk instead of joining the dropped one.
+        assertNotEquals(first.token, next(walk.begin(request())).token)
+    }
+
+    @Test
+    fun `abandoning an unknown token changes nothing`() {
+        val walk = CatchUpDialectWalk(FakeMemory())
+        val live = next(walk.begin(request()))
+
+        walk.abandon(live.token + 99)
+
+        assertEquals(live.token, next(walk.begin(request())).token)
+    }
 }

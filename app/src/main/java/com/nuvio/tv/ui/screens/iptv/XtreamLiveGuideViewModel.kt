@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.iptv
 
+import com.nuvio.tv.core.iptv.stalker.runCatchingCancellable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.iptv.BoundedLoad
@@ -62,6 +63,8 @@ data class GuideChannel(
     val catchUpDays: Int = 0,
     /** An M3U playlist's own catch-up settings for this channel; null on Xtream/Stalker and for channels without any. */
     val m3uCatchUp: com.nuvio.tv.core.iptv.M3uCatchUpInfo? = null,
+    /** A Stalker channel: a replay is addressed by the portal's own programme id, so a programme without one has none. */
+    val replayNeedsProgrammeId: Boolean = false,
     /** The channel's durable canon-v1 identity — the key the personalization overlay + D-pad toggle use. */
     val entityId: String = "",
     /** True when this channel is pinned in the personalization overlay — drives the guide's pin marker.
@@ -74,6 +77,29 @@ internal object GuideRapidZapPolicy {
         require(channelCount > 0)
         val delta = if (direction == com.nuvio.tv.playback.live.LiveZapDirection.NEXT) 1 else -1
         return Math.floorMod(currentIndex + delta, channelCount)
+    }
+
+    /**
+     * B180 dropped press: the lineup index a zap press lands on. The aimed (focused) channel is the
+     * origin; when it is not in the lineup (a focus on a cross-playlist favourite, or a row hidden
+     * since) the PLAYING channel is, and only with neither does the press enter the lineup at its
+     * near end. The old fallback was index 0 for every direction, so NEXT jumped to row 1 and
+     * skipped row 0, and PREVIOUS stepped to the last row only by accident of floorMod.
+     */
+    fun target(
+        lineupIds: List<String>,
+        focusedId: String?,
+        playingId: String?,
+        direction: com.nuvio.tv.playback.live.LiveZapDirection,
+    ): Int {
+        require(lineupIds.isNotEmpty())
+        val origin = focusedId?.let(lineupIds::indexOf)?.takeIf { it >= 0 }
+            ?: playingId?.let(lineupIds::indexOf)?.takeIf { it >= 0 }
+        return when {
+            origin != null -> advance(origin, lineupIds.size, direction)
+            direction == com.nuvio.tv.playback.live.LiveZapDirection.NEXT -> 0
+            else -> lineupIds.lastIndex
+        }
     }
 }
 
@@ -114,7 +140,7 @@ data class ReplayLaunch(
 /** The guide's replay notices. */
 internal object GuideReplayMessages {
     fun noRecording(title: String) = "This provider has no recording of \"$title\""
-    fun openFailed(title: String) = "Couldn't open \"$title\". Press OK to try again"
+    fun openFailed(title: String) = "Couldn't open \"$title\""
 }
 
 internal fun XtreamAccount.isM3uPlaylist(): Boolean = sourceType == XtreamAccount.SOURCE_URL || sourceType == XtreamAccount.SOURCE_FILE
@@ -137,6 +163,8 @@ data class LiveGuideUiState(
     val error: String? = null,
     /** Non-playback action notice, currently used by catch-up availability. */
     val actionError: String? = null,
+    /** The replay [actionError] can re-run (Retry); null when the notice has nothing to retry. */
+    val replayRetry: GuideReplayRetry? = null,
     /**
      * Start of the visible two hours. Travels backward with LEFT past the window's edge; the minute
      * tick only rolls it forward while it is still anchored at live, so a viewer reading yesterday
@@ -349,7 +377,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** See [GuideWindowRows.readsStoredWindowOnFocus]; an M3U playlist's history is its stored XMLTV. */
     private fun readsStoredWindow(windowStartMs: Long): Boolean = GuideWindowRows.readsStoredWindowOnFocus(
         atLiveEdge = GuideTimeTravel.isAtLiveEdge(windowStartMs, System.currentTimeMillis()),
-        historyFromStore = account?.isM3uPlaylist() == true,
+        historyFromStore = GuideWindowRows.historyFromStore(
+            isM3u = account?.isM3uPlaylist() == true,
+            isStalker = account?.sourceType == XtreamAccount.SOURCE_STALKER,
+        ),
     )
 
     /** Live channel ids currently in the platform Library (drives the ★ + add/remove). */
@@ -691,7 +722,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 channelsLoad = LoadStatus.Idle,
                 error = null,
                 actionError = null,
-                catchUpSupported = catchUp.supports(acc) || acc.isM3uPlaylist(),
+                catchUpSupported = catchUp.supports(acc) || acc.isM3uPlaylist() || catchUp.supportsStalkerArchive(acc),
                 windowStartMs = GuideTimeTravel.liveWindowStartMs(System.currentTimeMillis()),
             )
         }
@@ -777,8 +808,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 "This provider is blocking us (HTTP ${failure.status ?: 0}). This usually clears by itself."
             IptvLoadFailurePolicy.Kind.REFUSED -> failure.portalText ?: "Couldn't reach this playlist."
             IptvLoadFailurePolicy.Kind.UNREACHABLE -> "Couldn't reach this playlist. Check the portal is up and try again."
+            IptvLoadFailurePolicy.Kind.SECTION_UNAVAILABLE -> "Couldn't reach this playlist."   // never produced here: only the Series list opts in
         }
-        return "$text\n\n${failure.detail}"
+        return if (IptvLoadFailurePolicy.showsBreadcrumb(failure.kind)) "$text\n\n${failure.detail}" else text
     }
 
     /** The error card's Retry: the category column if that is what failed, else the selected category. */
@@ -998,6 +1030,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
         GuideEpgPrefetchPolicy.onChannelsLoaded(channels.size).forEach { index ->
             channels.getOrNull(index)?.let { ensureEpg(it.streamId) }
         }
+        // And for the focused channel's catch-up history (get_simple_data_table): its focus event is
+        // the same no-op, so without this the past cells stay blank until focus moves off and back.
+        GuideHistoryPrimePolicy.primeTarget(
+            channels, _uiState.value.focusedChannelId, _uiState.value.catchUpSupported,
+        )?.let { ensureHistory(it) }
         // The same goes for the stored window: an M3U playlist's cells either side of now/next live
         // only on disk, and the UI's focus event for row one is the no-op described above, so without
         // this the first paint stays at now + next until the viewer moves. Disk only; no request.
@@ -1039,14 +1076,20 @@ class XtreamLiveGuideViewModel @Inject constructor(
     }
 
     /** Moves the authoritative highlight synchronously and returns its exact stable identity. */
-    fun moveChannelFocus(direction: com.nuvio.tv.playback.live.LiveZapDirection): ProviderSelectionId? {
+    fun moveChannelFocus(
+        direction: com.nuvio.tv.playback.live.LiveZapDirection,
+        playingContentId: String? = null,
+    ): ProviderSelectionId? {
         val state = _uiState.value
         // T4: walk the playing playlist's own channels — All favorites lists other playlists' too.
         val lineup = zapLineup()
         if (lineup.isEmpty()) return null
-        val current = lineup.indexOfFirst { it.contentId == state.focusedChannelId }
-            .takeIf { it >= 0 } ?: 0
-        val nextIndex = GuideRapidZapPolicy.advance(current, lineup.size, direction)
+        val nextIndex = GuideRapidZapPolicy.target(
+            lineupIds = lineup.map { it.contentId },
+            focusedId = state.focusedChannelId,
+            playingId = playingContentId,
+            direction = direction,
+        )
         val next = lineup[nextIndex]
         onChannelFocused(next, state.channels.indexOfFirst { it.contentId == next.contentId })
         return ProviderSelectionId(next.contentId)
@@ -1256,6 +1299,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(epg = it.epg + (streamId to GuideWindowRows.mergeNowNext(it.epg[streamId], now, next, programs)))
                 }
+                // A Stalker portal's now/next is answered FROM its bulk guide, so the stored window is on
+                // disk exactly now: a window read made before the first ingest landed found nothing, and
+                // nothing else republishes it at the live edge (the aired cells stayed blank).
+                if (acc.sourceType == XtreamAccount.SOURCE_STALKER) {
+                    _uiState.value.channels.firstOrNull { c -> c.streamId == streamId }?.let { publishWindows(listOf(it)) }
+                }
             }
         }
     }
@@ -1280,6 +1329,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     contentId = id, name = ch.name, logo = ch.logo, streamUrl = ch.streamUrl,
                     streamId = ch.streamId, categoryId = ch.categoryId,
                     hasArchive = ch.hasArchive, catchUpDays = ch.catchUpDays, m3uCatchUp = ch.m3uCatchUp,
+                    replayNeedsProgrammeId = acc.sourceType == XtreamAccount.SOURCE_STALKER,
                     entityId = com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(acc.id, ch.name, ch.epgChannelId)
                 )
             }
@@ -1431,13 +1481,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
         val published = LinkedHashMap<Int, List<XtreamProgram>>()
         for (channel in channels) {
             if (channel.streamId <= 0 || channel.streamId in published) continue
-            val table = runCatching {
+            val table = runCatchingCancellable {
                 contentDb.epgWindow(acc.id, epgChannelKey(channel.streamId), fromMs, toMs)
             }.getOrDefault(emptyList())
-            val store = if (table.isNotEmpty()) emptyList() else runCatching {
+            val store = if (table.isNotEmpty()) emptyList() else runCatchingCancellable {
                 // B10/F14: the user's pick, else the ingest's match (provider id, then cleaned name).
                 xmltv.storedWindow(acc, channel.streamId, fromMs, toMs)
-            }.getOrDefault(emptyList())
+            }.getOrDefault(emptyList()).ifEmpty {
+                // A Stalker portal's own bulk guide (keyed by its channel id) is the only place its
+                // programme ids live - and what a replay of an aired programme is addressed by.
+                if (acc.sourceType != XtreamAccount.SOURCE_STALKER) emptyList() else runCatchingCancellable {
+                    contentDb.epgWindow(acc.id, channel.streamId.toString(), fromMs, toMs)
+                }.getOrDefault(emptyList())
+            }
             val rows = GuideWindowRows.pick(table, store) ?: continue
             published[channel.streamId] = rows.map {
                 XtreamProgram(
@@ -1447,6 +1503,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     endMs = it.endMs,
                     nowPlaying = nowMs in it.startMs until it.endMs,
                     hasArchive = it.hasArchive.takeIf { marked -> marked },
+                    programmeId = it.programmeId,
                 )
             }
         }
@@ -1520,10 +1577,15 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * finished replay take the same path — the difference is only whether the programme's end is
      * still in the future, which the player uses for its clamped seek ceiling.
      */
+    private var replayOpenJob: kotlinx.coroutines.Job? = null
+
     fun startReplay(channel: GuideChannel, programme: XtreamProgram) {
         val acc = account ?: return
+        // A second press while the first is still opening is the same press (a Stalker open mints a
+        // single-use link, and a second launch would navigate twice).
+        if (replayOpenJob?.isActive == true) return
         // Suspends only for the panel's clock pair (B117), memoized per session — usually free.
-        viewModelScope.launch { startReplayFor(acc, channel, programme) }
+        replayOpenJob = viewModelScope.launch { startReplayFor(acc, channel, programme) }
     }
 
     private suspend fun startReplayFor(acc: XtreamAccount, channel: GuideChannel, programme: XtreamProgram) {
@@ -1541,17 +1603,25 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 endMs = programme.endMs,
             ),
             nowMs = nowMs,
-            liveUrl = channel.streamUrl.takeIf { channel.m3uCatchUp != null },
+            // The live URL is what a continuing replay rejoins at the live edge (M3U and Xtream alike).
+            liveUrl = channel.streamUrl,
             m3uCatchUp = channel.m3uCatchUp,
+            stalkerProgrammeId = programme.programmeId,
         )
         val session = when (outcome) {
             is com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Opened -> outcome.session
             com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Unavailable -> {
-                _uiState.update { it.copy(actionError = GuideReplayMessages.noRecording(programme.title)) }
+                _uiState.update { GuideReplayNoticePolicy.noRecording(it, GuideReplayMessages.noRecording(programme.title)) }
                 return
             }
             is com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Failed -> {
-                _uiState.update { it.copy(actionError = GuideReplayMessages.openFailed(programme.title)) }
+                _uiState.update { GuideReplayNoticePolicy.refused(it, GuideReplayMessages.openFailed(programme.title), channel, programme) }
+                return
+            }
+            // The portal said something specific (session cap, no recording, link fault): say exactly
+            // that, with Retry: a fresh create_link for the same programme.
+            is com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator.OpenOutcome.Refused -> {
+                _uiState.update { GuideReplayNoticePolicy.refused(it, outcome.failure.message, channel, programme) }
                 return
             }
         }
@@ -1573,7 +1643,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     /** OK on an aired programme the channel kept no recording of: say so instead of doing nothing. */
     fun explainNoRecording(programme: XtreamProgram) {
-        _uiState.update { it.copy(actionError = GuideReplayMessages.noRecording(programme.title)) }
+        _uiState.update { GuideReplayNoticePolicy.noRecording(it, GuideReplayMessages.noRecording(programme.title)) }
+    }
+
+    /** Retry on the replay notice: the same programme again, which mints a fresh link. */
+    fun retryReplay() {
+        val retry = _uiState.value.replayRetry ?: return
+        _uiState.update { GuideReplayNoticePolicy.dismiss(it) }
+        startReplay(retry.channel, retry.programme)
     }
 
     /** The screen navigated; drop the one-shot so a recomposition cannot launch it twice. */
@@ -1583,7 +1660,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     fun dismissError() {
         if (_uiState.value.error != null || _uiState.value.actionError != null) {
-            _uiState.update { it.copy(error = null, actionError = null) }
+            _uiState.update { GuideReplayNoticePolicy.dismiss(it).copy(error = null) }
         }
     }
 

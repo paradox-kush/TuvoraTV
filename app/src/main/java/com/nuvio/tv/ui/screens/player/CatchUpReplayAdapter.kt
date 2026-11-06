@@ -39,6 +39,13 @@ internal class CatchUpReplayAdapter(
 
     private var played = false
 
+    /**
+     * A restarted window (continuation) or a Retry on a replay that already played is waiting for ITS first
+     * frame: the startup deadline applies again, but the proven shape is not reported twice and errors
+     * keep going to player recovery ([played] stays true).
+     */
+    private var awaitingRestartFrame = false
+
     /** Set by [enableContinuation]; null for a replay that ends with its programme. */
     private var continuation: Continuation? = null
 
@@ -85,6 +92,7 @@ internal class CatchUpReplayAdapter(
         c.windowEndMs = windowEndMs
         c.settled = false
         c.lastLookupMs = Long.MIN_VALUE
+        resetStartupBudget()
     }
 
     /** The replay is over (live rejoined or ended): it is no longer a recording to clamp or follow. */
@@ -189,7 +197,7 @@ internal class CatchUpReplayAdapter(
      * not restarted by later links, engine failovers or recovery rungs — the total stays bounded.
      */
     fun startupDeadlineMs(nowMs: Long): Long? {
-        if (!isCatchUp || played || leftCatchUp) return null
+        if (!isCatchUp || (played && !awaitingRestartFrame) || leftCatchUp) return null
         if (startupBeganMs == Long.MIN_VALUE) startupBeganMs = nowMs
         return CatchUpStartupPolicy.deadlineMs(nowMs - startupBeganMs)
     }
@@ -205,11 +213,24 @@ internal class CatchUpReplayAdapter(
     fun resetStartupBudget() {
         startupBeganMs = Long.MIN_VALUE
         startupTimeouts = 0
+        if (isCatchUp && played) awaitingRestartFrame = true
+    }
+
+    /**
+     * Retry of a single-use replay (a Stalker archive) opens a fresh link, which is a new attempt in
+     * every respect: it has not played, and it gets a fresh startup deadline and budget.
+     */
+    fun onRelinked() {
+        played = false
+        awaitingRestartFrame = false
+        resetStartupBudget()
     }
 
     /** True exactly once per replay, on its first rendered frame: report the proven shape then. */
     fun onFirstFrame(): Boolean {
-        if (!isCatchUp || played) return false
+        if (!isCatchUp) return false
+        awaitingRestartFrame = false
+        if (played) return false
         played = true
         return true
     }

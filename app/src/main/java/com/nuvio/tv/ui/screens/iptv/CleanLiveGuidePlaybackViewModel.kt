@@ -1,6 +1,12 @@
 package com.nuvio.tv.ui.screens.iptv
 
+import com.nuvio.tv.core.contracts.LivePauseControl
+import com.nuvio.tv.core.contracts.LivePauseControlFactory
+import com.nuvio.tv.core.contracts.LivePauseControlRequest
+import com.nuvio.tv.core.contracts.LivePausePhase
+import com.nuvio.tv.core.contracts.LivePauseView
 import com.nuvio.tv.core.picture.LivePicturePort
+import com.nuvio.tv.ui.screens.player.clean.live.CleanLivePauseEngine
 import com.nuvio.tv.core.picture.PictureChoice
 import com.nuvio.tv.data.local.LivePicturePreferences
 import com.nuvio.tv.ui.screens.player.clean.live.LivePictureFollower
@@ -114,6 +120,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     ownerDispatcher: CoroutineDispatcher,
     private val releaseRetryWait: CleanLiveGuideReleaseRetryWait,
     picturePort: LivePicturePort,
+    private val livePauseFactory: LivePauseControlFactory,
 ) : ViewModel() {
     @Inject
     internal constructor(
@@ -124,6 +131,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         liveNavigation: LiveChannelNavigationPort,
         playedHistory: LivePlayedHistoryPort,
         livePicture: LivePicturePreferences,
+        livePauseFactory: LivePauseControlFactory,
     ) : this(
         appContext = context.applicationContext,
         profileSource = CleanLiveGuideProfileSource { profileManager.activeProfileId.value },
@@ -134,6 +142,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         ownerDispatcher = Dispatchers.Main.immediate,
         releaseRetryWait = CleanLiveGuideReleaseRetryWait { delay(it) },
         picturePort = livePicture,
+        livePauseFactory = livePauseFactory,
     )
 
     internal constructor(
@@ -146,6 +155,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         ownerDispatcher: CoroutineDispatcher,
         releaseRetryWait: CleanLiveGuideReleaseRetryWait = CleanLiveGuideReleaseRetryWait {},
         picturePort: LivePicturePort = LivePicturePort.Unremembered,
+        livePauseFactory: LivePauseControlFactory = LivePauseControlFactory { null },
         @Suppress("UNUSED_PARAMETER") testOnly: Unit = Unit,
     ) : this(
         appContext = context.applicationContext,
@@ -157,6 +167,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         ownerDispatcher = ownerDispatcher,
         releaseRetryWait = releaseRetryWait,
         picturePort = picturePort,
+        livePauseFactory = livePauseFactory,
     )
 
     private val ownerJob = SupervisorJob()
@@ -179,6 +190,48 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     // F28: the picture (aspect + manual zoom) follows the channel on screen, per channel.
     private val pictureFollower = LivePictureFollower(picturePort, ownerScope)
     val picture: StateFlow<PictureChoice> = pictureFollower.picture
+
+    // Live pause / rewind: one control per playing channel, rebuilt on every channel change and
+    // disposed with the host (links are minted from the channel it was built for).
+    private val mutableLivePause = MutableStateFlow(LivePauseView.OFF)
+    val livePause: StateFlow<LivePauseView> = mutableLivePause.asStateFlow()
+    private var livePauseControl: LivePauseControl? = null
+    private var livePauseJob: Job? = null
+    private var livePauseSeq = 0
+    private val livePauseInstance = "guide-live-" + System.identityHashCode(this).toString(16)
+
+    private fun bindLivePause(current: CleanLiveHost, target: LiveChannelTarget, profile: PlaybackProfileId) {
+        unbindLivePause()
+        lateinit var created: LivePauseControl
+        val engine = CleanLivePauseEngine(
+            host = current,
+            metadata = { mediaMetadata(target) },
+            retuneLive = {
+                current.tune(target.selection, sessionProfile, mediaMetadata(target))
+                created.onLiveStarted()
+            },
+        )
+        created = livePauseFactory.create(
+            LivePauseControlRequest(
+                instanceId = livePauseInstance + "-" + (++livePauseSeq),
+                scope = ownerScope,
+                engine = engine,
+                profileId = profile,
+                selection = target.selection,
+            ),
+        ) ?: return
+        livePauseControl = created
+        livePauseJob = ownerScope.launch { created.view.collect { mutableLivePause.value = it } }
+        created.onLiveStarted()
+    }
+
+    private fun unbindLivePause() {
+        livePauseJob?.cancel()
+        livePauseJob = null
+        livePauseControl?.dispose()
+        livePauseControl = null
+        mutableLivePause.value = LivePauseView.OFF
+    }
 
     private var host: CleanLiveHost? = null
     private var attachedSurfaceOwner: FrameLayout? = null
@@ -374,6 +427,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         mutablePendingSelection.value = null
         activeTarget = null
         pendingPlayed = null
+        unbindLivePause()
         val current = host
         if (current != null && !releaseHostForSurfaceRebind()) return@withLock
         mutableState.value = CleanLiveGuidePlaybackState.Detached
@@ -500,7 +554,11 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     fun requestCollapse() {
         if (!releaseCompleted && !clearedReleaseLoopStarted) {
             launchContained(CleanLiveGuideFailure.COMMAND_FAILED) {
+                // The profile first: the live retune reads sessionProfile, and must not tune FULLSCREEN.
+                val shifted = GuideLivePausePolicy.goLiveOnCollapse(mutableLivePause.value.phase)
                 changeSessionProfile(SessionProfile.GUIDE)
+                // The docked preview has no controls to resume a saved part: it shows the live edge.
+                if (shifted) livePauseControl?.goLive()
             }
         }
     }
@@ -535,9 +593,24 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         publishSnapshot(currentHost.snapshot.value)
     }
 
-    fun requestPause() = requestCommand { it.pause() }
-    fun requestResume() = requestCommand { it.resume() }
-    fun requestRetry() = requestCommand { it.retry() }
+    // With live pause bound, Pause / Play go through its controller: it pauses plainly where the stream
+    // cannot be buffered and starts the buffer where it can.
+    fun requestPause() = requestCommand { host -> livePauseControl?.onPause() ?: host.pause() }
+    fun requestResume() = requestCommand { host -> livePauseControl?.onPlay() ?: host.resume() }
+    fun requestRetry() = requestCommand { host ->
+        val control = livePauseControl
+        if (control != null && GuideLivePausePolicy.retryGoesToPause(mutableLivePause.value.phase)) {
+            control.retry()
+        } else {
+            host.retry()
+        }
+    }
+
+    /** Scrub inside the saved window (ms on the window's timeline). */
+    fun requestSeekInLivePause(positionMs: Long) = requestCommand { livePauseControl?.seekInWindow(positionMs) }
+
+    /** "Live": leave the saved part and go back to the live edge. */
+    fun requestGoLive() = requestCommand { livePauseControl?.goLive() }
 
     /** F28: change the picture of the channel on screen (aspect cycle, zoom step, reset). */
     fun requestPictureChange(update: (PictureChoice) -> PictureChoice) {
@@ -640,6 +713,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         activeTarget = target
         followPicture(target)
         pendingPlayed = LivePlayedIdentity(target, profile, acceptedGeneration)
+        bindLivePause(created, target, profile)
         publishReady(created)
     }
 
@@ -651,6 +725,9 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         val previous = activeTarget ?: return
         presentationJob?.cancelAndJoin()
         presentationJob = null
+        // The buffer belongs to the channel being left.
+        // The control says whether it released the live source / dropped a buffer; the view can lag it.
+        val hadBuffer = livePauseControl?.onChannelChanged() ?: false
         val acceptedGeneration = try {
             currentHost.zap(target.selection, sessionProfile, mediaMetadata(target))
         } catch (cancelled: CancellationException) {
@@ -658,6 +735,19 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             throw cancelled
         } catch (_: Exception) {
             activeTarget = previous
+            if (hadBuffer) {
+                // The host may still be on the buffer that was just deleted: put the channel being left back
+                // on its live source, or fail visibly. Never leave a black screen.
+                try {
+                    currentHost.tune(previous.selection, sessionProfile, mediaMetadata(previous))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    mutableState.value =
+                        CleanLiveGuidePlaybackState.Rejected(CleanLiveGuideFailure.TUNE_FAILED)
+                    return
+                }
+            }
             publishReady(currentHost)
             return
         }
@@ -669,6 +759,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         activeTarget = target
         followPicture(target)
         pendingPlayed = LivePlayedIdentity(target, profile, acceptedGeneration)
+        bindLivePause(currentHost, target, profile)
         publishReady(currentHost)
     }
 
@@ -749,6 +840,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         presentationJob?.cancelAndJoin()
         presentationJob = null
         pendingPlayed = null
+        unbindLivePause()
         mutableState.value = CleanLiveGuidePlaybackState.Initializing
         return try {
             withContext(NonCancellable) { current.release() }
@@ -778,6 +870,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     private suspend fun releaseCreatedHost(current: CleanLiveHost) {
         presentationJob?.cancelAndJoin()
         presentationJob = null
+        unbindLivePause()
         withContext(NonCancellable) { current.release() }
         if (host === current) host = null
         attachedSurfaceOwner = null
@@ -802,6 +895,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             mutablePendingSelection.value = null
             presentationJob?.cancelAndJoin()
             presentationJob = null
+            unbindLivePause()
             val current = host
             if (current != null) {
                 try {
@@ -834,6 +928,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             mutablePendingSelection.value = null
             presentationJob?.cancelAndJoin()
             presentationJob = null
+            unbindLivePause()
             val current = host
             if (current != null) {
                 try {
@@ -880,6 +975,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         historyRecordTail = null
         presentationJob?.cancel()
         presentationJob = null
+        unbindLivePause()
         host = null
         attachedSurfaceOwner = null
         boundProfileId = null

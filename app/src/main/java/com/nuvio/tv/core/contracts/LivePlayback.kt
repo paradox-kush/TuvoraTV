@@ -64,6 +64,25 @@ interface CatchUpPlaybackPort {
 
     /** The channel's live URL, to rejoin live when the replay reaches the live edge. */
     fun liveUrl(contentId: String?): String? = null
+
+    /**
+     * Non-null only for a replay whose link is spent by playing (a Stalker archive): the words to show
+     * when it fails ([startupHang]: no frame in time, else the engine failed). Such a replay is never
+     * re-opened, probed or walked to another URL shape; the viewer's Retry goes through [reopen].
+     */
+    fun singleUseFailure(contentId: String?, startupHang: Boolean): String? = null
+
+    /** A FRESH link for a single-use replay (Retry); null when [contentId] is not one. */
+    suspend fun reopen(contentId: String?): CatchUpReopen? = null
+}
+
+/** The answer to a single-use replay's Retry: a new link to open, or the portal's refusal in words. */
+sealed interface CatchUpReopen {
+    data class Link(val url: String) : CatchUpReopen {
+        override fun toString(): String = "CatchUpReopen.Link(hasUrl=true)"
+    }
+
+    data class Refused(val message: String) : CatchUpReopen
 }
 
 /** A programme as the player titles it: [title] is ready to show. */

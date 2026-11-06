@@ -4,6 +4,21 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 
 /**
+ * One programme of the bulk guide. [programmeId] is the portal's own EPG row id (`id`): the whole
+ * address of that programme's archive recording (`auto /media/<id>.mpg`), null when the row had none.
+ * [hasArchive] is the row's `mark_archive`: the portal says it kept a recording.
+ */
+internal data class StalkerEpgRow(
+    val channelId: Int,
+    val title: String,
+    val descr: String,
+    val startMs: Long,
+    val endMs: Long,
+    val programmeId: String? = null,
+    val hasArchive: Boolean = false,
+)
+
+/**
  * Incremental parser for Stalker's bulk-EPG response, `{"js":{…,"data":{"<chId>":[prog,…],…}}}`,
  * fed by whatever chunks the transport hands over (boundaries can fall anywhere — mid-token,
  * mid-string, mid-escape). Twin of NuvioMobile's StalkerEpgStreamParser (kotlinx there, Gson here).
@@ -19,7 +34,7 @@ import com.google.gson.JsonParser
  * Not thread-safe — one instance per response, driven from the transport's reader thread.
  */
 internal class StalkerEpgStreamParser(
-    private val onProgramme: (channelId: Int, title: String, descr: String, startMs: Long, endMs: Long) -> Unit,
+    private val onProgramme: (StalkerEpgRow) -> Unit,
 ) {
     private var inData = false
     private var afterData = false
@@ -129,7 +144,18 @@ internal class StalkerEpgStreamParser(
         val endMs = (obj.str("stop_timestamp")?.toLongOrNull() ?: 0L) * 1000
         if (endMs <= 0) return
         programmeCount++
-        onProgramme(id, obj.str("name").orEmpty(), obj.str("descr").orEmpty(), startMs, endMs)
+        val archived = obj.str("mark_archive")?.trim().let { it == "1" || it.equals("true", ignoreCase = true) }
+        onProgramme(
+            StalkerEpgRow(
+                channelId = id,
+                title = obj.str("name").orEmpty(),
+                descr = obj.str("descr").orEmpty(),
+                startMs = startMs,
+                endMs = endMs,
+                programmeId = obj.str("id")?.trim()?.takeIf { it.isNotEmpty() && it != "0" },
+                hasArchive = archived,
+            ),
+        )
     }
 
     private fun JsonObject.str(key: String): String? =

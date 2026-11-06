@@ -8,6 +8,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -39,10 +40,28 @@ import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Surface
+import com.nuvio.tv.core.contracts.LivePausePhase
+import com.nuvio.tv.core.contracts.LivePauseView
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -78,6 +97,8 @@ internal data class LiveOverlayInfo(
     val nextLine: String? = null,
     val status: LiveControlsPolicy.Status = LiveControlsPolicy.Status.LIVE,
     val errorText: String? = null,
+    /** Live pause / rewind: why the saved part could not start or ended (shown with Retry + Live). */
+    val pauseErrorText: String? = null,
 )
 
 /** Every action the live overlay can take; null = that control is not offered here. */
@@ -99,6 +120,10 @@ internal class LiveOverlayActions(
     val onKeepAlive: () -> Unit,
     /** DOWN off the button row hides the controls, as in the VOD player. */
     val onHide: () -> Unit,
+    /** Live pause / rewind: scrub inside the saved window (ms on the window's timeline). */
+    val onSeekWindow: ((Long) -> Unit)? = null,
+    /** Live pause / rewind: leave the saved part and go back to the live edge. */
+    val onGoLive: (() -> Unit)? = null,
 )
 
 /**
@@ -117,7 +142,10 @@ internal fun BoxScope.LiveControlsOverlay(
     moreOpen: Boolean,
     primaryFocus: FocusRequester,
     actions: LiveOverlayActions,
+    pause: LivePauseView = LivePauseView.OFF,
 ) {
+    // Time-shifted: the scrub bar takes the default focus (as the VOD timeline does), the buttons follow.
+    val scrubbing = LiveControlsPolicy.isScrubbable(pause.phase) && actions.onSeekWindow != null
     val playPainter = rememberRawSvgPainter(R.raw.ic_player_play)
     val pausePainter = rememberRawSvgPainter(R.raw.ic_player_pause)
     val subtitlePainter = rememberRawSvgPainter(R.raw.ic_player_subtitles)
@@ -182,10 +210,17 @@ internal fun BoxScope.LiveControlsOverlay(
             if (info.status == LiveControlsPolicy.Status.FAILED && info.errorText != null) {
                 Text(text = info.errorText, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.Error, maxLines = 2)
             }
+            if (info.pauseErrorText != null) {
+                Text(text = info.pauseErrorText, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.Error, maxLines = 2)
+            }
 
             Spacer(Modifier.height(NuvioTheme.spacing.md))
             // The airing programme's elapsed share where VOD has its seek bar. Not focusable.
-            ProgrammeLine(LiveControlsPolicy.programmeProgress(info.nowStartMs, info.nowEndMs, nowMs))
+            if (scrubbing) {
+                LiveScrubBar(pause, primaryFocus, actions.onSeekWindow!!, actions.onKeepAlive)
+            } else {
+                ProgrammeLine(LiveControlsPolicy.programmeProgress(info.nowStartMs, info.nowEndMs, nowMs))
+            }
             Spacer(Modifier.height(NuvioTheme.spacing.lg))
 
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
@@ -203,7 +238,7 @@ internal fun BoxScope.LiveControlsOverlay(
                             icon = Icons.Default.Refresh,
                             contentDescription = stringResource(R.string.clean_live_action_retry),
                             onClick = actions.onRetry,
-                            focusRequester = primaryFocus,
+                            focusRequester = primaryFocus.takeUnless { scrubbing },
                             onDownKey = actions.onHide,
                             onFocused = actions.onKeepAlive,
                         )
@@ -213,10 +248,25 @@ internal fun BoxScope.LiveControlsOverlay(
                         iconPainter = if (paused) playPainter else pausePainter,
                         contentDescription = stringResource(if (paused) R.string.cd_play else R.string.cd_pause),
                         onClick = actions.onPlayPause,
-                        focusRequester = if (buttons.retry) null else primaryFocus,
+                        focusRequester = if (buttons.retry || scrubbing) null else primaryFocus,
                         onDownKey = actions.onHide,
                         onFocused = actions.onKeepAlive,
                     )
+                    // "LIVE" becomes "-mm:ss · Live" once the viewer is behind: focusable, back to the edge.
+                    if (pause.phase != LivePausePhase.OFF) {
+                        actions.onGoLive?.let { goLive ->
+                            LiveChip(
+                                label = if (LiveControlsPolicy.chipLabel(pause.phase) == LiveControlsPolicy.ChipLabel.BEHIND) {
+                                    stringResource(R.string.live_pause_chip_behind, LiveControlsPolicy.behindLabel(pause.behindLiveMs))
+                                } else {
+                                    stringResource(R.string.live_pause_chip_go_live)
+                                },
+                                onClick = goLive,
+                                onFocused = actions.onKeepAlive,
+                                onDownKey = actions.onHide,
+                            )
+                        }
+                    }
                     actions.onZapPrevious?.let {
                         ControlButton(
                             icon = Icons.Default.KeyboardArrowUp,
@@ -312,7 +362,11 @@ internal fun BoxScope.LiveControlsOverlay(
 
 @Composable
 private fun LiveStatusBadge(status: LiveControlsPolicy.Status) {
+    // Time-shifted playback shows its offset on the chip in the button row, not a second badge here.
+    if (status == LiveControlsPolicy.Status.SHIFTED) return
     val (label, color) = when (status) {
+        LiveControlsPolicy.Status.SHIFTED -> "" to Color.White
+        LiveControlsPolicy.Status.PREPARING -> stringResource(R.string.live_pause_status_preparing) to Color.White
         LiveControlsPolicy.Status.LIVE -> stringResource(R.string.iptv_guide_live) to NuvioTheme.colors.Primary
         LiveControlsPolicy.Status.PAUSED -> stringResource(R.string.iptv_guide_paused) to Color.White
         LiveControlsPolicy.Status.TUNING -> stringResource(R.string.iptv_guide_tuning) to Color.White
@@ -329,6 +383,97 @@ private fun LiveStatusBadge(status: LiveControlsPolicy.Status) {
             .background(if (status == LiveControlsPolicy.Status.LIVE) color else Color.White.copy(alpha = 0.16f))
             .padding(horizontal = NuvioTheme.spacing.sm, vertical = 2.dp),
     )
+}
+
+/** The "-mm:ss · Live" chip: a button in the row, white fill + black text when focused (like [ControlButton]). */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun LiveChip(label: String, onClick: () -> Unit, onFocused: () -> Unit, onDownKey: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.White.copy(alpha = 0.16f),
+            contentColor = Color.White,
+            focusedContainerColor = Color.White,
+            focusedContentColor = Color.Black,
+        ),
+        modifier = Modifier
+            .height(NuvioTheme.spacing.xxxl)
+            .onFocusChanged { if (it.isFocused) onFocused() }
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { onDownKey(); true } else false
+            },
+    ) {
+        Box(Modifier.padding(horizontal = NuvioTheme.spacing.md), contentAlignment = Alignment.Center) {
+            Text(text = label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/**
+ * The saved window as a bar the viewer scrubs with LEFT / RIGHT. It is the default focus while
+ * time-shifted, so a press of LEFT right after pausing rewinds at once; DOWN reaches the buttons.
+ * Focused it grows and shows its knob (the visible-focus rule).
+ */
+@Composable
+private fun LiveScrubBar(
+    pause: LivePauseView,
+    focusRequester: FocusRequester,
+    onSeek: (Long) -> Unit,
+    onKeepAlive: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val span = (pause.windowEndMs - pause.windowStartMs).coerceAtLeast(1L)
+    val fraction = ((pause.positionMs - pause.windowStartMs).toFloat() / span).coerceIn(0f, 1f)
+    val description = stringResource(R.string.live_pause_scrub_cd)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(14.dp)
+            .semantics { contentDescription = description }
+            .focusRequester(focusRequester)
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onKeepAlive() }
+            .onPreviewKeyEvent { event ->
+                val left = event.key == Key.DirectionLeft
+                val right = event.key == Key.DirectionRight
+                if (!left && !right) return@onPreviewKeyEvent false
+                if (event.type == KeyEventType.KeyDown) {
+                    val step = LiveControlsPolicy.scrubStepMs(event.nativeKeyEvent.repeatCount)
+                    onSeek(
+                        LiveControlsPolicy.scrubTarget(
+                            pause.positionMs, pause.windowStartMs, pause.windowEndMs,
+                            if (left) LiveControlsPolicy.ScrubDirection.BACK else LiveControlsPolicy.ScrubDirection.FORWARD,
+                            step,
+                        ),
+                    )
+                    onKeepAlive()
+                }
+                true
+            }
+            .focusable(),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        val barHeight = if (focused) 10.dp else 4.dp
+        Box(
+            Modifier.fillMaxWidth().height(barHeight)
+                .clip(RoundedCornerShape(barHeight / 2))
+                .background(Color.White.copy(alpha = if (focused) 0.35f else 0.2f)),
+        ) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).background(NuvioTheme.colors.Primary))
+        }
+        if (focused) {
+            Box(
+                Modifier
+                    .padding(start = 0.dp)
+                    .fillMaxWidth(fraction.coerceAtLeast(0.001f))
+                    .height(14.dp),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Box(Modifier.size(14.dp).clip(RoundedCornerShape(7.dp)).background(Color.White))
+            }
+        }
+    }
 }
 
 @Composable

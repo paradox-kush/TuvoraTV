@@ -39,6 +39,45 @@ object XmltvIngestWindow {
     fun backMsForCatchUpDays(catchUpDays: Int): Long =
         (catchUpDays.coerceAtLeast(0) * 24L * 60 * 60 * 1000).coerceIn(BACK_MS, MAX_CATCHUP_BACK_MS)
 
+    /**
+     * Per-guide-id back window for a playlist whose channels carry a catch-up depth. [assigned] are the
+     * matcher's (stream id, normalized guide id) pairs; [manual] are the user's hand-picked ones. A guide
+     * id shared by several channels keeps the longest depth. [catchUpDaysBySid] holds only channels that replay.
+     */
+    fun backMsByGuide(
+        assigned: List<Pair<Int, String>>,
+        manual: List<Pair<Int, String>>,
+        catchUpDaysBySid: Map<Int, Int>,
+    ): Map<String, Long> {
+        if (catchUpDaysBySid.isEmpty()) return emptyMap()
+        val out = HashMap<String, Long>()
+        for ((sid, guideId) in assigned + manual) {
+            val days = catchUpDaysBySid[sid] ?: continue
+            out.merge(guideId, backMsForCatchUpDays(days), ::maxOf)
+        }
+        return out
+    }
+
+    /** One lineup channel as far as the hand-pick mapping needs it. */
+    data class LineupRef(val name: String, val epgId: String?, val streamId: Int)
+
+    /**
+     * The user's hand-picked guide channels as (stream id, normalized guide id): [overrides] are the
+     * overlay's (entity id, guide id) pairs, resolved to a channel through the same identity key the
+     * overlay stored them under. A pick for a channel no longer in the [lineup] has nothing to widen.
+     */
+    fun manualPicks(
+        playlistId: String,
+        lineup: List<LineupRef>,
+        overrides: List<Pair<String, String>>,
+        normalize: (String) -> String,
+    ): List<Pair<Int, String>> {
+        val entityToSid = lineup.associate {
+            com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(playlistId, it.name, it.epgId) to it.streamId
+        }
+        return overrides.mapNotNull { (entity, guideId) -> entityToSid[entity]?.let { sid -> sid to normalize(guideId) } }
+    }
+
     /** Oldest instant worth keeping. */
     fun windowStartMs(nowMs: Long, backMs: Long = BACK_MS): Long = nowMs - backMs
 

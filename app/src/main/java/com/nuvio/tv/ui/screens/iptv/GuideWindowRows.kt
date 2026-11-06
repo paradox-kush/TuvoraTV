@@ -46,6 +46,13 @@ internal object GuideWindowRows {
     fun readsStoredWindowOnFocus(atLiveEdge: Boolean, historyFromStore: Boolean): Boolean =
         !atLiveEdge || historyFromStore
 
+    /**
+     * Whether a playlist's past lives in a store already on disk, so the live window reads it too:
+     * an M3U playlist's XMLTV, and a Stalker portal's bulk `get_epg_info` (the only place its aired
+     * programmes and their archive ids exist - no per-channel history fetch republishes them).
+     */
+    fun historyFromStore(isM3u: Boolean, isStalker: Boolean): Boolean = isM3u || isStalker
+
     /** A now/next ladder result arriving for a row. */
     fun mergeNowNext(
         existing: GuideEpg?,

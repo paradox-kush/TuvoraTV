@@ -1387,6 +1387,7 @@ fun PlayerRuntimeController.onEvent(
                 val playing = isPlaybackCurrentlyPlaying()
                 if (playing) {
                     userPausedManually = true
+                    userPauseSetByLifecycle = false
                     setPlaybackPaused(true)
                     stopProgressUpdates()
                     stopWatchProgressSaving()
@@ -1394,6 +1395,7 @@ fun PlayerRuntimeController.onEvent(
                     schedulePauseOverlay()
                 } else {
                     userPausedManually = false
+                    userPauseSetByLifecycle = false
                     cancelPauseOverlay()
                     setPlaybackPaused(false)
                     startProgressUpdates()
@@ -1406,10 +1408,12 @@ fun PlayerRuntimeController.onEvent(
                 _exoPlayer?.let { player ->
                     if (player.isPlaying) {
                         userPausedManually = true
+                        userPauseSetByLifecycle = false
                         player.pause()
                         schedulePauseOverlay()
                     } else {
                         userPausedManually = false
+                        userPauseSetByLifecycle = false
                         cancelPauseOverlay()
                         player.play()
                     }
@@ -1427,6 +1431,7 @@ fun PlayerRuntimeController.onEvent(
             onEvent(PlayerEvent.OnSeekBy(deltaMs = -PlayerScrubRates.STEP_SHORT_MS))
         }
         is PlayerEvent.OnSeekBy -> {
+            if (!SingleUseReplayPolicy.allowsSeek(isSingleUseCatchUp())) return
             if (_playbackTimeline.value.isLive) return
             pendingPreviewSeekPosition = null
             val current = currentPlaybackPositionMs() ?: 0L
@@ -1451,6 +1456,7 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         is PlayerEvent.OnPreviewSeekBy -> {
+            if (!SingleUseReplayPolicy.allowsSeek(isSingleUseCatchUp())) return
             if (_playbackTimeline.value.isLive) return
             val maxDuration = currentPlaybackDurationMs().takeIf { it >= 0 } ?: Long.MAX_VALUE
             val basePosition = pendingPreviewSeekPosition ?: currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: 0L
@@ -1466,6 +1472,7 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         PlayerEvent.OnCommitPreviewSeek -> {
+            if (!SingleUseReplayPolicy.allowsSeek(isSingleUseCatchUp())) return
             if (_playbackTimeline.value.isLive) return
             val requested = pendingPreviewSeekPosition?.let(::catchUpSeekTargetMs)
             if (requested != null) {
@@ -1488,6 +1495,7 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         is PlayerEvent.OnSeekTo -> {
+            if (!SingleUseReplayPolicy.allowsSeek(isSingleUseCatchUp())) return
             if (_playbackTimeline.value.isLive) return
             pendingPreviewSeekPosition = null
             val requestedPosition = catchUpSeekTargetMs(catchUpPlayerPositionMs(event.position))
@@ -1884,7 +1892,10 @@ fun PlayerRuntimeController.onEvent(
             scheduleHideControls()
         }
         PlayerEvent.OnRetry -> {
+            // A single-use replay (Stalker archive) is never re-opened: Retry mints a fresh link.
+            if (retrySingleUseCatchUp()) return
             catchUpReplay.resetStartupBudget()
+            restartLoadDeadline()
             hasRenderedFirstFrame = false
             endDetectionArmed = false
             mpvEofSeenClear = false
@@ -2077,6 +2088,7 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         PlayerEvent.OnSwitchInternalPlayerEngine -> {
+            restartLoadDeadline()
             logSwitchTrace(
                 stage = "event-switch-engine",
                 message = "requestedByUser=true"
@@ -2084,6 +2096,7 @@ fun PlayerRuntimeController.onEvent(
             switchInternalPlayerEngineManually()
         }
         PlayerEvent.OnSwitchToMpvPlayer -> {
+            restartLoadDeadline()
             logSwitchTrace(
                 stage = "event-switch-to-mpv",
                 message = "requestedByUser=true"

@@ -96,4 +96,42 @@ class GuideCatchUpSupportTest {
             guideActionFor(programme(now + hour, now + 2 * hour), archiveChannel, now, catchUpSupported = false),
         )
     }
+
+    // A Stalker archive is addressed by the portal's own programme id: without one there is nothing to replay.
+    private val stalkerChannel = archiveChannel.copy(replayNeedsProgrammeId = true)
+
+    @Test
+    fun `a stalker programme with the portal's id replays and one without does not`() {
+        val aired = programme(now - 3 * hour, now - 2 * hour)
+
+        assertEquals(
+            ProgrammeAction.REPLAY,
+            guideActionFor(aired.copy(programmeId = "9001"), stalkerChannel, now, catchUpSupported = true),
+        )
+        assertEquals(
+            "no id, no recording: the cell offers nothing, like an unsupported playlist",
+            ProgrammeAction.NONE,
+            guideActionFor(aired, stalkerChannel, now, catchUpSupported = true),
+        )
+    }
+
+    @Test
+    fun `an airing stalker programme without an id just plays live`() {
+        assertEquals(
+            ProgrammeAction.PLAY_LIVE,
+            guideActionFor(programme(now - hour, now + hour), stalkerChannel, now, catchUpSupported = true),
+        )
+        assertEquals(
+            ProgrammeAction.START_OVER,
+            guideActionFor(programme(now - hour, now + hour).copy(programmeId = "9001"), stalkerChannel, now, catchUpSupported = true),
+        )
+    }
+
+    @Test
+    fun `other playlists do not need a programme id`() {
+        assertEquals(
+            ProgrammeAction.REPLAY,
+            guideActionFor(programme(now - 3 * hour, now - 2 * hour), archiveChannel, now, catchUpSupported = true),
+        )
+    }
 }

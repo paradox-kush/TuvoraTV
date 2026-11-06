@@ -9,6 +9,9 @@ data class PlaybackTimelineFacts(
     val durationMs: Long? = null,
     val bufferedPositionMs: Long = 0,
     val seekable: Boolean = false,
+    /** Live time-shift window the engine can seek inside (mpv demuxer cache); null when unknown. */
+    val seekableStartMs: Long? = null,
+    val seekableEndMs: Long? = null,
 ) {
     init {
         require(positionMs >= 0) { "Playback position must not be negative" }

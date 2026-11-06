@@ -3,7 +3,7 @@ package com.nuvio.tv.ui.screens.iptv
 /** Decisions at the guide boundary, independent of the player and Compose. */
 internal object GuidePlaybackInteractionPolicy {
     fun focus(state: LiveGuideUiState, channelId: String): LiveGuideUiState =
-        state.copy(focusedChannelId = channelId, actionError = null)
+        state.copy(focusedChannelId = channelId, actionError = null, replayRetry = null)
 
     enum class Click { TUNE, FULLSCREEN, RETRY }
 

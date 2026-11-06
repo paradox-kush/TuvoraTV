@@ -85,8 +85,12 @@ class GuideFirstPaintStoredWindowTest {
         BoundedLoad.sink = realSink
     }
 
-    private fun guideWith(account: XtreamAccount): XtreamLiveGuideViewModel {
-        val factory = mockk<IptvClientFactory> { every { clientFor(any()) } returns provider }
+    private fun guideWith(
+        account: XtreamAccount,
+        client: IptvClient = provider,
+        db: com.nuvio.tv.core.iptv.content.IptvContentDb = mockk(relaxed = true),
+    ): XtreamLiveGuideViewModel {
+        val factory = mockk<IptvClientFactory> { every { clientFor(any()) } returns client }
         val profiles = mockk<ProfileManager>(relaxed = true) { every { activeProfileId } returns MutableStateFlow(1) }
         val overlay = mockk<com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository>(relaxed = true) {
             every { uiState } returns MutableStateFlow(OverlaySnapshot.EMPTY)
@@ -102,12 +106,12 @@ class GuideFirstPaintStoredWindowTest {
             profileManager = profiles,
             libraryRepository = mockk<LibraryRepository>(relaxed = true) { every { libraryItems } returns flowOf(emptyList()) },
             epgMirror = mirror,
-            contentDb = mockk(relaxed = true),
+            contentDb = db,
             catchUp = mockk(relaxed = true),
             matchIndex = mockk(relaxed = true),
             xmltv = mockk<com.nuvio.tv.core.iptv.epg.XmltvClient>(relaxed = true) {
                 every { guideCommitted } returns MutableSharedFlow()
-                coEvery { storedWindow(any(), any(), any(), any()) } returns stored
+                coEvery { storedWindow(any(), any(), any(), any()) } returns (if (account.sourceType == XtreamAccount.SOURCE_STALKER) emptyList() else stored)
             },
             overlayRepository = overlay,
             accountStore = mockk<com.nuvio.tv.data.local.XtreamAccountStore>(relaxed = true) {
@@ -130,6 +134,13 @@ class GuideFirstPaintStoredWindowTest {
 
     private fun guide(acc: XtreamAccount): XtreamLiveGuideViewModel = guideWith(acc)
 
+    private val stalker = m3u.copy(id = "stalker|portal", sourceType = XtreamAccount.SOURCE_STALKER)
+
+    /** A Stalker portal's bulk guide, keyed by the portal's channel id: the past half-hours carry programme ids. */
+    private val stalkerStored: List<EpgProgramme> = (-3..3).map {
+        EpgProgramme("7", stored[it + 3].startMs, stored[it + 3].endMs, "P$it", null, hasArchive = it < 0, programmeId = if (it < 0) "9${it + 3}" else null)
+    }
+
     @Test
     fun `an M3U guide opens with its stored window, not just now and next`() = runTest(main.dispatcher) {
         val vm = guide(m3u)
@@ -149,5 +160,46 @@ class GuideFirstPaintStoredWindowTest {
         settle(vm) { it.channelsLoad == LoadStatus.Loaded }
 
         assertTrue("the panel's per-channel history fetch owns that window, not the store", vm.uiState.value.epg[7]?.storedWindow != true)
+    }
+
+    @Test
+    fun `a Stalker guide opens with the past of its stored bulk guide`() = runTest(main.dispatcher) {
+        val db = mockk<com.nuvio.tv.core.iptv.content.IptvContentDb>(relaxed = true) {
+            coEvery { epgWindow(stalker.id, "7", any(), any(), any()) } returns stalkerStored
+        }
+        val vm = guideWith(stalker, db = db)
+        vm.setAccount(stalker)
+        settle(vm) { it.channelsLoad == LoadStatus.Loaded && it.epg[7]?.storedWindow == true }
+
+        val row = vm.uiState.value.epg[7]
+        assertNotNull("the first row has guide data without any focus move", row)
+        assertTrue("it is the stored window", row!!.storedWindow)
+        val past = row.programmes.filter { it.endMs <= System.currentTimeMillis() }
+        assertTrue("the aired programmes are on the row", past.isNotEmpty())
+        assertTrue("with the portal's programme ids a replay is addressed by", past.all { it.programmeId != null && it.hasArchive == true })
+    }
+
+    /**
+     * The first run: the bulk guide is not on disk when the guide opens, and lands while the now/next ask
+     * waits on it. The stored window read before that found nothing; it must be read again once it can.
+     */
+    @Test
+    fun `a Stalker guide shows the past once the bulk guide lands`() = runTest(main.dispatcher) {
+        var landed = false
+        val db = mockk<com.nuvio.tv.core.iptv.content.IptvContentDb>(relaxed = true) {
+            coEvery { epgWindow(stalker.id, "7", any(), any(), any()) } answers { if (landed) stalkerStored else emptyList() }
+        }
+        val now = System.currentTimeMillis()
+        val stalkerClient = object : IptvClient by provider {
+            override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> {
+                landed = true   // ensureBulkEpg finished: the guide is on disk
+                return Result.success(listOf(XtreamProgram("Now", "", now - half / 2, now + half / 2, nowPlaying = true)))
+            }
+        }
+        val vm = guideWith(stalker, client = stalkerClient, db = db)
+        vm.setAccount(stalker)
+        settle(vm) { it.channelsLoad == LoadStatus.Loaded && it.epg[7]?.storedWindow == true }
+
+        assertTrue("the stored window reached the row", vm.uiState.value.epg[7]?.storedWindow == true)
     }
 }

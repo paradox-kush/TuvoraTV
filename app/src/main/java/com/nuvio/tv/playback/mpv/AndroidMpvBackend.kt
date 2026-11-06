@@ -87,6 +87,8 @@ internal interface MpvBackend {
     suspend fun setVolume(volume: Float): PlaybackResult<Unit>
     suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = unsupportedMpvControl()
     suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = unsupportedMpvControl()
+    suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long): PlaybackResult<Unit> =
+        unsupportedMpvControl()
     suspend fun selectAudioTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> = unsupportedMpvControl()
     suspend fun selectSubtitleTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> = unsupportedMpvControl()
     suspend fun setSubtitlesEnabled(enabled: Boolean): PlaybackResult<Unit> = unsupportedMpvControl()
@@ -193,6 +195,7 @@ internal class AndroidMpvBackend(
     private var durationMs: Long? = null
     private var bufferedDurationMs = 0L
     private var seekable = false
+    private var cacheRanges: List<MpvCacheRange> = emptyList()
     private var trackRevision = 0L
     private var trackReferences: Map<PlaybackTrackId, MpvTrackReference> = emptyMap()
     private var restorationApplied = false
@@ -308,6 +311,27 @@ internal class AndroidMpvBackend(
             core.command("seek", (positionMs / 1_000.0).toString(), "absolute+exact")
             this@AndroidMpvBackend.positionMs = positionMs
             emitTimelineFacts()
+        }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { stateFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
+    // Live pause / rewind (mpv v0.41 demux.c thread_work -> update_opts: a runtime change of these options
+    // applies to the CURRENT file and prunes the cache if it shrank). Written on the native lane, never Main.
+    override suspend fun setLiveCacheBudget(
+        maxBytes: Long,
+        maxBackBytes: Long,
+        cacheSecs: Long,
+    ): PlaybackResult<Unit> = onNativeLane(FailurePhase.PLAYBACK) {
+        if (lifecycle !in activeStates) return@onNativeLane stateFailure(FailurePhase.PLAYBACK)
+        runCatching {
+            core.setString("demuxer-max-bytes", maxBytes.toString())
+            core.setString("demuxer-max-back-bytes", maxBackBytes.toString())
+            // 0 = back to the plan's own read-ahead (the live plan after a pause).
+            val secs = if (cacheSecs > 0) cacheSecs.toString()
+            else plan.preInitOptions["cache-secs"] ?: plan.preInitOptions["demuxer-readahead-secs"]
+            secs?.let { core.setString("cache-secs", it) }
         }.fold(
             onSuccess = { PlaybackResult.Success(Unit) },
             onFailure = { stateFailure(FailurePhase.PLAYBACK) },
@@ -612,6 +636,16 @@ internal class AndroidMpvBackend(
     }
 
     override fun property(name: String, value: MPVNode) {
+        if (name == "demuxer-cache-state") {
+            // Shadow state for the live window: read off mpv's own event thread, published with the timeline.
+            val ranges = parseMpvSeekableRanges(value)
+            scope.launch {
+                if (terminalEventsSuppressed) return@launch
+                cacheRanges = ranges
+                emitTimelineFacts()
+            }
+            return
+        }
         if (name != "track-list") return
         scope.launch {
             if (terminalEventsSuppressed) return@launch
@@ -703,6 +737,7 @@ internal class AndroidMpvBackend(
         core.observeString("hwdec-current")
         core.observeString("video-codec")
         core.observeNode("track-list")
+        core.observeNode("demuxer-cache-state")
     }
 
     private fun emitVideoSizeIfKnown() {
@@ -743,6 +778,7 @@ internal class AndroidMpvBackend(
     }
 
     private fun emitTimelineFacts() {
+        val window = MpvSeekWindow.fromCacheState(cacheRanges, positionMs / 1_000.0)
         _events.tryEmit(
             MpvBackendEvent.TimelineUpdated(
                 PlaybackTimelineFacts(
@@ -750,6 +786,8 @@ internal class AndroidMpvBackend(
                     durationMs = durationMs,
                     bufferedPositionMs = (positionMs + bufferedDurationMs).coerceAtLeast(positionMs),
                     seekable = seekable,
+                    seekableStartMs = window?.startMs,
+                    seekableEndMs = window?.endMs,
                 ),
             ),
         )
@@ -923,6 +961,15 @@ private class AndroidMpvNativeCore(private val mpv: MPV) : MpvNativeCore {
     override fun destroyWithResult(): Boolean = mpv.destroyWithResult()
     override fun forceTerminateWithResult(): Boolean = mpv.destroyWithResult()
 }
+
+/** `demuxer-cache-state/seekable-ranges` as [MpvCacheRange]s (mpv input.rst); empty when absent. */
+internal fun parseMpvSeekableRanges(node: MPVNode): List<MpvCacheRange> =
+    node.asMap()?.get("seekable-ranges")?.asArray().orEmpty().mapNotNull { range ->
+        val fields = range.asMap() ?: return@mapNotNull null
+        val start = fields["start"]?.asDouble() ?: return@mapNotNull null
+        val end = fields["end"]?.asDouble() ?: return@mapNotNull null
+        MpvCacheRange(start, end)
+    }
 
 internal data class ParsedMpvEndFile(val reason: MpvEndReason, val fileError: String?)
 

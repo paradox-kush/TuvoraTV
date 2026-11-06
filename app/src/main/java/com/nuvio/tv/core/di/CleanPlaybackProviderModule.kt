@@ -1,6 +1,8 @@
 package com.nuvio.tv.core.di
 
+import com.nuvio.tv.core.contracts.LivePauseControlFactory
 import com.nuvio.tv.core.iptv.playback.IptvProviderPlaybackResolverFactory
+import com.nuvio.tv.core.livepause.LivePauseControlFactoryImpl
 import com.nuvio.tv.core.iptv.playback.IptvLiveChannelBridge
 import com.nuvio.tv.core.iptv.dns.PlaylistDns
 import com.nuvio.tv.playback.core.ProviderPlaybackResolverFactory
@@ -26,6 +28,12 @@ abstract class CleanPlaybackProviderModule {
     abstract fun bindProviderPlaybackResolverFactory(
         implementation: IptvProviderPlaybackResolverFactory,
     ): ProviderPlaybackResolverFactory
+
+    @Binds
+    @Singleton
+    internal abstract fun bindLivePauseControlFactory(
+        implementation: LivePauseControlFactoryImpl,
+    ): LivePauseControlFactory
 
     @Binds
     @Singleton

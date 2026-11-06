@@ -250,6 +250,35 @@ class IptvContentDbTest {
     }
 
     @Test
+    fun `a whole-guide refresh keeps the per-channel catch-up history and its fetch stamp`() = runTest {
+        val xtream = "xtream-acc"
+        // Xtream per-channel history (get_simple_data_table), stored under the sid: namespace (B231).
+        db.refillChannelEpg(xtream, "sid:7", listOf(EpgProgramme("sid:7", 1_000L, 2_000L, "Yesterday", null, hasArchive = true)), fetchedAtMs = 500L)
+        // The XMLTV ingest owns only its own channel keys.
+        db.replaceEpg(xtream, builtAtMs = 9_000L) { w -> w.add(EpgProgramme("bbc.uk", 3_000L, 4_000L, "Xmltv", null)) }
+        assertEquals("xmltv rows landed", listOf("Xmltv"), db.epgWindow(xtream, "bbc.uk", 0L, 10_000L).map { it.title })
+        assertEquals("history rows survive the swap", listOf("Yesterday"), db.epgWindow(xtream, "sid:7", 0L, 10_000L).map { it.title })
+        assertEquals("history stamp survives so no re-download", 500L, db.epgChannelFetchedAt(xtream, "sid:7"))
+    }
+
+    @Test
+    fun `another playlist's whole-guide swap and prune leave this playlist's catch-up history and stamps alone`() = runTest {
+        // Two Xtream panels (same code, different port) both use the sid:N namespace (B231 cross-playlist).
+        val a = "http://10.0.2.2:8932|user"
+        val b = "http://10.0.2.2:8933|user"
+        db.refillChannelEpg(a, "sid:7", listOf(EpgProgramme("sid:7", 1_000L, 2_000L, "A yesterday", null, hasArchive = true)), fetchedAtMs = 500L)
+        db.refillChannelEpg(b, "sid:7", listOf(EpgProgramme("sid:7", 1_000L, 2_000L, "B yesterday", null, hasArchive = true)), fetchedAtMs = 600L)
+        db.replaceEpg(b, builtAtMs = 9_000L) { w -> w.add(EpgProgramme("bbc.uk", 3_000L, 4_000L, "B xmltv", null)) }
+        db.pruneEpg(b, cutoffMs = 1_500L)
+        db.resetEpgFetchStamps(b)
+        assertEquals("A history rows intact", listOf("A yesterday"), db.epgWindow(a, "sid:7", 0L, 10_000L).map { it.title })
+        assertEquals("A history flag intact", true, db.epgWindow(a, "sid:7", 0L, 10_000L).single().hasArchive)
+        assertEquals("A stamp intact", 500L, db.epgChannelFetchedAt(a, "sid:7"))
+        assertEquals("A got none of B's xmltv rows", emptyList<String>(), db.epgWindow(a, "bbc.uk", 0L, 10_000L).map { it.title })
+        assertEquals("A's own guide was never built", null, db.epgBuiltAt(a))
+    }
+
+    @Test
     fun `an empty or truncated-to-nothing refresh keeps the prior generation but still throttles`() = runTest {
         ingestSample()
         db.replaceEpg(pid, builtAtMs = 1_000L) { w -> w.add(EpgProgramme("bbc.uk", 2_000L, 3_000L, "Prior", null)) }
@@ -346,11 +375,11 @@ class IptvContentDbTest {
     }
 
     @Test
-    fun `a wholesale epg replace supersedes the per-channel fetch stamps`() = runTest {
+    fun `a wholesale epg replace keeps the per-channel fetch stamps (B231)`() = runTest {
         db.refillChannelEpg(pid, "bbc.uk", emptyList(), fetchedAtMs = 5L)
         assertEquals(5L, db.epgChannelFetchedAt(pid, "bbc.uk"))
         db.replaceEpg(pid, builtAtMs = 10L) { w -> w.add(EpgProgramme("bbc.uk", 1L, 2L, "P", null)) }
-        assertNull(db.epgChannelFetchedAt(pid, "bbc.uk"))
+        assertEquals("B231: a stamped channel owns its rows, so its stamp survives the swap", 5L, db.epgChannelFetchedAt(pid, "bbc.uk"))
     }
 
     @Test
@@ -397,6 +426,34 @@ class IptvContentDbTest {
         val other = "m3u:http://flags/lineup"
         db.replaceLiveLineup(other, listOf(ContentChannel(9, "LB", null, null, "g", "http://h/9.ts", useLoadBalancing = true)), categories = listOf("g" to "Group"))
         assertEquals(true, db.channelsFor(other, null).single().useLoadBalancing)
+    }
+
+    // --- B179: divider rows are STORED (saved ids resolve), but the stored count is what the lists show ---------
+
+    private val b179Lineup = listOf(
+        ContentChannel(1, "BG: ################ Bulgaria Channels", null, null, "bg", "http://h/1.ts"),
+        ContentChannel(2, "BG: Bnt 2", null, null, "bg", "http://h/2.ts"),
+        ContentChannel(3, "*** UK ***", null, null, "bg", "http://h/3.ts"),
+        ContentChannel(4, "#0 Sport", null, null, "bg", "http://h/4.ts"),
+        ContentChannel(5, "*** PPV ***", null, "ppv.bg", "bg", "http://h/5.ts"),
+    )
+
+    @Test
+    fun `B179 M3U ingest stores every row and counts only what is shown`() = runTest {
+        val id = "m3u:http://b179/ingest"
+        db.ingest(id) { w -> b179Lineup.forEach { w.addChannel(it) } }
+        assertEquals("nothing deleted", listOf(1, 2, 3, 4, 5), db.channelsFor(id, null).map { it.sid }.sorted())
+        assertEquals("paged reads are raw too (the hub filters per window)", 5, db.pageChannels(id, null, 0, 50).size)
+        assertNotNull("a saved id still resolves", db.channelRow(id, 1))
+        assertEquals("two dividers are not counted", 3, db.liveCount(id))
+    }
+
+    @Test
+    fun `B179 Stalker lineup replace stores every row and counts only what is shown`() = runTest {
+        val id = "m3u:http://b179/lineup"
+        db.replaceLiveLineup(id, b179Lineup, categories = listOf("bg" to "Bulgaria"))
+        assertEquals("nothing deleted", listOf(1, 2, 3, 4, 5), db.channelsFor(id, null).map { it.sid }.sorted())
+        assertEquals(3, db.liveCount(id))
     }
 
     @Test
@@ -447,5 +504,46 @@ class IptvContentDbTest {
         val row = old.channelRow(pid, 1)
         assertNotNull("old row still readable", row)
         assertNull("old row has no catch-up", row!!.catchUp)
+    }
+
+    @Test
+    fun `a stalker programme id round-trips through the writer every read and a per-channel refill`() = runTest {
+        db.replaceEpg(pid, builtAtMs = 0L) { w ->
+            w.add(EpgProgramme("12", 1_000L, 2_000L, "News", null, hasArchive = true, programmeId = "9001"))
+            w.add(EpgProgramme("12", 2_000L, 3_000L, "No id", null))
+        }
+        assertEquals(listOf("9001", null), db.epgWindow(pid, "12", 0L, 10_000L).map { it.programmeId })
+        assertEquals(listOf("9001", null), db.epgNowNext(pid, "12", nowMs = 1_500L).map { it.programmeId })
+
+        db.refillChannelEpg(pid, "12", listOf(EpgProgramme("12", 5_000L, 6_000L, "Later", null, programmeId = "9100")), fetchedAtMs = 1L)
+        assertEquals(listOf("9100"), db.epgWindow(pid, "12", 4_000L, 10_000L).map { it.programmeId })
+    }
+
+    @Test
+    fun `a database written before the programme id column opens and reads old rows as no id`() = runTest {
+        val path = RuntimeEnvironment.getApplication().getDatabasePath("iptv_content_old_epg.db")
+        path.parentFile?.mkdirs()
+        path.delete()
+        // epg_programmes and a leftover shadow table exactly as they shipped, with no programme_id.
+        android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(path, null).use { raw ->
+            raw.execSQL("CREATE TABLE channels(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, tvg_id TEXT, url TEXT NOT NULL, cmd TEXT, tv_archive INTEGER, use_http_tmp_link INTEGER, use_load_balancing INTEGER, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE vod(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, ext TEXT, cmd TEXT, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE series(playlist_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, category_id TEXT, sid INTEGER NOT NULL, name TEXT NOT NULL, logo TEXT, PRIMARY KEY(playlist_id, generation, sid)) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE ingest_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, live_count INTEGER NOT NULL, vod_count INTEGER NOT NULL, series_count INTEGER NOT NULL, tvg_url TEXT, epg_built_at INTEGER, active_generation INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID")
+            raw.execSQL("CREATE TABLE epg_programmes(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, has_archive INTEGER NOT NULL DEFAULT 0)")
+            raw.execSQL("CREATE TABLE epg_programmes_shadow(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT, has_archive INTEGER NOT NULL DEFAULT 0)")
+            raw.execSQL("CREATE TABLE epg_channel_fetch(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, fetched_at INTEGER NOT NULL, PRIMARY KEY(playlist_id, channel_id)) WITHOUT ROWID")
+            raw.execSQL("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) VALUES('$pid', '12', 1000, 2000, 'Old', NULL, 1)")
+            raw.version = 5
+        }
+        val old = IptvContentDb(RuntimeEnvironment.getApplication(), "iptv_content_old_epg.db")
+
+        val rows = old.epgWindow(pid, "12", 0L, 10_000L)
+        assertEquals("the old row is still readable", listOf("Old"), rows.map { it.title })
+        assertNull("and has no programme id", rows.single().programmeId)
+
+        // The next refresh writes through the (altered) shadow table and the new column.
+        old.replaceEpg(pid, builtAtMs = 1L) { w -> w.add(EpgProgramme("12", 1_000L, 2_000L, "New", null, programmeId = "9001")) }
+        assertEquals(listOf("9001"), old.epgWindow(pid, "12", 0L, 10_000L).map { it.programmeId })
     }
 }

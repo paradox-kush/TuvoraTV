@@ -89,4 +89,83 @@ class XmltvIngestWindowTest {
         assertEquals("no archive keeps the default", XmltvIngestWindow.BACK_MS, XmltvIngestWindow.backMsForCatchUpDays(0))
         assertEquals("a short archive never goes below the default", XmltvIngestWindow.BACK_MS, XmltvIngestWindow.backMsForCatchUpDays(-1))
     }
+
+    // A guide channel the user picked by hand is not in the matcher's assignments. It used to fall
+    // through to the 6 h default, so a hand-picked catch-up channel had nothing older to replay.
+    @Test
+    fun `a hand-picked guide channel keeps the archive depth of the channel it was picked for`() {
+        val back = XmltvIngestWindow.backMsByGuide(
+            assigned = emptyList(),
+            manual = listOf(7 to "bbc1.uk"),
+            catchUpDaysBySid = mapOf(7 to 3),
+        )
+        assertEquals("the pick gets the 3-day archive, not the 6 h default",
+            XmltvIngestWindow.backMsForCatchUpDays(3), back["bbc1.uk"])
+    }
+
+    @Test
+    fun `a pick for a channel without catch-up keeps the default`() {
+        val back = XmltvIngestWindow.backMsByGuide(
+            assigned = emptyList(), manual = listOf(7 to "bbc1.uk"), catchUpDaysBySid = mapOf(9 to 3),
+        )
+        assertEquals("no archive on channel 7, so nothing widened", null, back["bbc1.uk"])
+    }
+
+    @Test
+    fun `a guide id shared by a matched and a picked channel keeps the longer archive`() {
+        val back = XmltvIngestWindow.backMsByGuide(
+            assigned = listOf(1 to "itv.uk"), manual = listOf(2 to "itv.uk"),
+            catchUpDaysBySid = mapOf(1 to 2, 2 to 5),
+        )
+        assertEquals("longest depth wins", XmltvIngestWindow.backMsForCatchUpDays(5), back["itv.uk"])
+    }
+
+    @Test
+    fun `matched channels still get their depth`() {
+        val back = XmltvIngestWindow.backMsByGuide(
+            assigned = listOf(1 to "itv.uk"), manual = emptyList(), catchUpDaysBySid = mapOf(1 to 2),
+        )
+        assertEquals(XmltvIngestWindow.backMsForCatchUpDays(2), back["itv.uk"])
+    }
+
+    // The sid -> guide id mapping XmltvClient feeds backMsByGuide from the overlay's hand picks. The
+    // tests above pass pre-resolved sids, so a break in this mapping (the identity key, the guide id
+    // normalisation) would not have gone red.
+    private fun entity(playlist: String, name: String, epgId: String?) =
+        com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(playlist, name, epgId)
+
+    @Test
+    fun `an overlay pick resolves to its channel's stream id through the real identity key`() {
+        val lineup = listOf(
+            XmltvIngestWindow.LineupRef(name = "BBC One", epgId = "bbc1.uk", streamId = 7),
+            XmltvIngestWindow.LineupRef(name = "ITV", epgId = null, streamId = 9),
+        )
+        val picks = XmltvIngestWindow.manualPicks(
+            playlistId = "pl",
+            lineup = lineup,
+            overrides = listOf(entity("pl", "ITV", null) to " ITV.UK "),
+            normalize = ::normalizeChannelId,
+        )
+        assertEquals("the pick belongs to stream 9, guide id normalised", listOf(9 to normalizeChannelId(" ITV.UK ")), picks)
+    }
+
+    @Test
+    fun `a pick for a channel that left the lineup, or another playlist, is dropped`() {
+        val lineup = listOf(XmltvIngestWindow.LineupRef("BBC One", "bbc1.uk", 7))
+        val picks = XmltvIngestWindow.manualPicks(
+            playlistId = "pl", lineup = lineup,
+            overrides = listOf(entity("pl", "Gone", null) to "x.uk", entity("other", "BBC One", "bbc1.uk") to "y.uk"),
+            normalize = ::normalizeChannelId,
+        )
+        assertEquals("nothing to widen", emptyList<Pair<Int, String>>(), picks)
+    }
+
+    @Test
+    fun `a pick made through the real mapping widens the archive window end to end`() {
+        val lineup = listOf(XmltvIngestWindow.LineupRef("BBC One", "bbc1.uk", 7))
+        val manual = XmltvIngestWindow.manualPicks("pl", lineup, listOf(entity("pl", "BBC One", "bbc1.uk") to "BBC1.uk"), ::normalizeChannelId)
+        val back = XmltvIngestWindow.backMsByGuide(emptyList(), manual, mapOf(7 to 3))
+        assertEquals("3-day archive under the normalised guide id",
+            XmltvIngestWindow.backMsForCatchUpDays(3), back[normalizeChannelId("BBC1.uk")])
+    }
 }

@@ -62,6 +62,8 @@ sealed interface PostPlayMode {
 }
 
 data class PlayerUiState(
+    /** False for a single-use replay (a Stalker archive): its progress bar shows position but cannot seek. */
+    val seekable: Boolean = true,
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = true,
     val playbackEnded: Boolean = false,
@@ -186,7 +188,7 @@ data class PlayerUiState(
     val playerBadgeFilters: List<CompiledStreamBadgeFilter> = emptyList(),
     val error: String? = null,
     val showSwitchToMpvErrorAction: Boolean = false,
-    /** Fork: a catch-up replay that never started ends here with a Retry beside Go back. */
+    /** Failed-start error (B214/B217) and a catch-up replay that never started: the error dialog offers Retry. */
     val showRetryErrorAction: Boolean = false,
     val playbackIssueReportStatus: PlaybackIssueReportStatus = PlaybackIssueReportStatus.Idle,
     val playbackIssueReportId: String? = null,

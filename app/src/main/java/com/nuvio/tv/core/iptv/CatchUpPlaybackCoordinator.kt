@@ -1,6 +1,8 @@
 package com.nuvio.tv.core.iptv
 
 import com.nuvio.tv.core.contracts.CatchUpContinuationPolicy
+import com.nuvio.tv.core.iptv.stalker.StalkerArchiveSource
+import com.nuvio.tv.core.iptv.stalker.StalkerReplayOutcome
 import com.nuvio.tv.core.lifecycle.Disposable
 
 import javax.inject.Inject
@@ -26,6 +28,8 @@ class CatchUpPlaybackCoordinator @Inject constructor(
     private val serverFailover: PlaylistServerFailover = PlaylistServerFailover.detached(),
     /** B117: the panel's measured clock-pair offset — the replay `start` is panel-local time. */
     private val panelClock: PanelClockSource = PanelClockSource.NONE,
+    /** Mints a Stalker archive replay's single-use link (the portal's `create_link`); nothing by default. */
+    private val stalkerArchive: StalkerArchiveSource = StalkerArchiveSource.NONE,
 ) {
     private val walk = CatchUpDialectWalk(winners)
 
@@ -51,6 +55,11 @@ class CatchUpPlaybackCoordinator @Inject constructor(
          * the show plus what follows, so the next shows play on). Equals the programme's end otherwise.
          */
         val windowEndMs: Long = programme.endMs,
+        /**
+         * The link is spent by playing it (a Stalker archive `create_link`): the engine must not
+         * re-open it, nothing may probe it, and only a fresh mint ([reopenStalker]) recovers it.
+         */
+        val singleUse: Boolean = false,
     )
 
     /** How a bounded [open] ended. A failure is never "unavailable"; the viewer gets to retry it. */
@@ -62,7 +71,22 @@ class CatchUpPlaybackCoordinator @Inject constructor(
 
         /** The open itself failed or hit its deadline ([timedOut]). */
         data class Failed(val timedOut: Boolean) : OpenOutcome
+
+        /** The Stalker portal answered with something specific; [failure] has the words and carries Retry. */
+        data class Refused(val failure: StalkerReplayOutcome.Failure) : OpenOutcome
     }
+
+    /** How a fresh mint for a single-use replay ended. */
+    sealed interface Reopened {
+        data class Link(val url: String) : Reopened {
+            override fun toString(): String = "Reopened.Link(hasUrl=true)"
+        }
+
+        data class Refused(val failure: StalkerReplayOutcome.Failure) : Reopened
+    }
+
+    /** What a Stalker archive replay needs to be minted again: the portal account and the programme's own id. */
+    private class StalkerReplay(val account: XtreamAccount, val programmeId: String, val session: Session)
 
     /** One M3U replay's candidate links, best first, and where the walk is. */
     private class M3uLadder(val primary: String, val urls: List<String>, var index: Int = 0)
@@ -78,6 +102,33 @@ class CatchUpPlaybackCoordinator @Inject constructor(
     private val m3uLadders = HashMap<String, M3uLadder>()
     private var m3uToken = 0L
 
+    /**
+     * Mints in flight, by replay. A second press (or Retry) on the same programme while its mint is
+     * still out joins it instead of minting a second single-use link.
+     */
+    private val inFlight = HashMap<String, kotlinx.coroutines.CompletableDeferred<Any?>>()
+
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun <T> singleFlight(key: String, ifCancelled: T, block: suspend () -> T): T {
+        val mine = kotlinx.coroutines.CompletableDeferred<Any?>()
+        val running = synchronized(lock) {
+            inFlight[key] ?: run { inFlight[key] = mine; null }
+        }
+        if (running != null) {
+            // The leader may be cancelled (its screen left); the follower then reports it as a failure
+            // rather than inheriting the cancellation, so the press is not silently lost.
+            return running.await() as T
+        }
+        try {
+            return block().also { mine.complete(it) }
+        } catch (t: Throwable) {
+            mine.complete(ifCancelled)
+            throw t
+        } finally {
+            synchronized(lock) { if (inFlight[key] === mine) inFlight.remove(key) }
+        }
+    }
+
     /** [open] calls that are still waiting; a result for any other ticket is stale and must not be published. */
     private val liveTickets = HashSet<Long>()
     private var ticketSeq = 0L
@@ -86,32 +137,41 @@ class CatchUpPlaybackCoordinator @Inject constructor(
      * What the player needs after the first frame, when [sessions] has already let go of the replay:
      * the account/channel to look the next programme up for, and the live URL to rejoin. Bounded to
      * the last few replays; nothing in the player's lifecycle calls back to drop it.
+     *
+     * One shape for both providers: an M3U replay carries its playlist's [info], an Xtream replay the
+     * [request] it asked the panel with (a restart re-asks it from the playhead).
      */
-    class M3uReplayContext(
+    class ReplayContext(
         val account: XtreamAccount,
         val streamId: Int,
         val channelName: String,
-        val liveUrl: String,
-        val info: M3uCatchUpInfo,
+        /** The channel's live URL, to rejoin live at the live edge; null when the caller had none. */
+        val liveUrl: String?,
+        val info: M3uCatchUpInfo?,
+        val request: CatchUpDialectWalk.Request?,
         @Volatile var startMs: Long,
         @Volatile var windowEndMs: Long,
         val programmeEndMs: Long,
         val programmeTitle: String,
     )
 
-    private val m3uContexts = object : LinkedHashMap<String, M3uReplayContext>() {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, M3uReplayContext>?): Boolean = size > 8
+    private val contexts = object : LinkedHashMap<String, ReplayContext>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ReplayContext>?): Boolean = size > 8
+    }
+
+    private val stalkerReplays = object : LinkedHashMap<String, StalkerReplay>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StalkerReplay>?): Boolean = size > 8
     }
 
     private val sessions = HashMap<String, Session>()
 
     /** Publishes a built replay unless its [ticket] was abandoned (the open timed out); true when it did. */
-    private fun publish(ticket: Long?, session: Session, ladder: M3uLadder? = null, context: M3uReplayContext? = null): Boolean =
+    private fun publish(ticket: Long?, session: Session, ladder: M3uLadder? = null, context: ReplayContext? = null): Boolean =
         synchronized(lock) {
             if (ticket != null && ticket !in liveTickets) return@synchronized false
             sessions[session.contentId] = session
             if (ladder != null) m3uLadders[session.contentId] = ladder
-            if (context != null) m3uContexts[session.contentId] = context
+            if (context != null) contexts[session.contentId] = context
             true
         }
 
@@ -151,16 +211,20 @@ class CatchUpPlaybackCoordinator @Inject constructor(
         // proven under the OTHER container would lead the ladder and the toggle would do nothing.
         winners.useAccountPreference(account.id, account.preferM3u8CatchUp)
 
+        // The show plus what follows, like an M3U replay, so playback runs on into the next programme.
+        // An airing programme's end is in the future and is sent UNCLAMPED (panels serve what they
+        // have, and clamping asks for a shorter recording than exists): the window is then its end.
+        val windowEnd = CatchUpContinuationPolicy.replayWindowEndMs(
+            CatchUpContinuationPolicy.Programme(programme.startMs, programme.endMs), nowMs,
+        )
         val request = CatchUpDialectWalk.Request(
             accountId = account.id,
             baseUrl = serverFailover.activeAccount(account).baseUrl,
             username = account.username,
             password = account.password,
             streamId = streamId,
-            // The airing programme's end is in the future and is sent UNCLAMPED: panels serve what
-            // they have, and clamping asks for a shorter recording than exists.
             startMs = programme.startMs,
-            endMs = programme.endMs,
+            endMs = windowEnd,
             allowedOutputFormats = allowedOutputFormats,
             preferM3u8 = account.preferM3u8CatchUp,
             // B117: the panel's own wall clock (measured once per session) + the manual correction.
@@ -175,8 +239,13 @@ class CatchUpPlaybackCoordinator @Inject constructor(
             url = step.attempt.url,
             token = step.attempt.token,
             isStartOver = programme.endMs > nowMs,
+            windowEndMs = windowEnd,
         )
-        return session.takeIf { publish(ticket, it) }
+        val context = ReplayContext(
+            account, streamId, channelName, liveUrl?.takeIf { it.isNotBlank() }, null, request,
+            programme.startMs, windowEnd, programme.endMs, programme.title,
+        )
+        return session.takeIf { publish(ticket, it, context = context) }
     }
 
     /**
@@ -195,7 +264,14 @@ class CatchUpPlaybackCoordinator @Inject constructor(
         allowedOutputFormats: List<String>? = null,
         liveUrl: String? = null,
         m3uCatchUp: M3uCatchUpInfo? = null,
+        /** A Stalker programme's own EPG id: the whole address of its recording (null = the portal named none). */
+        stalkerProgrammeId: String? = null,
     ): OpenOutcome {
+        if (account.sourceType == XtreamAccount.SOURCE_STALKER) {
+            return singleFlight<OpenOutcome>("open:" + contentIdFor(channelContentId, programme.startMs), OpenOutcome.Failed(timedOut = false)) {
+                openStalker(account, channelContentId, channelName, programme, nowMs, stalkerProgrammeId)
+            }
+        }
         val ticket = synchronized(lock) { (++ticketSeq).also { liveTickets.add(it) } }
         val outcome = BoundedLoad.run<Session?>(
             surface = LoadSurface.LIVE_RESOLVE,
@@ -256,15 +332,15 @@ class CatchUpPlaybackCoordinator @Inject constructor(
             isStartOver = airing,
             windowEndMs = windowEnd,
         )
-        val context = M3uReplayContext(
-            account, streamId, channelName, live, info, programme.startMs, windowEnd, programme.endMs, programme.title,
+        val context = ReplayContext(
+            account, streamId, channelName, live, info, null, programme.startMs, windowEnd, programme.endMs, programme.title,
         )
         return session.takeIf { publish(ticket, it, M3uLadder(primary, urls), context) }
     }
 
-    /** The context of an M3U replay (null for Xtream replays, which never continue past their programme). */
-    fun m3uContextFor(contentId: String?): M3uReplayContext? =
-        contentId?.let { synchronized(lock) { m3uContexts[it] } }
+    /** The context of a replay that asked for a continuation window (M3U or Xtream); null for any other. */
+    fun replayContextFor(contentId: String?): ReplayContext? =
+        contentId?.let { synchronized(lock) { contexts[it] } }
 
     /**
      * Ties the replay's context to its owner: the player adopts the handle into its scope and the
@@ -280,16 +356,22 @@ class CatchUpPlaybackCoordinator @Inject constructor(
 
     /**
      * The replay is past the end of its window: ask for a new one starting at [atMs] (the playhead).
-     * Same shape as [beginM3u], with the window [atMs, atMs + [CatchUpContinuationPolicy.CONTINUE_MS]]
-     * capped at what has aired. Answers the first link, or null when none can be built.
+     * The window is [atMs, atMs + [CatchUpContinuationPolicy.CONTINUE_MS]] capped at what has aired.
+     * Answers the first link, or null when none can be built (or the replay is gone).
      */
-    fun restartM3u(contentId: String?, atMs: Long, nowMs: Long): Restart? {
-        val ctx = m3uContextFor(contentId) ?: return null
+    fun restartReplay(contentId: String?, atMs: Long, nowMs: Long): Restart? {
+        val ctx = replayContextFor(contentId) ?: return null
+        return if (ctx.request != null) restartXtream(ctx, atMs, nowMs) else restartM3u(contentId!!, ctx, atMs, nowMs)
+    }
+
+    private fun restartM3u(contentId: String, ctx: ReplayContext, atMs: Long, nowMs: Long): Restart? {
+        val info = ctx.info ?: return null
+        val live = ctx.liveUrl ?: return null
         val windowEnd = CatchUpContinuationPolicy.replayWindowEndMs(
             CatchUpContinuationPolicy.Programme(atMs, atMs + 1L), nowMs,
         )
         val offsetMs = ctx.account.catchUpOffsetMs ?: 0L
-        val primary = M3uCatchUp.build(ctx.info, ctx.liveUrl, atMs, windowEnd, nowMs, offsetMs) ?: return null
+        val primary = M3uCatchUp.build(info, live, atMs, windowEnd, nowMs, offsetMs) ?: return null
         val urls = M3uCatchUp.preferForm(
             primary,
             M3uCatchUp.alternatives(url = primary, offsetMs = offsetMs),
@@ -298,9 +380,28 @@ class CatchUpPlaybackCoordinator @Inject constructor(
         synchronized(lock) {
             ctx.startMs = atMs
             ctx.windowEndMs = windowEnd
-            m3uLadders[contentId!!] = M3uLadder(primary, urls)
+            m3uLadders[contentId] = M3uLadder(primary, urls)
         }
         return Restart(url = urls.first(), startMs = atMs, windowEndMs = windowEnd)
+    }
+
+    /**
+     * Xtream: the same ask from the playhead. The winner dialect the first window proved leads the walk
+     * by itself. The player reports nothing back about a restarted window (the replay already played),
+     * so the walk is let go as soon as its first link is taken, instead of waiting on a result that
+     * never comes and sitting in the way of the account's next replay.
+     */
+    private fun restartXtream(ctx: ReplayContext, atMs: Long, nowMs: Long): Restart? {
+        val base = ctx.request ?: return null
+        winners.useAccountPreference(ctx.account.id, ctx.account.preferM3u8CatchUp)
+        val request = CatchUpDialectWalk.continuationRequest(base, atMs, nowMs)
+        val first = walk.begin(request) as? CatchUpDialectWalk.Step.Next ?: return null
+        walk.abandon(first.attempt.token)
+        synchronized(lock) {
+            ctx.startMs = atMs
+            ctx.windowEndMs = request.endMs
+        }
+        return Restart(url = first.attempt.url, startMs = atMs, windowEndMs = request.endMs)
     }
 
     data class Restart(val url: String, val startMs: Long, val windowEndMs: Long)
@@ -310,6 +411,11 @@ class CatchUpPlaybackCoordinator @Inject constructor(
     /** A frame reached the screen: the shape is proven and remembered for this account. */
     fun onPlayed(contentId: String?) {
         val session = sessionFor(contentId) ?: return
+        if (session.singleUse) {
+            // Nothing to remember: a Stalker archive has no URL shapes to learn. Its mint stays held for Retry.
+            synchronized(lock) { sessions.remove(session.contentId) }
+            return
+        }
         val ladder = synchronized(lock) { m3uLadders.remove(session.contentId) }
         if (ladder != null) {
             winners.rememberM3uForm(session.accountId, M3uCatchUp.linkForm(session.url, ladder.primary))
@@ -328,6 +434,8 @@ class CatchUpPlaybackCoordinator @Inject constructor(
      */
     fun onFailed(contentId: String?, errorCode: Int): Session? {
         val session = sessionFor(contentId) ?: return null
+        // A spent single-use link has no shape to walk to: only a fresh mint (reopenStalker) recovers it.
+        if (session.singleUse) return null
         synchronized(lock) { m3uLadders[session.contentId] }?.let { return onM3uFailed(session, it, errorCode) }
         val step = walk.onFailure(session.token, CatchUpFailure.kindFor(errorCode))
         if (step !is CatchUpDialectWalk.Step.Next) {
@@ -355,8 +463,99 @@ class CatchUpPlaybackCoordinator @Inject constructor(
 
     /** Drops a finished replay's bookkeeping when the player leaves without succeeding or failing. */
     fun release(contentId: String?) {
-        contentId?.let { synchronized(lock) { sessions.remove(it); m3uLadders.remove(it); m3uContexts.remove(it) } }
+        contentId?.let {
+            synchronized(lock) { sessions.remove(it); m3uLadders.remove(it); contexts.remove(it); stalkerReplays.remove(it) }
+        }
     }
+
+    /**
+     * Opens a Stalker archive replay: ONE `create_link` (`type=tv_archive`) from the portal's own
+     * programme id, under the live-resolve deadline. The link is single-use, so the session is marked
+     * and the engine, the dialect walk and every probe leave it alone. No programme id is no recording.
+     */
+    private suspend fun openStalker(
+        account: XtreamAccount,
+        channelContentId: String,
+        channelName: String,
+        programme: Programme,
+        nowMs: Long,
+        programmeId: String?,
+    ): OpenOutcome {
+        if (!supportsStalkerArchive(account) || programmeId.isNullOrBlank()) return OpenOutcome.Unavailable
+        if (programme.startMs <= 0L || programme.endMs <= programme.startMs) return OpenOutcome.Unavailable
+        val outcome = BoundedLoad.run<StalkerArchiveSource.Minted>(
+            surface = LoadSurface.LIVE_RESOLVE,
+            report = mapOf("source_type" to account.sourceType, "kind" to "catchup"),
+        ) { stalkerArchive.mint(account, programmeId) }
+        return when (outcome) {
+            is LoadOutcome.Loaded -> when (val minted = outcome.value) {
+                is StalkerArchiveSource.Minted.Link -> {
+                    val session = Session(
+                        contentId = contentIdFor(channelContentId, programme.startMs),
+                        accountId = account.id,
+                        channelName = channelName,
+                        programme = programme,
+                        url = minted.url,
+                        token = synchronized(lock) { ++m3uToken },
+                        isStartOver = programme.endMs > nowMs,
+                        singleUse = true,
+                    )
+                    synchronized(lock) {
+                        sessions[session.contentId] = session
+                        stalkerReplays[session.contentId] = StalkerReplay(account, programmeId, session)
+                    }
+                    OpenOutcome.Opened(session)
+                }
+                is StalkerArchiveSource.Minted.Refused -> OpenOutcome.Refused(StalkerReplayOutcome.forOpen(minted.error))
+            }
+            is LoadOutcome.Empty -> OpenOutcome.Unavailable
+            is LoadOutcome.Failed ->
+                OpenOutcome.Refused(StalkerReplayOutcome.forOpen(CatchUpFailure.StalkerLinkError.NONE, outcome.timedOut))
+        }
+    }
+
+    /** True while [contentId] names a replay whose link is spent by playing (a Stalker archive). */
+    fun isSingleUse(contentId: String?): Boolean =
+        contentId != null && synchronized(lock) { contentId in stalkerReplays }
+
+    /**
+     * Retry of a single-use replay: a FRESH `create_link` for the same programme, never the spent URL.
+     * Null when [contentId] is not a held Stalker replay (not one, or the player already let go of it).
+     */
+    suspend fun reopenStalker(contentId: String?): Reopened? {
+        if (contentId == null) return null
+        val held = synchronized(lock) { stalkerReplays[contentId] } ?: return null
+        return singleFlight<Reopened?>("reopen:$contentId", Reopened.Refused(StalkerReplayOutcome.forOpen(CatchUpFailure.StalkerLinkError.NONE))) {
+            mintAgain(contentId, held)
+        }
+    }
+
+    private suspend fun mintAgain(contentId: String, held: StalkerReplay): Reopened? {
+        val outcome = BoundedLoad.run<StalkerArchiveSource.Minted>(
+            surface = LoadSurface.LIVE_RESOLVE,
+            report = mapOf("source_type" to held.account.sourceType, "kind" to "catchup"),
+        ) { stalkerArchive.mint(held.account, held.programmeId) }
+        return when (outcome) {
+            is LoadOutcome.Loaded -> when (val minted = outcome.value) {
+                is StalkerArchiveSource.Minted.Link -> synchronized(lock) {
+                    // The player may have left while the portal answered: do not resurrect its replay.
+                    if (contentId !in stalkerReplays) return@synchronized null
+                    val next = held.session.copy(url = minted.url, token = ++m3uToken)
+                    sessions[contentId] = next
+                    stalkerReplays[contentId] = StalkerReplay(held.account, held.programmeId, next)
+                    Reopened.Link(minted.url)
+                }
+                is StalkerArchiveSource.Minted.Refused -> Reopened.Refused(StalkerReplayOutcome.forOpen(minted.error))
+            }
+            is LoadOutcome.Empty -> null
+            is LoadOutcome.Failed ->
+                Reopened.Refused(StalkerReplayOutcome.forOpen(CatchUpFailure.StalkerLinkError.NONE, outcome.timedOut))
+        }
+    }
+
+    /** Whether this playlist is a Stalker portal whose archive can be minted at all (no dialects apply). */
+    fun supportsStalkerArchive(account: XtreamAccount): Boolean =
+        account.sourceType == XtreamAccount.SOURCE_STALKER
 
     /**
      * Whether an M3U playlist can replay a channel: only one that carries catch-up settings, because

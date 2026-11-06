@@ -237,7 +237,7 @@ android {
 
         // In-app updater (GitHub Releases)
         buildConfigField("String", "GITHUB_OWNER", "\"paradox-kush\"")
-        buildConfigField("String", "GITHUB_REPO", "\"NuvioTV\"")
+        buildConfigField("String", "GITHUB_REPO", "\"TuvoraTV\"")
     }
 
     flavorDimensions += "distribution"

@@ -97,6 +97,6 @@ class GuideM3uCatchUpTest {
     @Test
     fun `replay notices read plainly`() {
         assertEquals("This provider has no recording of \"Show\"", GuideReplayMessages.noRecording("Show"))
-        assertEquals("Couldn't open \"Show\". Press OK to try again", GuideReplayMessages.openFailed("Show"))
+        assertEquals("Couldn't open \"Show\"", GuideReplayMessages.openFailed("Show"))
     }
 }

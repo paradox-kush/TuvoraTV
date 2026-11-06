@@ -122,6 +122,13 @@ sealed interface PlaybackAction {
         val rate: Float,
     ) : PlaybackAction
 
+    data class SetLiveCacheBudget(
+        override val generation: Long,
+        val maxBytes: Long,
+        val maxBackBytes: Long,
+        val cacheSecs: Long,
+    ) : PlaybackAction
+
     data class SelectAudioTrack(
         override val generation: Long,
         val trackId: PlaybackTrackId,
@@ -367,6 +374,9 @@ object PlaybackStateMachine {
         }
         is PlaybackCommand.SetPlaybackRate -> playbackControl(state) {
             PlaybackAction.SetPlaybackRate(state.snapshot.generation, command.rate)
+        }
+        is PlaybackCommand.SetLiveCacheBudget -> playbackControl(state) {
+            PlaybackAction.SetLiveCacheBudget(state.snapshot.generation, command.maxBytes, command.maxBackBytes, command.cacheSecs)
         }
         is PlaybackCommand.SelectAudioTrack -> playbackControl(state) {
             PlaybackAction.SelectAudioTrack(state.snapshot.generation, command.trackId)
@@ -853,6 +863,8 @@ object PlaybackStateMachine {
                     durationMs = facts.durationMs,
                     bufferedPositionMs = facts.bufferedPositionMs,
                     seekable = facts.seekable,
+                    seekableStartMs = facts.seekableStartMs,
+                    seekableEndMs = facts.seekableEndMs,
                 ),
             ),
         )

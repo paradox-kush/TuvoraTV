@@ -213,6 +213,16 @@ class MpvEngine internal constructor(
         backend?.setPlaybackRate(rate) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
     }
 
+    override suspend fun setLiveCacheBudget(
+        generation: Long,
+        maxBytes: Long,
+        maxBackBytes: Long,
+        cacheSecs: Long,
+    ): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.setLiveCacheBudget(maxBytes, maxBackBytes, cacheSecs) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
     override suspend fun selectAudioTrack(
         generation: Long,
         trackId: PlaybackTrackId,

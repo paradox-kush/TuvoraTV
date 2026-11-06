@@ -14,6 +14,16 @@
     <string name="clean_live_status_handing_off">Trying another playback path…</string>
     <string name="clean_live_status_reconnecting">Reconnecting…</string>
     <string name="clean_live_status_paused">Paused</string>
+    <string name="live_pause_status_preparing">Preparing</string>
+    <string name="live_pause_chip_behind">%1$s · Live</string>
+    <string name="live_pause_chip_go_live">Live</string>
+    <string name="live_pause_scrub_cd">Rewind or fast-forward inside the saved part of this channel</string>
+    <string name="live_pause_error_no_space">Not enough free space to keep the paused stream.</string>
+    <string name="live_pause_error_provider_refused">The provider would not open a second connection. Pausing is only a pause on this channel.</string>
+    <string name="live_pause_error_stalled">The stream stopped arriving, so the saved part ended.</string>
+    <string name="live_pause_error_sequence_reset">The stream restarted several times, so it cannot be rewound.</string>
+    <string name="live_pause_error_unsupported">This stream cannot be saved for rewind.</string>
+    <string name="live_pause_error_timed_out">Starting the rewind buffer took too long.</string>
     <string name="clean_live_status_releasing">Closing playback…</string>
     <string name="clean_live_status_stopped">Playback stopped</string>
 

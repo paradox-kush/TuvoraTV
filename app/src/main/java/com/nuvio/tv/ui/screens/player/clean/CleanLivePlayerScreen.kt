@@ -3,6 +3,9 @@
 package com.nuvio.tv.ui.screens.player.clean
 
 import androidx.compose.ui.platform.LocalContext
+import com.nuvio.tv.core.contracts.LivePausePhase
+import com.nuvio.tv.core.contracts.LivePauseProblem
+import com.nuvio.tv.core.contracts.LivePauseView
 import com.nuvio.tv.core.picture.LivePicturePort
 import com.nuvio.tv.core.picture.PictureChoice
 import com.nuvio.tv.core.picture.VideoZoom
@@ -95,6 +98,10 @@ internal fun CleanLivePlayerScreen(
     /** F28: the channel's picture (aspect + manual zoom, lane F's model) and how to change it. */
     picture: PictureChoice = LivePicturePort.DEFAULT_CHOICE,
     onPictureChange: ((PictureChoice) -> PictureChoice) -> Unit = {},
+    /** Live pause / rewind: the saved-window state, a scrub inside it, and the way back to the live edge. */
+    livePause: LivePauseView = LivePauseView.OFF,
+    onSeekInWindow: (Long) -> Unit = {},
+    onGoLive: () -> Unit = {},
 ) {
     val chrome = CleanLivePlayerUiPolicy.present(uiState)
     val latestSurfaceOwnerReady by rememberUpdatedState(onSurfaceOwnerReady)
@@ -111,9 +118,13 @@ internal fun CleanLivePlayerScreen(
     val context = LocalContext.current
     val rootFocus = remember { FocusRequester() }
     val primaryFocus = remember { FocusRequester() }
-    val paused = !uiState.playWhenReady
+    val pauseOn = livePause.phase != LivePausePhase.OFF
+    // While the saved part is in play, its own state is the truth (the session may be stopped under it).
+    val paused = LiveControlsPolicy.effectivePaused(livePause.phase, livePause.paused, hostPaused = !uiState.playWhenReady)
+    val pauseFailed = livePause.phase == LivePausePhase.FAILED
+    val scrubbable = LiveControlsPolicy.isScrubbable(livePause.phase)
     // Any error keeps the controls up; Retry itself is offered only where retrying can help.
-    val failed = chrome.messageIsError
+    val failed = chrome.messageIsError || pauseFailed
     val nowMs by produceState(System.currentTimeMillis()) {
         while (true) { delay(30_000); value = System.currentTimeMillis() }
     }
@@ -137,7 +148,8 @@ internal fun CleanLivePlayerScreen(
     }
     // Shown: focus the first control. Hidden: the buttons leave composition, so focus returns to
     // the root, where the next key still reaches the policy.
-    LaunchedEffect(controlsVisible, failed) {
+    // The scrub bar is the default focus while shifted, so focus moves when it appears or goes.
+    LaunchedEffect(controlsVisible, failed, scrubbable) {
         runCatching { if (controlsVisible) primaryFocus.requestFocus() else rootFocus.requestFocus() }
     }
 
@@ -170,6 +182,7 @@ internal fun CleanLivePlayerScreen(
                     panelOpen = panel != null,
                     isRepeat = event.nativeKeyEvent.repeatCount > 0,
                     zapReveal = zapReveal,
+                    scrubbable = scrubbable,
                 )
                 when (action) {
                     LiveControlsPolicy.KeyAction.PASS -> return@onPreviewKeyEvent false
@@ -179,8 +192,22 @@ internal fun CleanLivePlayerScreen(
                     }
                     LiveControlsPolicy.KeyAction.CONSUME -> Unit
                     LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> { showControls(); zapReveal = false }
+                    LiveControlsPolicy.KeyAction.SCRUB_BACK, LiveControlsPolicy.KeyAction.SCRUB_FORWARD -> {
+                        val direction = if (action == LiveControlsPolicy.KeyAction.SCRUB_BACK) {
+                            LiveControlsPolicy.ScrubDirection.BACK
+                        } else {
+                            LiveControlsPolicy.ScrubDirection.FORWARD
+                        }
+                        onSeekInWindow(
+                            LiveControlsPolicy.scrubTarget(
+                                livePause.positionMs, livePause.windowStartMs, livePause.windowEndMs, direction,
+                                LiveControlsPolicy.scrubStepMs(event.nativeKeyEvent.repeatCount),
+                            ),
+                        )
+                        showControls(); zapReveal = false
+                    }
                     LiveControlsPolicy.KeyAction.TOGGLE_PAUSE -> {
-                        if (uiState.controlsEnabled) { if (paused) onResume() else onPause() }
+                        if (uiState.controlsEnabled || pauseOn) { if (paused) onResume() else onPause() }
                         showControls(); zapReveal = false
                     }
                     // Zapping is only dispatched while the session accepts controls; disabled keys
@@ -213,7 +240,7 @@ internal fun CleanLivePlayerScreen(
         }
         if (controlsVisible) {
             val buttons = LiveControlsPolicy.buttons(
-                failed = chrome.retryEnabled,
+                failed = chrome.retryEnabled || pauseFailed,
                 subtitleTracks = trackCatalog.subtitles.size,
                 audioTracks = trackCatalog.audio.size,
                 hasLineup = false,
@@ -223,15 +250,20 @@ internal fun CleanLivePlayerScreen(
                 info = LiveOverlayInfo(
                     channelName = sanitizedTitle,
                     subtitle = listOfNotNull(sanitizedStation, sanitizedSubtitle).filter(String::isNotBlank).joinToString(" · ").ifBlank { null },
-                    status = LiveControlsPolicy.status(
-                        tuning = uiState.bottomStatusCode == LivePlaybackUiStatusCode.RESOLVING ||
-                            uiState.bottomStatusCode == LivePlaybackUiStatusCode.STARTING,
-                        reconnecting = uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECONNECTING ||
-                            uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECOVERING,
+                    status = LiveControlsPolicy.withLivePause(
+                        base = LiveControlsPolicy.status(
+                            tuning = uiState.bottomStatusCode == LivePlaybackUiStatusCode.RESOLVING ||
+                                uiState.bottomStatusCode == LivePlaybackUiStatusCode.STARTING,
+                            reconnecting = uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECONNECTING ||
+                                uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECOVERING,
+                            paused = paused,
+                            failed = chrome.messageIsError,
+                        ),
+                        phase = livePause.phase,
                         paused = paused,
-                        failed = chrome.messageIsError,
                     ),
-                    errorText = if (chrome.messageIsError) messageText else null,
+                    errorText = if (chrome.messageIsError && !pauseOn) messageText else null,
+                    pauseErrorText = livePause.problem?.let { stringResource(livePauseProblemRes(it)) },
                 ),
                 nowMs = nowMs,
                 buttons = buttons,
@@ -259,7 +291,10 @@ internal fun CleanLivePlayerScreen(
                     onToggleMore = { moreOpen = !moreOpen; revealTick++ },
                     onKeepAlive = { revealTick++ },
                     onHide = { hideControls() },
+                    onSeekWindow = onSeekInWindow.takeIf { scrubbable },
+                    onGoLive = onGoLive.takeIf { pauseOn },
                 ),
+                pause = livePause,
             )
         }
         when (panel) {
@@ -292,6 +327,16 @@ internal fun CleanLivePlayerScreen(
         }
         aspectLabel?.let { LiveAspectIndicator(it) }
     }
+}
+
+@StringRes
+internal fun livePauseProblemRes(problem: LivePauseProblem): Int = when (problem) {
+    LivePauseProblem.NO_SPACE -> R.string.live_pause_error_no_space
+    LivePauseProblem.PROVIDER_REFUSED -> R.string.live_pause_error_provider_refused
+    LivePauseProblem.STALLED -> R.string.live_pause_error_stalled
+    LivePauseProblem.SEQUENCE_RESET -> R.string.live_pause_error_sequence_reset
+    LivePauseProblem.UNSUPPORTED_STREAM -> R.string.live_pause_error_unsupported
+    LivePauseProblem.TIMED_OUT -> R.string.live_pause_error_timed_out
 }
 
 internal data class CleanLivePlayerChromeState(

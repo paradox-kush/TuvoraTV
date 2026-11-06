@@ -16,6 +16,8 @@ import com.nuvio.tv.playback.ui.LivePlaybackUiErrorCode
 import com.nuvio.tv.playback.core.PlaybackTrackCatalog
 import com.nuvio.tv.playback.ui.LivePlaybackUiStatusCode
 import com.nuvio.tv.ui.components.player.PlayerControlsTiming
+import com.nuvio.tv.core.contracts.LivePausePhase
+import com.nuvio.tv.ui.screens.player.clean.livePauseProblemRes
 import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsOverlay
 import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayActions
@@ -117,6 +119,8 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.screens.player.clean.CleanLivePlayerUiPolicy
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /**
  * TiViMate-style catalogue/EPG guide rendered around one clean live host. Compose passes stable
@@ -152,7 +156,11 @@ fun LiveGuide(
     val activityContext = LocalContext.current
     val sheetRestoreFocus = remember { FocusRequester() }
     var sheetOriginStart by remember { mutableStateOf<Long?>(null) }
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // B180: the body sees the state WITHOUT the aimed channel ([GuideBodyProjection]); the preview pane
+    // and the fullscreen overlay read the aim themselves, so a zap press never restarts this function.
+    val bodyFlow = remember(viewModel) { viewModel.uiState.map(GuideBodyProjection::of).distinctUntilChanged() }
+    val uiState by bodyFlow.collectAsStateWithLifecycle(initialValue = GuideBodyProjection.of(viewModel.uiState.value))
+    fun aimedChannel(): GuideChannel? = viewModel.uiState.value.focusedChannel
     val favoriteIds by viewModel.favoriteLiveIds.collectAsStateWithLifecycle()
     val appContext = LocalContext.current.applicationContext
     val displayPreferences = remember(appContext) { GuideDisplayPreferences(appContext) }
@@ -210,12 +218,14 @@ fun LiveGuide(
     // Requester identity belongs to the channel, not to whichever row is currently focused.
     // Rebinding it during the Undo handoff can make LazyColumn restore its fallback row.
     val channelRowRequesters = remember(account.id) { mutableMapOf<String, FocusRequester>() }
-    fun requestFocusedChannel(): Boolean = uiState.focusedChannel?.entityId
+    fun requestFocusedChannel(): Boolean = aimedChannel()?.entityId
         ?.let { channelRowRequesters[it]?.requestFocusOrFalse() } == true
+    // Dedup by contentId once per list (a duplicate Compose key is a hard crash), not on every pass.
+    val displayChannels = remember(uiState.channels) { uiState.channels.distinctBy { it.contentId } }
     var pendingRestoreEntityId by remember(account.id, uiState.selectedCategoryId) { mutableStateOf<String?>(null) }
     LaunchedEffect(pendingRestoreEntityId, uiState.channels) {
         val origin = pendingRestoreEntityId ?: return@LaunchedEffect
-        val index = uiState.channels.distinctBy { it.contentId }.indexOfFirst { it.entityId == origin }
+        val index = displayChannels.indexOfFirst { it.entityId == origin }
         if (index < 0) return@LaunchedEffect // The overlay projection has not restored it yet.
         channelListState.scrollToItem(index)
         // Let the removed toast and restored lazy item settle before retiring the intent.
@@ -234,7 +244,10 @@ fun LiveGuide(
     var timelineChannelId by remember { mutableStateOf<String?>(null) }
     var inspectedProgramme by remember { mutableStateOf<XtreamProgram?>(null) }
     val awayFromNow = !GuideTimeTravel.isAtLiveEdge(windowStartMs, nowMs)
-    LaunchedEffect(uiState.focusedChannelId, windowStartMs) { inspectedProgramme = null }
+    // Keyed off the aim without reading it in composition (B180): a flow, not a state read.
+    LaunchedEffect(viewModel, windowStartMs) {
+        viewModel.uiState.map { it.focusedChannelId }.distinctUntilChanged().collect { inspectedProgramme = null }
+    }
     var pendingEdgeFocus by remember { mutableStateOf(0) }
     // The window that page left from: the landing waits until the window has actually moved off it
     // (it arrives from the ViewModel a frame or more after the key).
@@ -306,16 +319,23 @@ fun LiveGuide(
 
     // Moving off the row (DOWN out of the timeline lands on the next channel) leaves the old row's
     // cells focusable behind the cursor — clear the timeline when the focused channel changes.
-    LaunchedEffect(uiState.focusedChannelId) {
-        if (timelineChannelId != null && timelineChannelId != uiState.focusedChannelId) {
-            timelineChannelId = null
-            sheetProgramme = null
+    LaunchedEffect(viewModel) {
+        viewModel.uiState.map { it.focusedChannelId }.distinctUntilChanged().collect { aimed ->
+            if (timelineChannelId != null && timelineChannelId != aimed) {
+                timelineChannelId = null
+                sheetProgramme = null
+            }
         }
     }
 
     val playbackState by playbackViewModel.state.collectAsStateWithLifecycle()
     val readyPlayback = playbackState as? CleanLiveGuidePlaybackState.Ready
     val playbackUi = readyPlayback?.presentation
+    // Live pause / rewind: while the saved part is in play its own state is the truth.
+    val livePause by playbackViewModel.livePause.collectAsStateWithLifecycle()
+    val pauseFailed = livePause.phase == LivePausePhase.FAILED
+    val scrubbable = LiveControlsPolicy.isScrubbable(livePause.phase)
+    val effectivePaused = LiveControlsPolicy.effectivePaused(livePause.phase, livePause.paused, hostPaused = playbackUi?.isPaused == true)
     com.nuvio.tv.ui.screens.ambient.AmbientPlaybackEffect(
         active = fullscreen || playbackUi?.playWhenReady == true
     )
@@ -377,8 +397,8 @@ fun LiveGuide(
         if (fullscreen) playbackViewModel.requestPromote() else playbackViewModel.requestCollapse()
     }
 
-    var controlsVisible by remember { mutableStateOf(false) }
-    var controlsTick by remember { mutableStateOf(0) }
+    // B180: overlay state lives in its own holder; this function never reads it in composition.
+    val controls = remember { FullscreenControlsState() }
     // F08: the channel list over fullscreen video, and the previous channel for the LAST key.
     var channelListOpen by remember { mutableStateOf(false) }
     val fullscreenAnchor = remember { FocusRequester() }
@@ -386,7 +406,6 @@ fun LiveGuide(
     var wasFullscreen by remember(account.id) { mutableStateOf(false) }
     var restoreAfterFullscreen by remember(account.id) { mutableStateOf(false) }
     // F28: the shared live overlay's own state — the "More" row and the open picker.
-    var moreOpen by remember { mutableStateOf(false) }
     var livePanel by remember { mutableStateOf<LivePanel?>(null) }
     val controlsPrimaryFocus = remember { FocusRequester() }
     // F28: the live picture (aspect + zoom) of the channel on screen, and the mode just chosen.
@@ -395,7 +414,7 @@ fun LiveGuide(
     LaunchedEffect(aspectLabel) { if (aspectLabel != null) { delay(1_500); aspectLabel = null } }
     LaunchedEffect(fullscreen) {
         if (fullscreen) {
-            browsingOrigin = uiState.focusedChannel?.entityId
+            browsingOrigin = aimedChannel()?.entityId
             wasFullscreen = true
         } else if (wasFullscreen) {
             wasFullscreen = false
@@ -414,51 +433,45 @@ fun LiveGuide(
     }
     var zapBack by remember(account.id) { mutableStateOf(LiveZapBack()) }
     LaunchedEffect(playingContentId) { playingContentId?.let { zapBack = zapBack.onSettled(it) } }
-    // The controls on screen came from a zap and nothing else has touched them since (LiveControlsPolicy).
-    var zapReveal by remember { mutableStateOf(false) }
-    fun showControls() { controlsVisible = true; controlsTick++ }
+    fun showControls() = controls.show()
     fun togglePause() {
-        if (playbackUi?.isPaused == true) playbackViewModel.requestResume()
+        if (effectivePaused) playbackViewModel.requestResume()
         else playbackViewModel.requestPause()
         showControls()
     }
     val liveChrome = playbackUi?.let { CleanLivePlayerUiPolicy.present(it) }
-    val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected
-    val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null
+    val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected || pauseFailed
+    val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null || uiState.replayRetry != null
     // A zap retunes: the aimed channel isn't the playing one yet, or the spinner is up.
     val liveTuning = playbackUi?.spinnerVisible == true ||
         (uiState.focusedChannel?.let { it.contentId != playingContentId } == true)
     fun hideControls() {
-        controlsVisible = false
-        zapReveal = false
-        moreOpen = false
+        controls.reset()
         // The buttons leave composition: focus waits behind the video for the next key.
         fullscreenAnchor.requestFocusOrFalse()
     }
     // T10: a failed tune or a reconnect shows the overlay (and its reason) without waiting for OK.
     val liveReconnecting = playbackUi?.bottomStatusCode == LivePlaybackUiStatusCode.RECONNECTING ||
         playbackUi?.bottomStatusCode == LivePlaybackUiStatusCode.RECOVERING
-    LaunchedEffect(fullscreen, liveFailed, liveReconnecting) {
-        if (fullscreen && LiveControlsPolicy.revealForTrouble(liveFailed, liveReconnecting, controlsVisible, livePanelOpen)) {
-            showControls()
-        }
-    }
-    // F28: one auto-hide delay shared with VOD; never while paused, on an error, or with a panel open.
-    LaunchedEffect(fullscreen, controlsTick, playbackUi?.isPaused, liveFailed, livePanelOpen, liveTuning) {
-        if (fullscreen && LiveControlsPolicy.mayAutoHide(controlsVisible, playbackUi?.isPaused == true, liveFailed, livePanelOpen, tuning = liveTuning)) {
-            delay(PlayerControlsTiming.AUTO_HIDE_MS)
-            hideControls()
-        }
-    }
-    // Shown controls take the D-pad, starting on Retry (when offered) or play/pause.
-    LaunchedEffect(fullscreen, controlsVisible, livePanelOpen) {
-        if (fullscreen && controlsVisible && !livePanelOpen) controlsPrimaryFocus.requestFocusOrFalse()
-    }
-    LaunchedEffect(fullscreen) { if (!fullscreen) { controlsVisible = false; zapReveal = false; moreOpen = false; livePanel = null } }
+    GuideFullscreenControlsEffects(
+        fullscreen = fullscreen,
+        controls = controls,
+        viewModel = viewModel,
+        playingContentId = playingContentId,
+        spinnerVisible = playbackUi?.spinnerVisible == true,
+        paused = effectivePaused,
+        scrubbable = scrubbable,
+        liveFailed = liveFailed,
+        liveReconnecting = liveReconnecting,
+        livePanelOpen = livePanelOpen,
+        primaryFocus = controlsPrimaryFocus,
+        onHide = ::hideControls,
+    )
+    LaunchedEffect(fullscreen) { if (!fullscreen) { controls.reset(); livePanel = null } }
     // F28 BACK: the channel list and the pickers answer it themselves; then hide the controls; then
     // back to the guide.
     BackHandler(enabled = fullscreen) {
-        when (LiveControlsPolicy.backAction(panelOpen = false, controlsVisible = controlsVisible)) {
+        when (LiveControlsPolicy.backAction(panelOpen = false, controlsVisible = controls.visible)) {
             LiveControlsPolicy.BackAction.HIDE_CONTROLS -> hideControls()
             else -> {
                 playbackViewModel.requestCollapse()
@@ -477,44 +490,44 @@ fun LiveGuide(
                 if (!fullscreen) return@onPreviewKeyEvent false
                 // F28: the remote map lives in LiveControlsPolicy (shared with the clean live player).
                 // An open panel (the channel list, a picker, a hide notice's Undo) keeps its own keys.
-                when (
-                    LiveControlsPolicy.keyAction(
+                val action = LiveControlsPolicy.keyAction(
                         key = event.key,
                         isKeyDown = event.type == KeyEventType.KeyDown,
-                        controlsVisible = controlsVisible,
-                        paused = playbackUi?.isPaused == true,
+                        controlsVisible = controls.visible,
+                        paused = effectivePaused,
                         panelOpen = livePanelOpen,
                         isRepeat = event.nativeKeyEvent.repeatCount > 0,
                         hasLineup = true,
-                        zapReveal = zapReveal,
+                        zapReveal = controls.zapReveal,
+                        scrubbable = scrubbable,
                     )
-                ) {
+                when (action) {
                     LiveControlsPolicy.KeyAction.PASS -> return@onPreviewKeyEvent false
                     // The buttons own the D-pad while shown; each press keeps them up.
                     LiveControlsPolicy.KeyAction.PASS_AND_KEEP_ALIVE -> {
-                        if (event.type == KeyEventType.KeyDown) { controlsTick++; zapReveal = false }
+                        if (event.type == KeyEventType.KeyDown) { controls.keepAlive(); controls.zapReveal = false }
                         return@onPreviewKeyEvent false
                     }
                     // The KeyUp half of a handled key: consumed so the locked row never clicks.
                     LiveControlsPolicy.KeyAction.CONSUME -> Unit
-                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> { showControls(); zapReveal = false }
-                    LiveControlsPolicy.KeyAction.TOGGLE_PAUSE -> { togglePause(); zapReveal = false }
+                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> { showControls(); controls.zapReveal = false }
+                    LiveControlsPolicy.KeyAction.TOGGLE_PAUSE -> { togglePause(); controls.zapReveal = false }
                     // Menu opens labeled actions; entering it never changes the channel lineup.
-                    LiveControlsPolicy.KeyAction.OPEN_CHANNEL_MENU -> uiState.focusedChannel?.let { channelMenuAsk = it to viewModel.channelMenu(it) }
-                    LiveControlsPolicy.KeyAction.OPEN_CHANNEL_LIST -> { channelListOpen = true; controlsVisible = false; moreOpen = false }
+                    LiveControlsPolicy.KeyAction.OPEN_CHANNEL_MENU -> aimedChannel()?.let { channelMenuAsk = it to viewModel.channelMenu(it) }
+                    LiveControlsPolicy.KeyAction.OPEN_CHANNEL_LIST -> { channelListOpen = true; controls.visible = false; controls.moreOpen = false }
                     // UP/DOWN (controls hidden) and CH+/CH- change channel; each press names the AIMED
                     // channel without stealing focus into the controls.
                     LiveControlsPolicy.KeyAction.ZAP_PREVIOUS -> {
-                        viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS)
+                        viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS, playingContentId)
                             ?.let(playbackViewModel::requestSettledTune)
-                        if (!controlsVisible) showControls() else controlsTick++
-                        zapReveal = true
+                        if (!controls.visible) showControls() else controls.keepAlive()
+                        controls.zapReveal = true
                     }
                     LiveControlsPolicy.KeyAction.ZAP_NEXT -> {
-                        viewModel.moveChannelFocus(LiveZapDirection.NEXT)
+                        viewModel.moveChannelFocus(LiveZapDirection.NEXT, playingContentId)
                             ?.let(playbackViewModel::requestSettledTune)
-                        if (!controlsVisible) showControls() else controlsTick++
-                        zapReveal = true
+                        if (!controls.visible) showControls() else controls.keepAlive()
+                        controls.zapReveal = true
                     }
                     // F08: back to the channel watched before (LAST/RECALL), if it is in this lineup.
                     LiveControlsPolicy.KeyAction.ZAP_BACK -> {
@@ -522,8 +535,24 @@ fun LiveGuide(
                         zapBack.target(viewModel.zapLineup().map { it.contentId })
                             ?.let(viewModel::focusChannel)
                             ?.let(playbackViewModel::requestTune)
-                        if (!controlsVisible) showControls() else controlsTick++
-                        zapReveal = true
+                        if (!controls.visible) showControls() else controls.keepAlive()
+                        controls.zapReveal = true
+                    }
+                    // Time-shifted with the controls hidden: LEFT / RIGHT scrub inside the saved window.
+                    LiveControlsPolicy.KeyAction.SCRUB_BACK,
+                    LiveControlsPolicy.KeyAction.SCRUB_FORWARD -> {
+                        val direction = if (action == LiveControlsPolicy.KeyAction.SCRUB_BACK) {
+                            LiveControlsPolicy.ScrubDirection.BACK
+                        } else {
+                            LiveControlsPolicy.ScrubDirection.FORWARD
+                        }
+                        playbackViewModel.requestSeekInLivePause(
+                            LiveControlsPolicy.scrubTarget(
+                                livePause.positionMs, livePause.windowStartMs, livePause.windowEndMs, direction,
+                                LiveControlsPolicy.scrubStepMs(event.nativeKeyEvent.repeatCount),
+                            ),
+                        )
+                        showControls(); controls.zapReveal = false
                     }
                 }
                 true
@@ -546,6 +575,7 @@ fun LiveGuide(
                     .width(categoryColWidth)
                     .fillMaxHeight()
                     .focusRequester(categoryListFocus)
+                    .guideKeyRepeatGate()
                     .focusRestorer(),
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
             ) {
@@ -574,9 +604,8 @@ fun LiveGuide(
             Column(Modifier.fillMaxSize()) {
                 Row(Modifier.fillMaxWidth().height(previewPaneHeight)) {
                     Spacer(Modifier.fillMaxHeight().aspectRatio(16f / 9f))
-                    PreviewInfoPane(
-                        channelName = uiState.focusedChannel?.name,
-                        epg = uiState.focusedChannel?.let { uiState.epg[it.streamId] },
+                    FocusedPreviewInfoPane(
+                        viewModel = viewModel,
                         nowMs = nowMs,
                         inspectedProgramme = inspectedProgramme,
                         viewedTimeMs = if (awayFromNow) windowStartMs else null,
@@ -587,9 +616,8 @@ fun LiveGuide(
                         }),
                         // A playback notice (stopped / can't open / no recording) shows here beside the
                         // channel name instead of over the channel grid, so the list stays visible.
-                        previewError = (playbackError.takeIf {
-                            GuidePlaybackInteractionPolicy.showFocusedError(uiState.focusedChannelId, errorChannelId)
-                        }) ?: uiState.actionError,
+                        playbackError = playbackError,
+                        errorChannelId = errorChannelId,
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                 }
@@ -659,11 +687,12 @@ fun LiveGuide(
                             // Focus arriving anywhere in the guide means the viewer has committed
                             // to this category — give the grid the width.
                             .onFocusChanged { if (it.hasFocus) inCategory = true }
+                            .guideKeyRepeatGate()
                             .focusRestorer(firstChannelFocus),
                         contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxl)
                     ) {
                         // Dedup by contentId: a duplicate Compose key is a hard crash; index checks below are position-only.
-                        itemsIndexed(uiState.channels.distinctBy { it.contentId }, key = { _, it -> it.contentId }) { index, ch ->
+                        itemsIndexed(displayChannels, key = { _, it -> it.contentId }) { index, ch ->
                             val isPlaying = ch.contentId == playingContentId
                             val isTimelineRow = timelineChannelId == ch.contentId
                             GuideChannelRow(
@@ -801,86 +830,27 @@ fun LiveGuide(
             if (playbackUi?.spinnerVisible == true) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
-            if (fullscreen && controlsVisible) {
-                // The focused channel is the AIMED one during a settled zap; it converges with
-                // the playing channel once the tune commits. Naming the aim (not the frame still
-                // on screen) is what makes a multi-press zap legible.
-                val overlayChannel = uiState.focusedChannel
-                    ?: uiState.channels.firstOrNull { it.contentId == playingContentId }
-                val loadedOverlayEpg = overlayChannel?.let { uiState.epg[it.streamId] }
-                val overlayEpg = remember(loadedOverlayEpg, nowMs) {
-                    loadedOverlayEpg?.let { GuideWindowRows.atTime(it, nowMs) }
-                }
-                val catalog = readyPlayback?.snapshot?.trackCatalog
-                // Same message the docked preview shows; without it a failed tune read "Live".
-                val errorText = playbackErrorText(playbackState, playbackUi?.bottomErrorCode)
-                val status = playbackUi?.bottomStatusCode
-                val tuningNow = liveTuning
-                val currentButtons = LiveControlsPolicy.buttons(
-                    failed = liveChrome?.retryEnabled == true,
-                    subtitleTracks = catalog?.subtitles?.size ?: 0,
-                    audioTracks = catalog?.audio?.size ?: 0,
-                    hasLineup = true,
-                )
-                // Zapping retunes every press: hold the track buttons steady until the stream settles.
-                var settledButtons by remember { mutableStateOf<LiveControlsPolicy.Buttons?>(null) }
-                if (!tuningNow) settledButtons = currentButtons
-                LiveControlsOverlay(
-                    info = LiveOverlayInfo(
-                        channelName = overlayChannel?.name.orEmpty(),
-                        logoUrl = overlayChannel?.logo,
-                        reserveLogoSlot = true,
-                        nowTitle = overlayEpg?.now?.let { "${timeRange(it)}  ${it.title}" },
-                        nowStartMs = overlayEpg?.now?.startMs,
-                        nowEndMs = overlayEpg?.now?.endMs,
-                        nextLine = overlayEpg?.next?.let { stringResource(R.string.iptv_guide_next_programme, timeRange(it), it.title) },
-                        status = LiveControlsPolicy.status(
-                            tuning = tuningNow,
-                            reconnecting = status == LivePlaybackUiStatusCode.RECONNECTING ||
-                                status == LivePlaybackUiStatusCode.RECOVERING,
-                            paused = playbackUi?.isPaused == true,
-                            failed = errorText != null,
-                        ),
-                        errorText = errorText,
-                    ),
+            run {
+                GuideFullscreenOverlay(
+                    fullscreen = fullscreen,
+                    controls = controls,
+                    viewModel = viewModel,
+                    playbackViewModel = playbackViewModel,
+                    playbackState = playbackState,
+                    playingContentId = playingContentId,
                     nowMs = nowMs,
-                    buttons = LiveControlsPolicy.holdWhileTuning(settledButtons, currentButtons, tuningNow),
-                    paused = playbackUi?.isPaused == true,
-                    favourite = overlayChannel?.contentId?.let { it in favoriteIds } == true,
-                    moreOpen = moreOpen,
+                    favoriteIds = favoriteIds,
+                    livePicture = livePicture,
                     primaryFocus = controlsPrimaryFocus,
-                    actions = LiveOverlayActions(
-                        onPlayPause = { togglePause() },
-                        onZapPrevious = {
-                            viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS)?.let(playbackViewModel::requestSettledTune)
-                            controlsTick++
-                        },
-                        onZapNext = {
-                            viewModel.moveChannelFocus(LiveZapDirection.NEXT)?.let(playbackViewModel::requestSettledTune)
-                            controlsTick++
-                        },
-                        onRetry = { playbackViewModel.requestRetry(); controlsTick++ },
-                        onSubtitles = { livePanel = LivePanel.SUBTITLES },
-                        onAudio = { livePanel = LivePanel.AUDIO },
-                        // F28: lane F's picture model, per channel. One press = next aspect mode.
-                        onAspect = {
-                            val next = nextAspectMode(livePicture.aspectMode)
-                            playbackViewModel.requestPictureChange { it.copy(aspectMode = next) }
-                            aspectLabel = aspectModeLabel(next, context::getString)
-                            controlsTick++
-                        },
-                        onZoom = { livePanel = LivePanel.ZOOM },
-                        onChannelList = {
-                            controlsVisible = false
-                            moreOpen = false
-                            channelListOpen = true
-                        },
-                        onToggleFavourite = overlayChannel?.let { ch -> { viewModel.toggleFavorite(ch); controlsTick += 1 } },
-                        onStreamInfo = { livePanel = LivePanel.STREAM_INFO }.takeIf { readyPlayback != null },
-                        onToggleMore = { moreOpen = !moreOpen; controlsTick++ },
-                        onKeepAlive = { controlsTick++ },
-                        onHide = { hideControls() },
-                    ),
+                    onTogglePause = { togglePause() },
+                    onHide = { hideControls() },
+                    onOpenPanel = { livePanel = it },
+                    onAspectLabel = { aspectLabel = it },
+                    onOpenChannelList = {
+                        controls.visible = false
+                        controls.moreOpen = false
+                        channelListOpen = true
+                    },
                 )
             }
             when (livePanel.takeIf { fullscreen }) {
@@ -954,7 +924,8 @@ fun LiveGuide(
 
         // START_OVER is the only state with two destinations, so it is the only one that asks.
         val sheet = sheetProgramme
-        val sheetChannel = uiState.focusedChannel
+        // Read the aim only while the sheet is up (B180): focus changes clear the sheet anyway.
+        val sheetChannel = if (sheet != null) aimedChannel() else null
         if (sheet != null && sheetChannel != null && !fullscreen) {
             val recState by recordings.state.collectAsStateWithLifecycle()
             val sheetAction = guideActionFor(sheet, sheetChannel, nowMs, uiState.catchUpSupported)
@@ -1024,7 +995,7 @@ fun LiveGuide(
         fun returnFromMenu() {
             channelMenuAsk = null
             if (fullscreen) fullscreenAnchor.requestFocusOrFalse()
-            else pendingRestoreEntityId = uiState.focusedChannel?.entityId
+            else pendingRestoreEntityId = aimedChannel()?.entityId
         }
         channelMenuAsk?.let { (channel, actions) ->
             // Start over is reachable from the channel row too, not only from the timeline cell.
@@ -1100,13 +1071,44 @@ fun LiveGuide(
         }
 
         // Series rules grow as the guide shows more airings of a recorded show on this channel.
-        LaunchedEffect(uiState.focusedChannelId, uiState.epg[uiState.focusedChannel?.streamId ?: -1]?.programmes) {
-            val ch = uiState.focusedChannel ?: return@LaunchedEffect
-            val programmes = uiState.epg[ch.streamId]?.programmes ?: return@LaunchedEffect
-            recordings.expandSeriesFor(ch.contentId, programmes)
+        // B180: the body state hides the aim, so this reads the aimed channel's programmes from the view
+        // model's own flow; it emits only when that channel or its programme list changes.
+        LaunchedEffect(viewModel) {
+            viewModel.uiState
+                .map { st -> st.focusedChannel?.let { ch -> Triple(ch.contentId, ch.streamId, st.epg[ch.streamId]?.programmes) } }
+                .distinctUntilChanged()
+                .collect { aimed ->
+                    val (contentId, _, programmes) = aimed ?: return@collect
+                    if (programmes != null) recordings.expandSeriesFor(contentId, programmes)
+                }
         }
 
-        // F03 (owner 2026-10-04): a favourite toggle is confirmed with Undo, like a hide.
+        // A replay that failed to open (portal refusal, request failure) says why and offers Retry, which
+        // mints a fresh link for the same programme. Retry takes focus; BACK or any arrow dismisses it
+        // and puts focus back in the guide.
+        uiState.replayRetry?.let { retry ->
+            fun restoreAfterReplayNotice() {
+                if (!requestFocusedChannel() && !channelListFocus.requestFocusOrFalse()) {
+                    categoryListFocus.requestFocusOrFalse()
+                }
+            }
+            NuvioUndoToast(
+                message = uiState.actionError.orEmpty(),
+                actionLabel = stringResource(R.string.action_retry),
+                onAction = { viewModel.retryReplay() },
+                onDismiss = {
+                    restoreAfterReplayNotice()
+                    viewModel.dismissError()
+                },
+                durationMillis = GuideReplayNoticePolicy.RETRY_NOTICE_MS,
+                key = retry to uiState.actionError,
+                modifier = Modifier
+                    .align(if (fullscreen) Alignment.TopCenter else Alignment.BottomCenter)
+                    .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.xl),
+            )
+        }
+
+       // F03 (owner 2026-10-04): a favourite toggle is confirmed with Undo, like a hide.
         uiState.favoriteNotice?.let { notice ->
             fun restoreFavoriteFocus() {
                 if (fullscreen) fullscreenAnchor.requestFocusOrFalse()
@@ -1180,7 +1182,7 @@ fun LiveGuide(
 }
 
 @Composable
-private fun playbackErrorText(
+internal fun playbackErrorText(
     state: CleanLiveGuidePlaybackState,
     error: LivePlaybackUiErrorCode?,
 ): String? = LiveGuidePreviewErrorPolicy.messageRes(state, error)?.let { stringResource(it) }
@@ -1702,7 +1704,7 @@ private fun LiveRetryStatus(
     }
 }
 
-private fun timeRange(p: XtreamProgram): String = "${guideHhMm(p.startMs)}–${guideHhMm(p.endMs)}"
+internal fun timeRange(p: XtreamProgram): String = "${guideHhMm(p.startMs)}–${guideHhMm(p.endMs)}"
 
 private val CATEGORY_COL_WIDTH = 220.dp
 private val GUIDE_START_PADDING = 52.dp                   // the app-wide content gutter (Modern rails)
@@ -1743,4 +1745,35 @@ private fun GuideSearchDialog(initialQuery: String, onSearch: (String) -> Unit, 
         Button(onClick = { onSearch(text) }, modifier = Modifier.fillMaxWidth()) { Text("Search") }
         Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
     }
+}
+
+/**
+ * B180: the docked preview's name/now-next pane, reading the aimed channel in a scope of its own so a
+ * zap press recomposes this pane (cheap) and not the whole guide.
+ */
+@Composable
+private fun FocusedPreviewInfoPane(
+    viewModel: XtreamLiveGuideViewModel,
+    nowMs: Long,
+    inspectedProgramme: XtreamProgram?,
+    viewedTimeMs: Long?,
+    emptyGuideMessage: String,
+    playbackError: String?,
+    errorChannelId: String?,
+    modifier: Modifier = Modifier,
+) {
+    val ui by viewModel.uiState.collectAsStateWithLifecycle()
+    val focused = ui.focusedChannel
+    PreviewInfoPane(
+        channelName = focused?.name,
+        epg = focused?.let { ui.epg[it.streamId] },
+        nowMs = nowMs,
+        inspectedProgramme = inspectedProgramme,
+        viewedTimeMs = viewedTimeMs,
+        emptyGuideMessage = emptyGuideMessage,
+        previewError = (playbackError.takeIf {
+            GuidePlaybackInteractionPolicy.showFocusedError(ui.focusedChannelId, errorChannelId)
+        }) ?: ui.actionError.takeIf { ui.replayRetry == null }, // a Retry notice shows its own message
+        modifier = modifier,
+    )
 }

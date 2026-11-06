@@ -9,6 +9,9 @@ import com.nuvio.tv.core.contracts.PreparedLive
 import com.nuvio.tv.core.contracts.CatchUpContinuation
 import com.nuvio.tv.core.contracts.CatchUpProgramme
 import com.nuvio.tv.core.contracts.CatchUpRestart
+import com.nuvio.tv.core.contracts.CatchUpReopen
+import com.nuvio.tv.core.iptv.stalker.StalkerReplayOutcome
+import com.nuvio.tv.core.iptv.stalker.runCatchingCancellable
 import com.nuvio.tv.core.iptv.CatchUpNextProgramme
 import com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator
 import com.nuvio.tv.core.iptv.epg.XmltvClient
@@ -27,6 +30,7 @@ class IptvLivePlayback @Inject constructor(
     private val dnsResolver: PlaylistDnsResolver,
     private val catchUpCoordinator: CatchUpPlaybackCoordinator,
     private val xmltv: XmltvClient,
+    private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
 ) : LivePlayback {
 
     override val classifier: IptvContentClassifier = object : IptvContentClassifier {
@@ -50,7 +54,7 @@ class IptvLivePlayback @Inject constructor(
                 ?.let { CatchUpDialectRetry(channelName = it.channelName, url = it.url) }
 
         override fun continuation(contentId: String?): CatchUpContinuation? {
-            val ctx = catchUpCoordinator.m3uContextFor(contentId) ?: return null
+            val ctx = catchUpCoordinator.replayContextFor(contentId) ?: return null
             return CatchUpContinuation(
                 windowEndMs = ctx.windowEndMs,
                 programme = CatchUpProgramme("${ctx.channelName} · ${ctx.programmeTitle}", ctx.startMs, ctx.programmeEndMs),
@@ -58,20 +62,38 @@ class IptvLivePlayback @Inject constructor(
         }
 
         override suspend fun programmeAt(contentId: String?, atMs: Long): CatchUpProgramme? {
-            val ctx = catchUpCoordinator.m3uContextFor(contentId) ?: return null
-            val rows = xmltv.storedWindow(ctx.account, ctx.streamId, atMs - LOOKAHEAD_MS, atMs + LOOKAHEAD_MS)
-                .map { CatchUpNextProgramme.Row(it.title, it.startMs, it.endMs) }
+            val ctx = catchUpCoordinator.replayContextFor(contentId) ?: return null
+            val from = atMs - LOOKAHEAD_MS
+            val to = atMs + LOOKAHEAD_MS
+            // An Xtream channel's past lives in its own per-channel history table (the guide's
+            // "sid:" key); an M3U channel's, like an Xtream channel without one, in the XMLTV lane.
+            val history = if (ctx.request != null) {
+                runCatchingCancellable { contentDb.epgWindow(ctx.account.id, "sid:${ctx.streamId}", from, to) }.getOrDefault(emptyList())
+            } else emptyList()
+            val stored = history.ifEmpty { xmltv.storedWindow(ctx.account, ctx.streamId, from, to) }
+            val rows = stored.map { CatchUpNextProgramme.Row(it.title, it.startMs, it.endMs) }
             return CatchUpNextProgramme.pick(rows, atMs)
                 ?.let { CatchUpProgramme("${ctx.channelName} · ${it.title}", it.startMs, it.endMs) }
         }
 
         override fun restartAt(contentId: String?, atMs: Long): CatchUpRestart? =
-            catchUpCoordinator.restartM3u(contentId, atMs, System.currentTimeMillis())
+            catchUpCoordinator.restartReplay(contentId, atMs, System.currentTimeMillis())
                 ?.let { CatchUpRestart(it.url, it.startMs, it.windowEndMs) }
 
         override fun hold(contentId: String?) = catchUpCoordinator.hold(contentId)
 
-        override fun liveUrl(contentId: String?): String? = catchUpCoordinator.m3uContextFor(contentId)?.liveUrl
+        override fun liveUrl(contentId: String?): String? = catchUpCoordinator.replayContextFor(contentId)?.liveUrl
+
+        override fun singleUseFailure(contentId: String?, startupHang: Boolean): String? =
+            if (!catchUpCoordinator.isSingleUse(contentId)) null
+            else (if (startupHang) StalkerReplayOutcome.forStartupHang() else StalkerReplayOutcome.forPlaybackError()).message
+
+        override suspend fun reopen(contentId: String?): CatchUpReopen? =
+            when (val reopened = catchUpCoordinator.reopenStalker(contentId)) {
+                null -> null
+                is CatchUpPlaybackCoordinator.Reopened.Link -> CatchUpReopen.Link(reopened.url)
+                is CatchUpPlaybackCoordinator.Reopened.Refused -> CatchUpReopen.Refused(reopened.failure.message)
+            }
     }
 
     private companion object {

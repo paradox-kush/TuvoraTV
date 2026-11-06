@@ -201,6 +201,8 @@ internal fun PlayerRuntimeController.handleMpvPlaybackError(
     if (startupEngineFailoverTriggered) return
     if (mpvErrorRecoveryArmed) return
     if (_uiState.value.error != null) return
+    // A spent single-use replay link (Stalker archive) is not re-opened by any rung below: end with Retry.
+    if (failSingleUseCatchUp(startupHang = false)) return
     // Fork (B1): an expired single-use IPTV link is re-minted once, before failover or auto-retry.
     mpvHttpStatusCodeFromLog()?.let { code ->
         if (attemptIptvLinkRefresh(code, "HTTP $code" + httpStatusExplanation(context, code))) return

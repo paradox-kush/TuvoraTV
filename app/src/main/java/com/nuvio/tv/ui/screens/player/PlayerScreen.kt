@@ -1431,8 +1431,9 @@ fun PlayerScreen(
                 showSwitchToMpvAction = uiState.showSwitchToMpvErrorAction &&
                     uiState.internalPlayerEngine != InternalPlayerEngine.MVP_PLAYER,
                 onSwitchToMpv = { viewModel.onEvent(PlayerEvent.OnSwitchToMpvPlayer) },
-                showRetryAction = uiState.showRetryErrorAction,
-                onRetry = { viewModel.onEvent(PlayerEvent.OnRetry) },
+                onRetry = { viewModel.onEvent(PlayerEvent.OnRetry) }.takeIf {
+                    uiState.showRetryErrorAction || PlayerLoadDeadlinePolicy.showRetry(uiState.error != null, uiState.isLive)
+                },
                 showReportAction = uiState.playbackIssueReportsEnabled,
                 reportStatus = uiState.playbackIssueReportStatus,
                 reportId = uiState.playbackIssueReportId,
@@ -2965,7 +2966,8 @@ private fun PlayerControlsOverlay(
                             downFocusRequester = playPauseFocusRequester,
                             onUpKey = onHideControls,
                             onFocused = onResetHideTimer,
-                            onClick = onPlayPause
+                            onClick = onPlayPause,
+                            seekable = uiState.seekable
                         )
                     }
                 }
@@ -3214,7 +3216,8 @@ private fun PlayerControlsProgressBarHost(
     downFocusRequester: FocusRequester? = null,
     onUpKey: (() -> Unit)? = null,
     onFocused: (() -> Unit)? = null,
-    onClick: (() -> Unit)? = null
+    onClick: (() -> Unit)? = null,
+    seekable: Boolean = true
 ) {
     val playbackTimeline by viewModel.playbackTimeline.collectAsState()
 
@@ -3235,8 +3238,16 @@ private fun PlayerControlsProgressBarHost(
         onUpKey = onUpKey,
         onFocused = onFocused,
         onClick = onClick,
-        bufferedPosition = playbackTimeline.bufferedPosition
+        bufferedPosition = playbackTimeline.bufferedPosition,
+        seekable = seekable
     )
+    if (!seekable) {
+        Text(
+            text = stringResource(R.string.player_replay_not_seekable),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White.copy(alpha = 0.7f)
+        )
+    }
 }
 
 @Composable
@@ -3391,7 +3402,9 @@ private fun ProgressBar(
     /** Position (ms) up to which content is buffered. Pass 0 to skip the overlay. */
     bufferedPosition: Long = 0L,
     /** Each chapter after the first gets a mark where it starts. */
-    chapters: List<PlayerChapter> = emptyList()
+    chapters: List<PlayerChapter> = emptyList(),
+    /** False for a single-use replay: the bar only shows progress; LEFT/RIGHT do nothing and it never grows. */
+    seekable: Boolean = true
 ) {
     val accentBrush = NuvioTheme.palette.accentBrush()
     val seekBarLabel = stringResource(R.string.cd_seek_bar)
@@ -3499,6 +3512,7 @@ private fun ProgressBar(
                             }
                         }
                         KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (!seekable) return@onPreviewKeyEvent true
                             onSeekPreview(
                                 PlayerScrubRates.deltaMsForKeyRepeat(
                                     repeatCount = keyEvent.nativeKeyEvent.repeatCount,
@@ -3508,6 +3522,7 @@ private fun ProgressBar(
                             true
                         }
                         KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (!seekable) return@onPreviewKeyEvent true
                             onSeekPreview(
                                 PlayerScrubRates.deltaMsForKeyRepeat(
                                     repeatCount = keyEvent.nativeKeyEvent.repeatCount,
@@ -3527,7 +3542,7 @@ private fun ProgressBar(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (isFocused) NuvioTheme.spacing.md else NuvioTheme.spacing.sm)
+                .height(if (isFocused && seekable) NuvioTheme.spacing.md else NuvioTheme.spacing.sm)
                 .clip(RoundedCornerShape(3.dp))
                 .background(
                     if (isFocused) Color.White.copy(alpha = 0.45f)
@@ -4067,7 +4082,6 @@ private fun ErrorOverlay(
     message: String,
     showSwitchToMpvAction: Boolean = false,
     onSwitchToMpv: (() -> Unit)? = null,
-    showRetryAction: Boolean = false,
     onRetry: (() -> Unit)? = null,
     showReportAction: Boolean,
     reportStatus: PlaybackIssueReportStatus,
@@ -4079,18 +4093,22 @@ private fun ErrorOverlay(
     val exitFocusRequester = remember { FocusRequester() }
     val reportFocusRequester = remember { FocusRequester() }
     val mpvFocusRequester = remember { FocusRequester() }
-    // Fork: a catch-up replay that never started offers Retry in the slot the mpv switch uses (the two never coexist).
-    val onRetryAction = onRetry.takeIf { showRetryAction }
-    val onSwitchMpvAction = onRetryAction ?: onSwitchToMpv.takeIf { showSwitchToMpvAction }
-    val targetFocusRequester = if (onSwitchMpvAction != null) mpvFocusRequester else exitFocusRequester
+    val onSwitchMpvAction = onSwitchToMpv.takeIf { showSwitchToMpvAction }
+    val retryFocusRequester = remember { FocusRequester() }
+    val targetFocusRequester = when {
+        onRetry != null -> retryFocusRequester
+        onSwitchMpvAction != null -> mpvFocusRequester
+        else -> exitFocusRequester
+    }
 
-    var targetButtonPlaced by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
+    var targetButtonPlaced by remember(onSwitchMpvAction != null, onRetry != null) { mutableStateOf(false) }
+    var retryFocused by remember { mutableStateOf(false) }
     var mpvFocused by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
     var reportFocused by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
     var exitFocused by remember(onSwitchMpvAction != null) { mutableStateOf(false) }
-    val hasOverlayFocus = mpvFocused || reportFocused || exitFocused
+    val hasOverlayFocus = retryFocused || mpvFocused || reportFocused || exitFocused
 
-    LaunchedEffect(targetButtonPlaced, onSwitchMpvAction != null) {
+    LaunchedEffect(targetButtonPlaced, onSwitchMpvAction != null, onRetry != null) {
         if (!targetButtonPlaced) return@LaunchedEffect
         val focused = targetFocusRequester.requestFocusAfterFrames(frames = 0)
         if (!focused) {
@@ -4166,9 +4184,27 @@ private fun ErrorOverlay(
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (onRetry != null) {
+                    PlayerOverlayButton(
+                        text = stringResource(R.string.action_retry),
+                        onClick = onRetry,
+                        primary = true,
+                        modifier = Modifier
+                            .focusRequester(retryFocusRequester)
+                            .onPlaced { targetButtonPlaced = true }
+                            .onFocusChanged { retryFocused = it.isFocused }
+                            .focusProperties {
+                                right = when {
+                                    onSwitchMpvAction != null -> mpvFocusRequester
+                                    showReportAction -> reportFocusRequester
+                                    else -> exitFocusRequester
+                                }
+                            }
+                    )
+                }
                 if (onSwitchMpvAction != null) {
                     PlayerOverlayButton(
-                        text = stringResource(if (onRetryAction != null) R.string.action_retry else R.string.player_switch_to_mpv),
+                        text = stringResource(R.string.player_switch_to_mpv),
                         onClick = onSwitchMpvAction,
                         primary = true,
                         modifier = Modifier
@@ -4203,7 +4239,7 @@ private fun ErrorOverlay(
                 PlayerOverlayButton(
                     text = stringResource(R.string.player_go_back),
                     onClick = onBack,
-                    primary = onSwitchMpvAction == null,
+                    primary = onSwitchMpvAction == null && onRetry == null,
                     modifier = Modifier
                         .focusRequester(exitFocusRequester)
                         .onPlaced {

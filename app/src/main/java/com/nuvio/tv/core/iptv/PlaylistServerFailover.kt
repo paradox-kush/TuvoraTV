@@ -243,6 +243,12 @@ class PlaylistServerFailover(
     ): T = com.nuvio.tv.core.sources.DeviceSources.guarded("iptv",acc.id) {
         val servers = servers(acc)
         if (servers.size <= 1) return@guarded attempt(acc)
+        // A read-only inspection (a playlist turned off here): ask the ACTIVE server only. No race, no backup
+        // probes, and nothing written - no new active server, no failure stats.
+        if (kotlin.coroutines.coroutineContext[com.nuvio.tv.core.sources.DeviceSourceAccessElement]?.access ==
+            com.nuvio.tv.core.sources.DeviceSourceAccess.INSPECT) {
+            return@guarded attempt(onServer(acc, servers, activeIndex(acc)))
+        }
         val pid = profileId()
         val wallMs = clock()
         val state = ServerFailoverPolicy.clamp(store.read(pid, acc.id), servers.size)

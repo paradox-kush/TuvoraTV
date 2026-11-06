@@ -172,6 +172,14 @@ class IptvOverlayDb @Inject constructor(@ApplicationContext context: Context) {
             arrayOf(playlistId),
         ).use { c -> buildSet { while (c.moveToNext()) add(c.getString(0)) } }
 
+    /** Every pick ANY profile made for a playlist: (entity id, guide channel id). */
+    @Synchronized
+    fun epgOverrideEntries(playlistId: String): List<Pair<String, String>> =
+        db.rawQuery(
+            "SELECT entity_id, guide_id FROM epg_override WHERE playlist_id=? AND deleted=0 AND guide_id IS NOT NULL",
+            arrayOf(playlistId),
+        ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0) to c.getString(1)) } }
+
     @Synchronized fun getCursor(profileId: Int): Long =
         db.rawQuery("SELECT cursor FROM overlay_cursor WHERE profile_id=?", arrayOf(profileId.toString())).use { if (it.moveToFirst()) it.getLong(0) else 0L }
 

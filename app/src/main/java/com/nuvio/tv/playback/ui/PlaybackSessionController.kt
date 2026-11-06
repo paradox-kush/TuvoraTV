@@ -63,6 +63,8 @@ class PlaybackSessionController internal constructor(
     suspend fun seekTo(positionMs: Long) = dispatchCommand(PlaybackCommand.SeekTo(positionMs))
     suspend fun setPlaybackRate(rate: Float) =
         dispatchCommand(PlaybackCommand.SetPlaybackRate(rate))
+    suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long) =
+        dispatchCommand(PlaybackCommand.SetLiveCacheBudget(maxBytes, maxBackBytes, cacheSecs))
     suspend fun selectAudioTrack(trackId: PlaybackTrackId) =
         dispatchCommand(PlaybackCommand.SelectAudioTrack(trackId))
     suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) =

@@ -738,6 +738,71 @@ class CleanLivePlayerViewModelTest {
         fixture.viewModel.releaseBeforeExit()
     }
 
+    private class PauseControlFake(val selection: ProviderPlaybackSelection) : com.nuvio.tv.core.contracts.LivePauseControl {
+        val state = MutableStateFlow(com.nuvio.tv.core.contracts.LivePauseView.OFF)
+        override val view: StateFlow<com.nuvio.tv.core.contracts.LivePauseView> get() = state
+        var channelChangedResult = false
+        override fun onPause() {}
+        override fun onPlay() {}
+        override fun seekInWindow(positionMs: Long) {}
+        override fun goLive() {}
+        override fun retry() {}
+        override suspend fun onChannelChanged(): Boolean = channelChangedResult
+        override fun onLiveStarted() {}
+        override fun dispose() {}
+    }
+
+    private fun zapFixture(controls: MutableList<PauseControlFake>): Pair<Fixture, LiveChannelTarget> {
+        val next = liveTarget(selection = liveSelection("next", "43"), title = "Next News")
+        val fixture = fixture(
+            relative = { LiveRelativeResult.Target(next) },
+            livePauseFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { request ->
+                PauseControlFake(request.selection).also { controls += it }
+            },
+        )
+        return fixture to next
+    }
+
+    @Test
+    fun `a failed zap retunes the old channel when the control released the source even though the view says OFF`() = runTest {
+        val controls = mutableListOf<PauseControlFake>()
+        val (fixture, _) = zapFixture(controls)
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+        controls[0].channelChangedResult = true
+        fixture.host.zapFailure = RuntimeException("zap failed")
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        advanceUntilIdle()
+        assertEquals("the channel being left is tuned live again", 2, fixture.operations.count { it == "tune" })
+        assertEquals(true, fixture.viewModel.routeState.value is CleanLivePlayerRouteState.Ready)
+    }
+
+    @Test
+    fun `a failed zap does not spend a link when the control never released the source`() = runTest {
+        val controls = mutableListOf<PauseControlFake>()
+        val (fixture, _) = zapFixture(controls)
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+        controls[0].state.value = com.nuvio.tv.core.contracts.LivePauseView(phase = com.nuvio.tv.core.contracts.LivePausePhase.FAILED)
+        controls[0].channelChangedResult = false
+        fixture.host.zapFailure = RuntimeException("zap failed")
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        advanceUntilIdle()
+        assertEquals("no wasted retune", 1, fixture.operations.count { it == "tune" })
+        assertEquals(true, fixture.viewModel.routeState.value is CleanLivePlayerRouteState.Ready)
+    }
+
+    @Test
+    fun `a failed zap whose retune also fails ends in a visible rejection not a black screen`() = runTest {
+        val controls = mutableListOf<PauseControlFake>()
+        val (fixture, _) = zapFixture(controls)
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+        controls[0].channelChangedResult = true
+        fixture.host.zapFailure = RuntimeException("zap failed")
+        fixture.host.failNextTune = true
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        advanceUntilIdle()
+        assertEquals(true, fixture.viewModel.routeState.value is CleanLivePlayerRouteState.Rejected)
+    }
+
     private fun fixture(
         profileId: Int = 1,
         consumeResult: CleanLiveLaunchConsumeResult? = null,
@@ -757,6 +822,7 @@ class CleanLivePlayerViewModelTest {
             LiveRelativeResult.Rejected(LiveRelativeFailure.UNAVAILABLE)
         },
         history: suspend (LivePlayedIdentity) -> Unit = {},
+        livePauseFactory: com.nuvio.tv.core.contracts.LivePauseControlFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { null },
     ): Fixture {
         val context = RuntimeEnvironment.getApplication() as Context
         val operations = mutableListOf<String>()
@@ -806,6 +872,7 @@ class CleanLivePlayerViewModelTest {
             ownerDispatcher = Dispatchers.Unconfined,
             releaseRetryWait = releaseRetryWait,
             zapSettleWait = zapSettleWait,
+            livePauseFactory = livePauseFactory,
         )
         return Fixture(
             viewModel = viewModel,
@@ -938,6 +1005,8 @@ class CleanLivePlayerViewModelTest {
         var tunedSelection: ProviderPlaybackSelection? = null
         var tunedProfile: SessionProfile? = null
         var tunedMetadata: CleanMediaSessionMetadata? = null
+        var zapFailure: Exception? = null
+        var failNextTune = false
         val zappedSelections = mutableListOf<ProviderPlaybackSelection>()
         val zappedMetadata = mutableListOf<CleanMediaSessionMetadata>()
         var releaseCalls: Int = 0
@@ -948,6 +1017,7 @@ class CleanLivePlayerViewModelTest {
             metadata: CleanMediaSessionMetadata,
         ): Long {
             operations += "tune"
+            if (failNextTune) { failNextTune = false; error("synthetic retune failure") }
             tunedSelection = selection
             tunedProfile = profile
             tunedMetadata = metadata
@@ -971,6 +1041,7 @@ class CleanLivePlayerViewModelTest {
             metadata: CleanMediaSessionMetadata,
         ): Long {
             operations += "zap"
+            zapFailure?.let { throw it }
             zappedSelections += selection
             zappedMetadata += metadata
             tunedSelection = selection

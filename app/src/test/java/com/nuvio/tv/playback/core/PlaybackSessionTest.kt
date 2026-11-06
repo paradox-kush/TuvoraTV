@@ -2321,6 +2321,52 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    @Test
+    fun `B178 a request resolution that never returns ends in failed with a timeout`() = runTest {
+        val resolver = PlaybackRequestResolver { awaitCancellation() }
+        val session = session(
+            engine = FakeEngine(),
+            requestResolver = resolver,
+            policy = PlaybackPolicy(),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        runCurrent()
+        assertEquals(PlaybackState.RESOLVING, session.snapshot.value.state)
+
+        advanceTimeBy(PlaybackStageDeadlinePolicy.RESOLVING_MS - 1)
+        runCurrent()
+        assertEquals("still inside the deadline", PlaybackState.RESOLVING, session.snapshot.value.state)
+
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailureCode.NETWORK_TIMEOUT, session.snapshot.value.failure?.code)
+        assertEquals(FailurePhase.REQUEST_RESOLUTION, session.snapshot.value.failure?.phase)
+        close(session)
+    }
+
+    @Test
+    fun `B178 a healthy resolution trips no stage deadline in any stage`() = runTest {
+        val session = session(engine = FakeEngine(), policy = PlaybackPolicy())
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        runCurrent()
+        // Past the pre-engine stage window but inside the engine's own 60 s read timeout.
+        advanceTimeBy(PlaybackStageDeadlinePolicy.PRE_ENGINE_START_MS + 1)
+        runCurrent()
+        assertTrue("not failed: ${session.snapshot.value.failure}", session.snapshot.value.state != PlaybackState.FAILED)
+        assertEquals(null, session.snapshot.value.failure)
+        close(session)
+    }
+
+    @Test
+    fun `B178 stage deadlines outlast the per-call http limit`() {
+        val httpLimit = PlaybackNetworkRequest.DEFAULT_READ_TIMEOUT_MS.toLong()
+        assertTrue(PlaybackStageDeadlinePolicy.RESOLVING_MS > httpLimit)
+        assertTrue(PlaybackStageDeadlinePolicy.SELECTING_GRAPH_MS > httpLimit)
+    }
+
     private fun TestScope.session(
         engine: FakeEngine,
         otherEngine: FakeEngine? = null,

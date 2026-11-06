@@ -85,6 +85,12 @@ class StalkerSession(
     private val panelGuard: PanelHostGuard = IptvPanelGuard.guard
 ) {
     @Volatile private var token: String? = null
+    /**
+     * UX147: whether the portal's `get_modules` answer lists `series` as off (null = never asked, or an
+     * answer we do not recognise). Only the module-gated bootstrap asks, so unknown is the common case.
+     */
+    @Volatile var seriesModuleDisabled: Boolean? = null
+        private set
     /** When a re-auth ran and the retry STILL came back empty (another device holds the MAC). */
     @Volatile private var lastFailedReauthAtMs: Long = 0L
     @Volatile private var resolvedEndpoint: String? = null   // e.g. "/portal.php"
@@ -139,7 +145,7 @@ class StalkerSession(
      * 401 / 403). Throws on a hard failure so callers' [runCatching] degrades to empty.
      */
     suspend fun request(params: Map<String, String>): JsonElement = withContext(Dispatchers.IO) {
-        com.nuvio.tv.core.sources.DeviceSources.guard("iptv",account.id)
+        com.nuvio.tv.core.sources.DeviceSources.checkAccess("iptv",account.id)
         ensureAuthenticated()
         val staleToken = token
         // ONLY an auth failure earns a re-handshake. A transport/HTTP throw (429/419/5xx/timeout) must
@@ -488,6 +494,8 @@ class StalkerSession(
                 StalkerBootstrapPolicy.Step.GET_MODULES -> {
                     runCatchingCancellable { rawRequestAt(endpoint, mapOf("type" to "stb", "action" to "get_modules")) }
                         .onFailure { Log.d(TAG, "Stalker get_modules failed for ${account.name}", it) }
+                        .getOrNull()?.jsOrNull()
+                        ?.let { seriesModuleDisabled = StalkerCapabilities.seriesModuleDisabled(it) }
                 }
             }
         }
