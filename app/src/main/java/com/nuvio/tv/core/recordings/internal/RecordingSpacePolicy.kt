@@ -8,7 +8,7 @@ import com.nuvio.tv.core.recordings.api.RecordingStatus
 sealed interface SpaceDecision {
     data object Proceed : SpaceDecision
     data class DeleteThenProceed(val ids: List<String>) : SpaceDecision
-    data class Refuse(val problem: RecordingProblem) : SpaceDecision
+    data class Refuse(val problem: RecordingProblem, val needBytes: Long? = null, val freeBytes: Long? = null) : SpaceDecision
 }
 
 sealed interface CaptureSpaceDecision {
@@ -32,6 +32,19 @@ object RecordingSpacePolicy {
         val bps = bitrateBps?.takeIf { it > 0 } ?: DEFAULT_BITRATE_BPS
         return durationMs.coerceAtLeast(0) * bps / 8_000L
     }
+
+    /** Room beyond the floor that a start deleting-to-make-room aims for, so the capture does not stop at once. */
+    const val HEAD_START_BYTES = 64L * 1024 * 1024
+
+    /** STUB (red): replaced in the implementation commit. */
+    fun preStart(freeBytes: Long, policy: LowSpacePolicy, deletable: List<Recording>): SpaceDecision = SpaceDecision.Proceed
+
+    /** STUB (red): replaced in the implementation commit. */
+    fun knownSize(freeBytes: Long, totalBytes: Long, onDiskBytes: Long, policy: LowSpacePolicy, deletable: List<Recording>): SpaceDecision =
+        SpaceDecision.Proceed
+
+    /** STUB (red): replaced in the implementation commit. */
+    fun spaceTight(freeBytes: Long, durationMs: Long, bitrateBps: Long? = null): Boolean = false
 
     fun check(freeBytes: Long, needBytes: Long, policy: LowSpacePolicy, deletable: List<Recording>): SpaceDecision {
         val usable = freeBytes - MIN_FREE_BYTES

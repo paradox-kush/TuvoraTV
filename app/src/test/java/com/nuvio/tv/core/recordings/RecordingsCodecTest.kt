@@ -51,6 +51,27 @@ class RecordingsCodecTest {
     }
 
     @Test
+    fun `the optional need and free bytes of a space failure round trip and stay additive`() {
+        val failed = recording("rec1", RecordingStatus.FAILED).copy(
+            problem = RecordingProblem.NO_SPACE, problemNeedBytes = 1_100_000_000L, problemFreeBytes = 900_000_000L,
+        )
+        val doc = RecordingsDocument(recordings = listOf(StoredRow.of(failed)))
+        val text = RecordingsCodec.encode(doc)
+        val back = assertNotNull(RecordingsCodec.decode(text)).recordingValues.single()
+        assertEquals(1_100_000_000L, back.problemNeedBytes)
+        assertEquals(900_000_000L, back.problemFreeBytes)
+        assertEquals("no schema bump: the fields are additive", 2, parse(text).getValue("schemaVersion").jsonPrimitive.int)
+
+        // A row written before the fields existed decodes with nulls and is not lost.
+        val plain = RecordingsCodec.encode(RecordingsDocument(recordings = listOf(StoredRow.of(recording("old")))))
+        val legacy = plain.replace(",\"problemNeedBytes\":null,\"problemFreeBytes\":null", "")
+        assertTrue("the fixture really is the old shape", "problemNeedBytes" !in legacy)
+        val old = assertNotNull(RecordingsCodec.decode(legacy)).recordingValues.single()
+        assertNull(old.problemNeedBytes)
+        assertNull(old.problemFreeBytes)
+    }
+
+    @Test
     fun `the encoded document names its schemaVersion and the three lists`() {
         val obj = parse(RecordingsCodec.encode(fullDoc()))
         assertEquals(2, obj.getValue("schemaVersion").jsonPrimitive.int)

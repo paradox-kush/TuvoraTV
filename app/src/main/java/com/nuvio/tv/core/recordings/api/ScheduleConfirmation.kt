@@ -26,6 +26,8 @@ data class ScheduleConfirmation(
     val clashTitles: List<String> = emptyList(),
     val offerExactAlarmSettings: Boolean = false,
     val count: Int = 1,
+    /** Space is tight for the estimated size: add "May stop early if space runs out." */
+    val spaceTight: Boolean = false,
 )
 
 /** Picks the truthful confirmation for a scheduling result. Pure. */

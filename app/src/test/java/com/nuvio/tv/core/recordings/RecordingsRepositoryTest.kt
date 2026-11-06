@@ -3,6 +3,7 @@ package com.nuvio.tv.core.recordings
 import com.nuvio.tv.core.recordings.api.ArmKind
 import com.nuvio.tv.core.recordings.api.CaptureMode
 import com.nuvio.tv.core.recordings.api.FireResult
+import com.nuvio.tv.core.recordings.api.KnownSizeDecision
 import com.nuvio.tv.core.recordings.api.LowSpacePolicy
 import com.nuvio.tv.core.recordings.api.RecordingAlarms
 import com.nuvio.tv.core.recordings.api.RecordingCapabilities
@@ -275,13 +276,129 @@ class RecordingsRepositoryTest {
         val old = recording("old1", start = NOW - 10 * DAY, size = 50L * 1024 * 1024 * 1024)
         val old2 = recording("old2", start = NOW - 9 * DAY, size = 50L * 1024 * 1024 * 1024)
         rig.files.texts["recordings.json"] = stateText(dueCatchUp(), recs = listOf(old, old2))
-        rig.files.free = 1L * 1024 * 1024 * 1024 // 1 GiB free, an hour at 8 Mbit/s needs ~3.6 GB + floor
+        rig.files.free = 400L * 1024 * 1024 // below the 500 MB floor: room must be made (an estimate alone never deletes)
         rig.files.sizes["/rec/old1.ts"] = old.sizeBytes
         val res = rig.repo.fire("s1", NOW)
         assertEquals(FireResult.Saved, res)
         assertEquals("only the oldest file", listOf("/rec/old1.ts"), rig.files.deleted.filter { it.startsWith("/rec/old") })
         val ids = rig.repo.state.value.recordings.map { it.id }
         assertTrue("oldest removed only: $ids", "old1" !in ids && "old2" in ids)
+    }
+
+    @Test
+    fun `delete oldest does not delete on an estimate alone when the floor is fine`() = runTest {
+        val rig = Rig(policy = LowSpacePolicy.DELETE_OLDEST)
+        val old = recording("old1", start = NOW - 10 * DAY, size = 50L * 1024 * 1024 * 1024)
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp(), recs = listOf(old))
+        rig.files.free = 1L * 1024 * 1024 * 1024 // an hour at 8 Mbit/s would need ~3.6 GB, but the floor is fine
+        rig.files.sizes["/rec/old1.ts"] = old.sizeBytes
+        assertEquals(FireResult.Saved, rig.repo.fire("s1", NOW))
+        assertTrue("nothing deleted: ${rig.files.deleted}", rig.files.deleted.none { it.startsWith("/rec/old") })
+        assertTrue(rig.repo.state.value.recordings.any { it.id == "old1" })
+    }
+
+    @Test
+    fun `an estimate larger than free space does not refuse the start when the floor is fine`() = runTest {
+        val rig = Rig()
+        rig.files.free = 2L * 1000 * 1000 * 1000 // the Onn: 2 GB free, estimate ~3.9 GB, real file 30 MB
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        rig.saver.next = { _, progress -> progress(30_000_000L); SaveOutcome.Done(30_000_000L) }
+        assertEquals(FireResult.Saved, rig.repo.fire("s1", NOW))
+        assertEquals(1, rig.saver.calls.size)
+        val rec = rig.repo.state.value.recordings.single()
+        assertEquals(RecordingStatus.DONE, rec.status)
+        assertNull(rec.problem)
+    }
+
+    @Test
+    fun `a known size that will not fit is refused before downloading and the row names the numbers`() = runTest {
+        val rig = Rig()
+        rig.files.free = 1_400_000_000L // 1.4 GB free, floor 0.52 GB: ~0.87 GB usable
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        var decision: KnownSizeDecision? = null
+        rig.saver.next = { req, _ ->
+            decision = req.onKnownTotal!!.invoke(1_100_000_000L, 0L)
+            val d = decision as KnownSizeDecision.Refuse
+            SaveOutcome.Failed(RecordingProblem.NO_SPACE, false, 0, true, needBytes = d.needBytes, freeBytes = d.freeBytes)
+        }
+        assertEquals(FireResult.Failed(RecordingProblem.NO_SPACE), rig.repo.fire("s1", NOW))
+        assertEquals(KnownSizeDecision.Refuse(1_100_000_000L, 1_400_000_000L), decision)
+        val rec = rig.repo.state.value.recordings.single()
+        assertEquals(RecordingStatus.FAILED, rec.status)
+        assertEquals(RecordingProblem.NO_SPACE, rec.problem)
+        assertEquals(1_100_000_000L, rec.problemNeedBytes)
+        assertEquals(1_400_000_000L, rec.problemFreeBytes)
+        assertTrue("NO_SPACE is never retried", rig.repo.state.value.schedules.isEmpty())
+    }
+
+    @Test
+    fun `a known size that fits continues`() = runTest {
+        val rig = Rig()
+        rig.files.free = 2L * 1000 * 1000 * 1000
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        var decision: KnownSizeDecision? = null
+        rig.saver.next = { req, _ -> decision = req.onKnownTotal!!.invoke(30_000_000L, 0L); SaveOutcome.Done(30_000_000L) }
+        assertEquals(FireResult.Saved, rig.repo.fire("s1", NOW))
+        assertEquals(KnownSizeDecision.Continue, decision)
+    }
+
+    @Test
+    fun `a known size on a resume counts only the remainder`() = runTest {
+        val rig = Rig()
+        rig.files.free = 1_000_000_000L + 524_288_000L // 1 GB usable
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        var decision: KnownSizeDecision? = null
+        rig.saver.next = { req, _ -> decision = req.onKnownTotal!!.invoke(3_000_000_000L, 2_500_000_000L); SaveOutcome.Done(3_000_000_000L) }
+        assertEquals(FireResult.Saved, rig.repo.fire("s1", NOW))
+        assertEquals("0.5 GB remain, 1 GB is usable", KnownSizeDecision.Continue, decision)
+    }
+
+    @Test
+    fun `a known size under delete oldest makes room by deleting the oldest and continues`() = runTest {
+        val rig = Rig(policy = LowSpacePolicy.DELETE_OLDEST)
+        val old = recording("old1", start = NOW - 10 * DAY, size = 5L * 1000 * 1000 * 1000)
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp(), recs = listOf(old))
+        rig.files.free = 1_000_000_000L
+        rig.files.sizes["/rec/old1.ts"] = old.sizeBytes
+        var decision: KnownSizeDecision? = null
+        rig.saver.next = { req, _ -> decision = req.onKnownTotal!!.invoke(3_000_000_000L, 0L); SaveOutcome.Done(3_000_000_000L) }
+        assertEquals(FireResult.Saved, rig.repo.fire("s1", NOW))
+        assertEquals(KnownSizeDecision.Continue, decision)
+        assertEquals(listOf("/rec/old1.ts"), rig.files.deleted.filter { it.startsWith("/rec/old") })
+    }
+
+    @Test
+    fun `running out of space mid-capture after bytes were written keeps the file and finishes DONE with a note`() = runTest {
+        val rig = Rig()
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        rig.saver.next = { _, progress -> progress(48_000_000L); SaveOutcome.Done(48_000_000L, stoppedFor = RecordingProblem.NO_SPACE) }
+        assertEquals(FireResult.Saved, rig.repo.fire("s1", NOW))
+        val rec = rig.repo.state.value.recordings.single()
+        assertEquals(RecordingStatus.DONE, rec.status)
+        assertEquals("the note is kept on the DONE row", RecordingProblem.NO_SPACE, rec.problem)
+        assertEquals(48_000_000L, rec.sizeBytes)
+        assertNull(rec.retrySource)
+        assertTrue("never retried", rig.repo.state.value.schedules.isEmpty())
+        assertTrue("the kept file is not cleaned up: ${rig.files.deleted}", rig.files.deleted.none { it.endsWith(".ts") || it.endsWith(".part") })
+    }
+
+    @Test
+    fun `running out of space with zero bytes written is a failure as before`() = runTest {
+        val rig = Rig()
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        rig.saver.next = { _, _ -> SaveOutcome.Failed(RecordingProblem.NO_SPACE, false, 0, true) }
+        assertEquals(FireResult.Failed(RecordingProblem.NO_SPACE), rig.repo.fire("s1", NOW))
+        assertEquals(RecordingStatus.FAILED, rig.repo.state.value.recordings.single().status)
+    }
+
+    @Test
+    fun `scheduling computes spaceTight from free space and the padded estimate`() = runTest {
+        val tight = Rig().also { it.files.free = 2L * 1000 * 1000 * 1000 }
+        val a = tight.repo.scheduleProgramme(catchUpChannel, "Show", null, null, NOW + HOUR, NOW + 2 * HOUR, NOW) as ScheduleResult.Scheduled
+        assertTrue("an hour (~3.9 GB with padding) does not fit in 2 GB", a.spaceTight)
+        val roomy = Rig()
+        val b = roomy.repo.scheduleProgramme(catchUpChannel, "Show", null, null, NOW + HOUR, NOW + 2 * HOUR, NOW) as ScheduleResult.Scheduled
+        assertEquals(false, b.spaceTight)
     }
 
     @Test

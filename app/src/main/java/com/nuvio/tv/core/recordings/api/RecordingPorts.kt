@@ -31,20 +31,45 @@ data class SaveRequest(
      * policy (and any "delete oldest" it implies); the saver only asks.
      */
     val spaceCheck: (suspend (expectedBytes: Long) -> RecordingProblem?)? = null,
+    /**
+     * Called ONCE, as soon as the saver KNOWS the size (a declared Content-Length, after the response
+     * headers and before any body byte is written). [totalBytes] is the whole file; [onDiskBytes] is what
+     * a resumed save already holds, so the repository compares only the remainder with the free space.
+     * On [KnownSizeDecision.Refuse] the saver must abort at once and report
+     * `Failed(NO_SPACE, needBytes, freeBytes)`. Never called when the size is not declared: an estimate
+     * is never a reason to refuse.
+     */
+    val onKnownTotal: (suspend (totalBytes: Long, onDiskBytes: Long) -> KnownSizeDecision)? = null,
 )
 
+/** The repository's answer to [SaveRequest.onKnownTotal]. */
+sealed interface KnownSizeDecision {
+    data object Continue : KnownSizeDecision
+
+    /** The declared size will not fit: [needBytes] still to write, [freeBytes] free right now. */
+    data class Refuse(val needBytes: Long, val freeBytes: Long) : KnownSizeDecision
+}
+
 sealed interface SaveOutcome {
-    data class Done(val bytes: Long) : SaveOutcome
+    /**
+     * [stoppedFor] non-null means the file is a playable TRUNCATED save the saver kept (renamed to the
+     * target) because it had to stop part-way, today only [RecordingProblem.NO_SPACE]; the row is DONE
+     * with that note and is never retried.
+     */
+    data class Done(val bytes: Long, val stoppedFor: RecordingProblem? = null) : SaveOutcome
 
     /**
      * [offline]: the device had no network (does not use up an attempt). [writtenBytes]: what is in the
      * `.part` file. [rangeSupported]: the server honoured Range, so the next try can resume from there.
+     * [needBytes]/[freeBytes]: set only on a NO_SPACE refusal of a KNOWN size (see [SaveRequest.onKnownTotal]).
      */
     data class Failed(
         val problem: RecordingProblem,
         val offline: Boolean,
         val writtenBytes: Long,
         val rangeSupported: Boolean,
+        val needBytes: Long? = null,
+        val freeBytes: Long? = null,
     ) : SaveOutcome
 }
 
@@ -87,7 +112,13 @@ data class RecordingsState(
 
 sealed interface ScheduleResult {
     /** [arm] tells the UI whether to say "may start late" (INEXACT) or "will not start by itself" (NONE). [clashes] are overlapping live captures on the same source: warn, never block. */
-    data class Scheduled(val schedule: RecordingSchedule, val arm: ArmKind, val clashes: List<RecordingSchedule>) : ScheduleResult
+    data class Scheduled(
+        val schedule: RecordingSchedule,
+        val arm: ArmKind,
+        val clashes: List<RecordingSchedule>,
+        /** The estimated size plus the free-space floor exceeds the free space now: say "may stop early", never block. */
+        val spaceTight: Boolean = false,
+    ) : ScheduleResult
     data class Duplicate(val existing: RecordingSchedule) : ScheduleResult
 
     /** Not catch-up, and this platform cannot record live (or the programme is over). */

@@ -82,4 +82,13 @@ class ScheduleConfirmationPolicyTest {
         assertEquals(ConfirmationKind.SAVES_ON_NEXT_OPEN, iphone.kind)
         assertFalse(iphone.offerExactAlarmSettings)
     }
+
+    @Test
+    fun `space tight is carried to the confirmation on every arm`() {
+        for (arm in ArmKind.values()) {
+            val c = ScheduleConfirmationPolicy.forResult(ScheduleResult.Scheduled(s, arm, emptyList(), spaceTight = true)) { false }
+            assertTrue("arm $arm", c.spaceTight)
+        }
+        assertFalse(ScheduleConfirmationPolicy.forResult(scheduled(ArmKind.EXACT)) { false }.spaceTight)
+    }
 }

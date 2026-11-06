@@ -135,4 +135,8 @@ data class Recording(
     val seriesRuleId: String? = null,
     /** The schedule that produced a FAILED or CANCELLED row, kept so Retry can run it again. Null otherwise. */
     val retrySource: RecordingSchedule? = null,
+    /** With [RecordingProblem.NO_SPACE] on a KNOWN size: bytes the save still needed. Null otherwise. */
+    val problemNeedBytes: Long? = null,
+    /** With [problemNeedBytes]: bytes that were free at the time. */
+    val problemFreeBytes: Long? = null,
 )
