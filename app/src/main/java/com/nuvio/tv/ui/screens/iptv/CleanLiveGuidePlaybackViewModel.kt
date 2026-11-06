@@ -726,8 +726,8 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         presentationJob?.cancelAndJoin()
         presentationJob = null
         // The buffer belongs to the channel being left.
-        val hadBuffer = mutableLivePause.value.phase != LivePausePhase.OFF
-        livePauseControl?.onChannelChanged()
+        // The control says whether it released the live source / dropped a buffer; the view can lag it.
+        val hadBuffer = livePauseControl?.onChannelChanged() ?: false
         val acceptedGeneration = try {
             currentHost.zap(target.selection, sessionProfile, mediaMetadata(target))
         } catch (cancelled: CancellationException) {

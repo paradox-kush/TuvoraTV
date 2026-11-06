@@ -696,6 +696,7 @@ class CleanLiveGuidePlaybackViewModelTest {
         )
         fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
         controls[0].state.value = com.nuvio.tv.core.contracts.LivePauseView(phase = com.nuvio.tv.core.contracts.LivePausePhase.SHIFTED)
+        controls[0].channelChangedResult = true
         fixture.firstHost.zapFailures = 1
         fixture.viewModel.requestTune(fixture.next.contentId)
         advanceUntilIdle()
@@ -714,6 +715,7 @@ class CleanLiveGuidePlaybackViewModelTest {
         )
         fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
         controls[0].state.value = com.nuvio.tv.core.contracts.LivePauseView(phase = com.nuvio.tv.core.contracts.LivePausePhase.SHIFTED)
+        controls[0].channelChangedResult = true
         fixture.firstHost.zapFailures = 1
         fixture.firstHost.tuneFailures = 1
         fixture.viewModel.requestTune(fixture.next.contentId)
@@ -722,6 +724,42 @@ class CleanLiveGuidePlaybackViewModelTest {
             CleanLiveGuidePlaybackState.Rejected(CleanLiveGuideFailure.TUNE_FAILED),
             fixture.viewModel.state.value,
         )
+    }
+
+    @Test
+    fun `a failed zap retunes the old channel when the control released the source even though the view still says OFF`() = runTest {
+        val controls = mutableListOf<RecordingPauseControl>()
+        val fixture = fixture(
+            livePauseFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { request ->
+                RecordingPauseControl(request.selection).also { controls += it }
+            },
+        )
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        // A Pause is inside releaseLiveSource: the VM's copy of the view is still OFF.
+        controls[0].channelChangedResult = true
+        fixture.firstHost.zapFailures = 1
+        fixture.viewModel.requestTune(fixture.next.contentId)
+        advanceUntilIdle()
+        assertEquals("old channel put back on live", 2, fixture.firstHost.tuneTargets.size)
+    }
+
+    @Test
+    fun `a failed zap does not spend a link retuning when the control never released the source`() = runTest {
+        val controls = mutableListOf<RecordingPauseControl>()
+        val fixture = fixture(
+            livePauseFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { request ->
+                RecordingPauseControl(request.selection).also { controls += it }
+            },
+        )
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        // Failed(NO_SPACE) before anything was released: the live source is still playing.
+        controls[0].state.value = com.nuvio.tv.core.contracts.LivePauseView(phase = com.nuvio.tv.core.contracts.LivePausePhase.FAILED)
+        controls[0].channelChangedResult = false
+        fixture.firstHost.zapFailures = 1
+        fixture.viewModel.requestTune(fixture.next.contentId)
+        advanceUntilIdle()
+        assertEquals("no wasted retune", 1, fixture.firstHost.tuneTargets.size)
+        assertEquals(true, fixture.viewModel.state.value is CleanLiveGuidePlaybackState.Ready)
     }
 
     private fun fixture(
@@ -824,7 +862,8 @@ class CleanLiveGuidePlaybackViewModelTest {
         override fun seekInWindow(positionMs: Long) { calls += "seek" }
         override fun goLive() { calls += "goLive" }
         override fun retry() { calls += "retry" }
-        override fun onChannelChanged() { calls += "channelChanged" }
+        var channelChangedResult = false
+        override suspend fun onChannelChanged(): Boolean { calls += "channelChanged"; return channelChangedResult }
         override fun onLiveStarted() {}
         override fun dispose() { calls += "dispose" }
     }

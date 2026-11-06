@@ -512,8 +512,7 @@ internal class CleanLivePlayerViewModel private constructor(
             presentationJob?.cancelAndJoin()
             presentationJob = null
             // The buffer belongs to the channel being left.
-            val hadBuffer = mutableLivePause.value.phase != LivePausePhase.OFF
-            livePauseControl?.onChannelChanged()
+            val hadBuffer = livePauseControl?.onChannelChanged() ?: false
             val nextDisplay = CleanLiveLaunchMetadata.sanitized(target.title)
             val nextLaunch = CleanLiveLaunchEntry(
                 target = target,
