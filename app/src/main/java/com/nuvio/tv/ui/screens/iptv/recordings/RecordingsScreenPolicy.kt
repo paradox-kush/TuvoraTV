@@ -28,19 +28,26 @@ internal object RecordingsFocusPolicy {
         for (n in i - 1 downTo 0) if (before[n] in survivors) return before[n]
         return after.firstOrNull()
     }
+
     /** First row of the first non-empty section in display order, else null. */
-    fun entryFor(page: RecordingsPageModel): String? = null
+    fun entryFor(page: RecordingsPageModel): String? =
+        RecordingsPagePolicy.ORDER.firstNotNullOfOrNull { page.rows(it).firstOrNull()?.id }
 
     /** What a vertical key does on [id]: let focus move, swallow it (a fence), or go up to the banner. */
     enum class Vertical { MOVE, STAY, TO_BANNER }
 
-    fun vertical(ids: List<String>, id: String, down: Boolean, bannerShown: Boolean): Vertical = Vertical.MOVE
+    fun vertical(ids: List<String>, id: String, down: Boolean, bannerShown: Boolean): Vertical = when {
+        down && id == ids.lastOrNull() -> Vertical.STAY
+        !down && id == ids.firstOrNull() -> if (bannerShown) Vertical.TO_BANNER else Vertical.STAY
+        else -> Vertical.MOVE
+    }
 
     /**
      * Where to put the cursor when it is on none of the rows (the focused row was recomposed away when
      * its status moved it to another section), or null when nothing needs doing.
      */
-    fun lostFocusTarget(listHasFocus: Boolean, overlayOpen: Boolean, lastId: String?, ids: List<String>): String? = null
+    fun lostFocusTarget(listHasFocus: Boolean, overlayOpen: Boolean, lastId: String?, ids: List<String>): String? =
+        if (listHasFocus || overlayOpen || ids.isEmpty()) null else restore(lastId, ids)
 }
 
 internal object RecordingRowFormat {
@@ -70,11 +77,12 @@ internal object ExactAlarmOfferPolicy {
 
 /** How a row shows its words. Pure. */
 internal object RecordingRowTextPolicy {
-    const val REASON_MAX_LINES = 1
+    const val REASON_MAX_LINES = 4
 
     /** True when the reason sits on its own wrapping line under the row instead of the narrow status column. */
-    fun reasonOnOwnLine(row: RecordingRow): Boolean = false
+    fun reasonOnOwnLine(row: RecordingRow): Boolean =
+        row.section == RecordingSection.FAILED && row.problem != null
 
     /** Every row of every status takes the cursor and opens its details on OK. */
-    fun focusable(status: RecordingStatus): Boolean = false
+    fun focusable(@Suppress("UNUSED_PARAMETER") status: RecordingStatus): Boolean = true
 }

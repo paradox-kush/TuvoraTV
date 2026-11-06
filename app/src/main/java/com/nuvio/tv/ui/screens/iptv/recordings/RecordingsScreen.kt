@@ -35,6 +35,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -102,6 +107,8 @@ fun RecordingsScreen(
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     val view = rememberRecordingsView(ui.loaded, ui.attempt)
     var actionFailed by remember { mutableStateOf(false) }
+    val actionFailedState = rememberUpdatedState(actionFailed)
+    val openRowIdState = remember { mutableStateOf<String?>(null) }
 
     val latestPlay by rememberUpdatedState(onPlayFile)
     LaunchedEffect(viewModel) {
@@ -133,6 +140,8 @@ fun RecordingsScreen(
     var entered by remember { mutableStateOf(false) }
     val holder = remember { FocusRequester() }
     val actionFocus = remember { FocusRequester() }
+    val bannerFocus = remember { FocusRequester() }
+    var screenHasFocus by remember { mutableStateOf(false) }
 
     suspend fun focusRow(id: String): Boolean {
         val index = entries.indexOfFirst { it is Entry.Item && it.row.id == id }
@@ -148,6 +157,20 @@ fun RecordingsScreen(
         val target = RecordingsFocusPolicy.restore(memo.id, ids) ?: return@LaunchedEffect
         if (focusRow(target)) entered = true
     }
+    // A row can lose the cursor without the viewer moving: a capture that starts or fails changes the
+    // row's section, the lazy item is rebuilt, and focus falls out (the next DOWN then left the app on
+    // the Onn). Put it back on the remembered row once things settle.
+    LaunchedEffect(view, ids, screenHasFocus, entered) {
+        if (view !is RecordingsView.Ready || !entered) return@LaunchedEffect
+        delay(250)
+        val target = RecordingsFocusPolicy.lostFocusTarget(
+            listHasFocus = screenHasFocus,
+            overlayOpen = openRowIdState.value != null || actionFailedState.value,
+            lastId = memo.id,
+            ids = ids,
+        ) ?: return@LaunchedEffect
+        focusRow(target)
+    }
     // The states without rows still hold the cursor somewhere.
     val rowless = view !is RecordingsView.Ready || ids.isEmpty()
     LaunchedEffect(view, rowless) {
@@ -157,7 +180,7 @@ fun RecordingsScreen(
     }
 
     // Details sheet + where the cursor goes when its action removes the row.
-    var openRowId by remember { mutableStateOf<String?>(null) }
+    var openRowId by openRowIdState
     var removal by remember { mutableStateOf<Pair<String, List<String>>?>(null) }
     val openRow = openRowId?.let { rowsById[it] }
     // The row left the page (a capture ended and moved sections): close its sheet.
@@ -203,6 +226,7 @@ fun RecordingsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .onFocusChanged { screenHasFocus = it.hasFocus }
                 .padding(horizontal = NuvioTheme.spacing.xxl, vertical = NuvioTheme.spacing.xl),
         ) {
             Text(
@@ -213,7 +237,10 @@ fun RecordingsScreen(
             )
             if (offerExact) {
                 Spacer(Modifier.height(NuvioTheme.spacing.sm))
-                ExactTimesOffer(onClick = { exactSettings?.let { launchExactAlarmSettings(context, it) } })
+                ExactTimesOffer(
+                    requester = bannerFocus,
+                    onClick = { exactSettings?.let { launchExactAlarmSettings(context, it) } },
+                )
             } else if (ui.page.rows(RecordingSection.SCHEDULED).isNotEmpty() && !(ui.exactAllowed || systemAllowsExact)) {
                 Spacer(Modifier.height(NuvioTheme.spacing.xs))
                 Text(
@@ -260,6 +287,15 @@ fun RecordingsScreen(
                                     nowMs = nowMs,
                                     requester = requesterFor(entry.row.id),
                                     onFocused = { memo.id = entry.row.id; entered = true },
+                                    onVertical = { down ->
+                                        // The bottom edge is a fence and the top edge goes to the banner: a
+                                        // key nobody handles would hand focus to the launcher.
+                                        when (RecordingsFocusPolicy.vertical(ids, entry.row.id, down, offerExact)) {
+                                            RecordingsFocusPolicy.Vertical.MOVE -> false
+                                            RecordingsFocusPolicy.Vertical.STAY -> true
+                                            RecordingsFocusPolicy.Vertical.TO_BANNER -> { bannerFocus.requestFocusOrFalse(); true }
+                                        }
+                                    },
                                     onClick = { memo.id = entry.row.id; openRowId = entry.row.id },
                                 )
                             }
@@ -383,6 +419,7 @@ private fun RecordingRowItem(
     nowMs: Long,
     requester: FocusRequester,
     onFocused: () -> Unit,
+    onVertical: (down: Boolean) -> Boolean,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -402,6 +439,14 @@ private fun RecordingRowItem(
             .border(if (focused) 2.dp else 0.dp, if (focused) NuvioTheme.colors.BorderFocused else Color.Transparent, shape)
             .focusRequester(requester)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.DirectionDown -> onVertical(true)
+                    Key.DirectionUp -> onVertical(false)
+                    else -> false
+                }
+            }
             .clickable(onClick = onClick)
             .padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.md),
         verticalAlignment = Alignment.CenterVertically,
@@ -423,9 +468,21 @@ private fun RecordingRowItem(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            // ROW-REASON-BEGIN
+            if (RecordingRowTextPolicy.reasonOnOwnLine(row)) {
+                row.problem?.let {
+                    Text(
+                        text = problemText(it),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = statusColor,
+                        maxLines = RecordingRowTextPolicy.REASON_MAX_LINES,
+                    )
+                }
+            }
+            // ROW-REASON-END
         }
         Text(
-            text = rowStatus(row),
+            text = rowStatus(row, reasonOnOwnLine = RecordingRowTextPolicy.reasonOnOwnLine(row)),
             style = MaterialTheme.typography.labelLarge,
             color = statusColor,
             maxLines = 1,
@@ -440,7 +497,7 @@ private fun rowMeta(row: RecordingRow, nowMs: Long): String =
     "${row.channelName}  ·  ${guideDayLabel(row.programmeStartMs, nowMs)} ${guideHhMm(row.programmeStartMs)}–${guideHhMm(row.programmeEndMs)}"
 
 @Composable
-private fun rowStatus(row: RecordingRow): String {
+private fun rowStatus(row: RecordingRow, reasonOnOwnLine: Boolean = false): String {
     val size = RecordingRowFormat.size(row.sizeBytes)
     return when (row.status) {
         RecordingStatus.SCHEDULED ->
@@ -449,7 +506,9 @@ private fun rowStatus(row: RecordingRow): String {
             if (size.isEmpty()) stringResource(R.string.rec_status_recording)
             else stringResource(R.string.rec_status_recording_size, size)
         RecordingStatus.DONE -> size.ifEmpty { stringResource(R.string.rec_status_done) }
-        RecordingStatus.FAILED -> row.problem?.let { problemText(it) } ?: stringResource(R.string.rec_status_failed)
+        RecordingStatus.FAILED ->
+            if (reasonOnOwnLine) stringResource(R.string.rec_status_failed)
+            else row.problem?.let { problemText(it) } ?: stringResource(R.string.rec_status_failed)
         RecordingStatus.CANCELLED -> stringResource(R.string.rec_status_cancelled)
     }
 }
@@ -497,14 +556,16 @@ private fun RecordingDetailsDialog(
         scrollable = true,
     ) {
         Text(
-            text = rowStatus(row),
+            text = rowStatus(row, reasonOnOwnLine = true),
             style = MaterialTheme.typography.titleSmall,
             color = if (row.section == RecordingSection.FAILED) NuvioTheme.colors.Error else NuvioTheme.colors.TextPrimary,
             fontWeight = FontWeight.Bold,
         )
+        // DETAIL-REASON-BEGIN
         row.problem?.takeIf { row.section == RecordingSection.FAILED }?.let {
             Text(text = problemText(it), style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary)
         }
+        // DETAIL-REASON-END
         if (row.status == RecordingStatus.DONE && !fileAvailable) {
             Text(
                 text = stringResource(R.string.rec_file_missing),
@@ -567,7 +628,7 @@ private fun RecordingDetailsDialog(
 /** The viewer's way to allow exact times when they closed the confirmation without choosing. Highlights on focus. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun ExactTimesOffer(onClick: () -> Unit) {
+private fun ExactTimesOffer(requester: FocusRequester, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(NuvioTheme.radii.md)
     Row(
@@ -576,6 +637,7 @@ private fun ExactTimesOffer(onClick: () -> Unit) {
             .clip(shape)
             .background(if (focused) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.BackgroundElevated)
             .border(if (focused) 2.dp else 1.dp, if (focused) NuvioTheme.colors.BorderFocused else NuvioTheme.colors.Border, shape)
+            .focusRequester(requester)
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.sm),
