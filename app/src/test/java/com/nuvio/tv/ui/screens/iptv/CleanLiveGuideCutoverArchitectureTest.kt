@@ -7,6 +7,7 @@ import org.junit.Test
 
 class CleanLiveGuideCutoverArchitectureTest {
     private val screen = source("app/src/main/java/com/nuvio/tv/ui/screens/iptv/XtreamLiveGuideScreen.kt")
+    private val overlay = source("app/src/main/java/com/nuvio/tv/ui/screens/iptv/GuideFullscreenOverlay.kt")
     private val catalog = source("app/src/main/java/com/nuvio/tv/ui/screens/iptv/XtreamLiveGuideViewModel.kt")
     // Ordering checks read the catalog with whitespace removed, so a reformat (a one-line
     // `_uiState.update { it.copy(...) }` split across lines by #36) cannot hide a real reorder.
@@ -27,6 +28,36 @@ class CleanLiveGuideCutoverArchitectureTest {
         assertTrue(screen.contains("playbackViewModel.requestPromote()"))
         assertTrue(screen.contains("playbackViewModel.requestCollapse()"))
         assertTrue(screen.contains("playbackViewModel.detachGuide()"))
+    }
+
+    @Test
+    fun `fullscreen overlay state is read by the overlay scope and never by the guide body`() {
+        // Event-time reads are fine: they sit inside the BACK handler, the root key handler and the
+        // overlay's channel-list lambda. Any other `controls.<state>` in the screen file is a
+        // composition-time read that restarts the whole hidden guide on every zap press.
+        fun span(start: String, end: String): IntRange {
+            val a = screen.indexOf(start)
+            assertTrue("anchor missing: $start", a >= 0)
+            val b = screen.indexOf(end, startIndex = a + start.length)
+            assertTrue("anchor end missing: $end", b > a)
+            return a..b
+        }
+        val eventScopes = listOf(
+            span("BackHandler(enabled = fullscreen) {", "\n    }\n"),
+            span(".onPreviewKeyEvent { event ->", "                true\n            }"),
+            span("onOpenChannelList = {", "},\n"),
+        )
+        val reads = Regex("""controls\.(visible|tick|moreOpen|zapReveal)\b""").findAll(screen).toList()
+        assertTrue("expected the event-handler reads to be found", reads.isNotEmpty())
+        reads.forEach { m ->
+            assertTrue(
+                "Guide body reads `${m.value}` in composition (offset ${m.range.first}); move it into " +
+                    "GuideFullscreenOverlay / GuideFullscreenControlsEffects or an event handler",
+                eventScopes.any { m.range.first in it },
+            )
+        }
+        assertTrue(overlay.contains("if (!fullscreen || !controls.visible) return"))
+        assertTrue(screen.contains("GuideFullscreenOverlay(\n                    fullscreen = fullscreen,"))
     }
 
     @Test
@@ -54,6 +85,7 @@ class CleanLiveGuideCutoverArchitectureTest {
             "prepared.url",
         ).forEach { forbidden ->
             assertFalse("Guide screen regained legacy playback symbol: $forbidden", screen.contains(forbidden))
+            assertFalse("Guide overlay regained legacy playback symbol: $forbidden", overlay.contains(forbidden))
         }
     }
 

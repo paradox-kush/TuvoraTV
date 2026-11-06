@@ -28,7 +28,7 @@ class SourceDisabledOnDeviceException(
 ) : CancellationException("Source disabled on this device")
 
 /** Who turned the source off: this device's own choice, or the account (the playlist is off for every device). */
-enum class RefusalScope { DEVICE, ACCOUNT }
+enum class RefusalScope { DEVICE, ACCOUNT, SIGNING_IN }
 
 /**
  * Why a request reaches a source. [DISCOVERY] (the default) is playback and catalog use: it needs the
@@ -99,7 +99,7 @@ class DeviceSourceEngine(
     // No longer changes the outcome (every device sets itself up); kept so callers and old tests compile.
     @Suppress("unused") private val existingInstallation: Boolean = false,
     // One line per refusal (source kind + engine mode; no host). Injected so the engine stays pure.
-    private val onRefused: (kind: String, mode: String) -> Unit = { _, _ -> },
+    private val onRefused: (kind: String, mode: String, scope: RefusalScope) -> Unit = { _, _, _ -> },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val lock = Any()
@@ -177,7 +177,7 @@ class DeviceSourceEngine(
     /** Throws the typed refusal (and reports it). */
     fun refuse(kind: String, scope: RefusalScope = RefusalScope.DEVICE): Nothing {
         val mode = state.value.mode
-        onRefused(kind, mode)
+        onRefused(kind, mode, scope)
         throw SourceDisabledOnDeviceException(kind, mode, scope)
     }
 

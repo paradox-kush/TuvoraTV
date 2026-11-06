@@ -2070,6 +2070,7 @@
     <string name="search_voice_failed">Voice recognition failed. Try again.</string>
     <string name="search_voice_unavailable">Voice search is unavailable on this device.</string>
     <string name="search_no_results_title">No Results</string>
+    <string name="search_iptv_scope_empty">No IPTV matches for the selected types.</string>
     <string name="search_no_results_subtitle">Try searching with different keywords</string>
     <string name="search_error_no_catalogs">No searchable catalogs found in installed addons</string>
 
@@ -3560,6 +3561,8 @@
     <string name="iptv_hub_error_file_missing">Playlist file not on this device — re-import it in Settings → IPTV</string>
     <string name="iptv_hub_error_load_failed">Failed to load</string>
     <string name="iptv_hub_error_unreachable">Couldn\'t reach this playlist. Check the portal is up and try again.</string>
+    <string name="iptv_hub_no_series_title">This provider has no series</string>
+    <string name="iptv_hub_no_section_message">Its portal says there is nothing in this section, so there is nothing to retry.</string>
     <string name="iptv_hub_error_blocked">This provider is blocking us. The portal is up — its firewall answered HTTP %1$d instead of letting us in. This usually clears by itself; a different network gets past it sooner.</string>
     <string name="iptv_guide_no_channels">No channels here</string>
     <string name="iptv_guide_no_information">No information</string>
@@ -3822,6 +3825,8 @@
     <string name="calendar_empty_all_quiet">All quiet on the TV front</string>
     <string name="calendar_empty_all_quiet_hint">Nothing you follow has a new episode or release in the next %1$d days.</string>
     <string name="calendar_bell_add">Remind me about new episodes</string>
+    <string name="calendar_bell_menu_row">Remind me of new episodes</string>
+    <string name="calendar_bell_menu_row_hint">Applies right away</string>
     <string name="calendar_bell_remove">Stop reminding me</string>
     <string name="calendar_hide">Hide from Calendar</string>
     <string name="calendar_settings_window">Days ahead</string>

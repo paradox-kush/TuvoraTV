@@ -114,6 +114,10 @@ import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Button
+import androidx.tv.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -1129,6 +1133,17 @@ fun MetaDetailsScreen(
         }
 
         if (uiState.showListPicker) {
+            // Calendar reminder lives in this picker (series and films). The key is null for titles
+            // the Calendar cannot follow, which hides the row.
+            val calendarBellViewModel: com.nuvio.tv.ui.screens.calendar.CalendarBellViewModel = hiltViewModel()
+            val calendarBells by calendarBellViewModel.bells.collectAsStateWithLifecycle()
+            val pickerMeta = uiState.meta
+            val calendarBellKey = remember(pickerMeta?.apiType, pickerMeta?.id, pickerMeta?.imdbId) {
+                pickerMeta?.let { com.nuvio.tv.core.calendar.calendarBellKey(it.apiType, it.id, it.imdbId) }
+            }
+            val reminderRow = LibraryPickerReminderRow.forBell(
+                calendarBellKey?.let { com.nuvio.tv.core.calendar.calendarBellOn(calendarBells, it) }
+            )
             val nuvioListTab = LibraryListTab(
                 key = LOCAL_LIBRARY_LIST_KEY,
                 title = stringResource(R.string.trakt_library_source_nuvio),
@@ -1147,6 +1162,10 @@ fun MetaDetailsScreen(
                 error = uiState.pickerError,
                 onToggle = { key ->
                     viewModel.onEvent(MetaDetailsEvent.OnPickerMembershipToggled(key))
+                },
+                reminderRow = reminderRow,
+                onToggleReminder = {
+                    calendarBellKey?.let { key -> calendarBellViewModel.setBell(key, reminderRow?.nextState ?: return@let) }
                 },
                 onSave = { viewModel.onEvent(MetaDetailsEvent.OnPickerSave) },
                 onDismiss = { viewModel.onEvent(MetaDetailsEvent.OnPickerDismiss) }
@@ -1363,13 +1382,6 @@ private fun MetaDetailsContent(
     onNavigateToDetail: (itemId: String, itemType: String, addonBaseUrl: String?) -> Unit = { _, _, _ -> },
     onPosterLongPress: (MetaPreview) -> Unit = {}
 ) {
-    // Calendar reminder bell (series and films). The key is null for titles the Calendar cannot follow.
-    val calendarBellViewModel: com.nuvio.tv.ui.screens.calendar.CalendarBellViewModel = hiltViewModel()
-    val calendarBells by calendarBellViewModel.bells.collectAsStateWithLifecycle()
-    val calendarBellKey = remember(meta.apiType, meta.id, meta.imdbId) {
-        com.nuvio.tv.core.calendar.calendarBellKey(meta.apiType, meta.id, meta.imdbId)
-    }
-    val calendarBellOn = calendarBellKey?.let { com.nuvio.tv.core.calendar.calendarBellOn(calendarBells, it) }
     val playbackAvailability = LocalPlaybackAvailability.current
     val canLoadMoreComments = commentsCurrentPage in 1 until commentsPageCount
     val selectedCommentIndex = remember(comments, selectedComment?.id) {
@@ -2594,10 +2606,6 @@ private fun MetaDetailsContent(
                         isMovieWatched = isMovieWatched,
                         isMovieWatchedPending = isMovieWatchedPending,
                         onToggleMovieWatched = onToggleMovieWatched,
-                        calendarBellOn = calendarBellOn,
-                        onToggleCalendarBell = {
-                            calendarBellKey?.let { key -> calendarBellViewModel.setBell(key, calendarBellOn != true) }
-                        },
                         mdbListRatings = visibleMdbListRatings,
                         mdbListRatingOrder = mdbListRatingOrder,
                         hideMetaInfoImdb = !showStandardOverallRatings,
@@ -3628,6 +3636,8 @@ private fun LibraryListPickerDialog(
     membership: Map<String, Boolean>,
     isPending: Boolean,
     error: String?,
+    reminderRow: LibraryPickerReminderRow?,
+    onToggleReminder: () -> Unit,
     onToggle: (String) -> Unit,
     onSave: () -> Unit,
     onDismiss: () -> Unit
@@ -3658,6 +3668,45 @@ private fun LibraryListPickerDialog(
                 .heightIn(max = 300.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            if (reminderRow != null) {
+                item(key = "calendar-reminder") {
+                    Button(
+                        onClick = onToggleReminder,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics {
+                                role = Role.Checkbox
+                                toggleableState = if (reminderRow.isOn) ToggleableState.On else ToggleableState.Off
+                            },
+                        colors = ButtonDefaults.colors(
+                            containerColor = if (reminderRow.isOn) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.BackgroundCard,
+                            contentColor = NuvioTheme.colors.TextPrimary
+                        )
+                    ) {
+                        Icon(
+                            imageVector = if (reminderRow.isOn) Icons.Default.NotificationsActive else Icons.Outlined.NotificationsNone,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = stringResource(R.string.calendar_bell_menu_row),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            // The reminder applies at once; Cancel on this picker does not undo it.
+                            Text(
+                                text = stringResource(R.string.calendar_bell_menu_row_hint),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NuvioTheme.colors.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
             items(tabs, key = { it.key }) { tab ->
                 val selected = membership[tab.key] == true
                 // The membership state is exposed through semantics below instead of a leading

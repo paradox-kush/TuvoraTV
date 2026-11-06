@@ -78,6 +78,29 @@ internal object GuideRapidZapPolicy {
         val delta = if (direction == com.nuvio.tv.playback.live.LiveZapDirection.NEXT) 1 else -1
         return Math.floorMod(currentIndex + delta, channelCount)
     }
+
+    /**
+     * B180 dropped press: the lineup index a zap press lands on. The aimed (focused) channel is the
+     * origin; when it is not in the lineup (a focus on a cross-playlist favourite, or a row hidden
+     * since) the PLAYING channel is, and only with neither does the press enter the lineup at its
+     * near end. The old fallback was index 0 for every direction, so NEXT jumped to row 1 and
+     * skipped row 0, and PREVIOUS stepped to the last row only by accident of floorMod.
+     */
+    fun target(
+        lineupIds: List<String>,
+        focusedId: String?,
+        playingId: String?,
+        direction: com.nuvio.tv.playback.live.LiveZapDirection,
+    ): Int {
+        require(lineupIds.isNotEmpty())
+        val origin = focusedId?.let(lineupIds::indexOf)?.takeIf { it >= 0 }
+            ?: playingId?.let(lineupIds::indexOf)?.takeIf { it >= 0 }
+        return when {
+            origin != null -> advance(origin, lineupIds.size, direction)
+            direction == com.nuvio.tv.playback.live.LiveZapDirection.NEXT -> 0
+            else -> lineupIds.lastIndex
+        }
+    }
 }
 
 /**
@@ -785,8 +808,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 "This provider is blocking us (HTTP ${failure.status ?: 0}). This usually clears by itself."
             IptvLoadFailurePolicy.Kind.REFUSED -> failure.portalText ?: "Couldn't reach this playlist."
             IptvLoadFailurePolicy.Kind.UNREACHABLE -> "Couldn't reach this playlist. Check the portal is up and try again."
+            IptvLoadFailurePolicy.Kind.SECTION_UNAVAILABLE -> "Couldn't reach this playlist."   // never produced here: only the Series list opts in
         }
-        return "$text\n\n${failure.detail}"
+        return if (IptvLoadFailurePolicy.showsBreadcrumb(failure.kind)) "$text\n\n${failure.detail}" else text
     }
 
     /** The error card's Retry: the category column if that is what failed, else the selected category. */
@@ -1052,14 +1076,20 @@ class XtreamLiveGuideViewModel @Inject constructor(
     }
 
     /** Moves the authoritative highlight synchronously and returns its exact stable identity. */
-    fun moveChannelFocus(direction: com.nuvio.tv.playback.live.LiveZapDirection): ProviderSelectionId? {
+    fun moveChannelFocus(
+        direction: com.nuvio.tv.playback.live.LiveZapDirection,
+        playingContentId: String? = null,
+    ): ProviderSelectionId? {
         val state = _uiState.value
         // T4: walk the playing playlist's own channels — All favorites lists other playlists' too.
         val lineup = zapLineup()
         if (lineup.isEmpty()) return null
-        val current = lineup.indexOfFirst { it.contentId == state.focusedChannelId }
-            .takeIf { it >= 0 } ?: 0
-        val nextIndex = GuideRapidZapPolicy.advance(current, lineup.size, direction)
+        val nextIndex = GuideRapidZapPolicy.target(
+            lineupIds = lineup.map { it.contentId },
+            focusedId = state.focusedChannelId,
+            playingId = playingContentId,
+            direction = direction,
+        )
         val next = lineup[nextIndex]
         onChannelFocused(next, state.channels.indexOfFirst { it.contentId == next.contentId })
         return ProviderSelectionId(next.contentId)

@@ -406,7 +406,7 @@ fun XtreamSettingsContent(
         } else {
             val managed = managedInfos[id]
             val needsReimport = viewModel.needsReimport(account)
-            LaunchedEffect(id) { viewModel.inspectAccountStatus(account) }
+            LaunchedEffect(id, account.availableOnDevice) { viewModel.inspectAccountStatus(account) }
             PlaylistDetailsScreen(
                 state = PlaylistDetailsState(
                     account = account,

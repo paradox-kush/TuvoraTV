@@ -216,6 +216,8 @@ data class CalendarSnapshot(
     val traktCalendarFetchedAtMs: Long = 0L,
     /** Reminder episode keys already shown, with when; pruned after 30 days ([boundCalendarSnapshot]). */
     val seenReminders: Map<String, Long> = emptyMap(),
+    /** How the last finished run ended, kept so a failure still shows after a restart; null in files written before this. */
+    val lastRun: CalendarRunResult? = null,
     val updatedAtMs: Long = 0L
 ) {
     companion object {

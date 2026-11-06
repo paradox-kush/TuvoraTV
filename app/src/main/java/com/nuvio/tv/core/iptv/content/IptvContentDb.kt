@@ -261,7 +261,9 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
 
         /** [categoryName] = the display name of [ContentChannel.categoryId] (defaults to the id itself). */
         fun addChannel(row: ContentChannel, categoryName: String? = row.categoryId) {
-            channelBatch.add(row); channelOrd.add(nextOrd++); counts.live++
+            channelBatch.add(row); channelOrd.add(nextOrd++)
+            // B179: stored (a saved id must keep resolving), but not counted — the count is what the lists show.
+            if (!com.nuvio.tv.core.iptv.ChannelSeparatorPolicy.isSeparator(row.name, row.tvgId, row.hasArchive)) counts.live++
             categoryOf(TYPE_LIVE, row.categoryId, categoryName)
             if (channelBatch.size >= CHUNK) flushChannels()
         }
@@ -702,6 +704,8 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
         channels: List<ContentChannel>,
         categories: List<Pair<String, String>>, // (id, name), type = live
     ) = withContext(Dispatchers.IO) {
+        // B179: every row is stored (a saved id must keep resolving); the count is what the lists will SHOW.
+        val shownCount = channels.count { !com.nuvio.tv.core.iptv.ChannelSeparatorPolicy.isSeparator(it.name, it.tvgId, it.hasArchive) }
         inTx {
             // The Stalker lineup lives at the served generation and is replaced in place — this
             // transaction is already atomic, so no generation flip is needed here.
@@ -728,13 +732,13 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
             cs.close()
             // Freshness LAST, in the same tx; UPDATE-then-INSERT keeps epg_built_at/tvg_url intact.
             val updated = db.compileStatement("UPDATE ingest_meta SET built_at = ?, live_count = ? WHERE playlist_id = ?").let { u ->
-                u.bindLong(1, System.currentTimeMillis()); u.bindLong(2, channels.size.toLong()); u.bindString(3, playlistId)
+                u.bindLong(1, System.currentTimeMillis()); u.bindLong(2, shownCount.toLong()); u.bindString(3, playlistId)
                 u.executeUpdateDelete().also { u.close() }
             }
             if (updated == 0) {
                 db.execSQL(
                     "INSERT INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count, tvg_url, epg_built_at) VALUES(?,?,?,0,0,NULL,NULL)",
-                    arrayOf<Any?>(playlistId, System.currentTimeMillis(), channels.size)
+                    arrayOf<Any?>(playlistId, System.currentTimeMillis(), shownCount)
                 )
             }
         }

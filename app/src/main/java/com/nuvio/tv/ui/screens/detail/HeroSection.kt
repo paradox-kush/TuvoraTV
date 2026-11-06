@@ -82,8 +82,6 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.painter.Painter
@@ -113,8 +111,6 @@ fun HeroContentSection(
     isMovieWatchedPending: Boolean,
     onToggleMovieWatched: () -> Unit,
     /** The Calendar reminder bell: null hides it (the title has no id the Calendar can follow). */
-    calendarBellOn: Boolean? = null,
-    onToggleCalendarBell: () -> Unit = {},
     trailerAvailable: Boolean = false,
     onTrailerClick: () -> Unit = {},
     showRandomEpisodeButton: Boolean = false,
@@ -312,27 +308,6 @@ fun HeroContentSection(
                                 onClick = onToggleMovieWatched,
                                 enabled = !isMovieWatchedPending,
                                 selected = isMovieWatched,
-                                toggleable = true,
-                                selectedContainerColor = Color.White,
-                                selectedContentColor = Color.Black,
-                                onFocused = onHeroActionFocused
-                            )
-                        }
-
-                        if (calendarBellOn != null) {
-                            ActionIconButton(
-                                icon = if (calendarBellOn) {
-                                    Icons.Default.NotificationsActive
-                                } else {
-                                    Icons.Outlined.NotificationsNone
-                                },
-                                contentDescription = if (calendarBellOn) {
-                                    stringResource(R.string.calendar_bell_remove)
-                                } else {
-                                    stringResource(R.string.calendar_bell_add)
-                                },
-                                onClick = onToggleCalendarBell,
-                                selected = calendarBellOn,
                                 toggleable = true,
                                 selectedContainerColor = Color.White,
                                 selectedContentColor = Color.Black,

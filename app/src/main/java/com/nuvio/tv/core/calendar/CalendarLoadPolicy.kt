@@ -1,11 +1,13 @@
 package com.nuvio.tv.core.calendar
 
 import java.time.Duration
+import kotlinx.serialization.Serializable
 
 /**
  * How a finished refresh run ended. [attempted] counts every network fetch the run tried (the Trakt calendar and
  * each due title), [succeeded] those that answered. [finishedAtMs] is on the refresher's clock.
  */
+@Serializable
 data class CalendarRunResult(
     val finishedAtMs: Long,
     val attempted: Int,

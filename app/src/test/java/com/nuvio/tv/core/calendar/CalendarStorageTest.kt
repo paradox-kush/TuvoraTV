@@ -49,4 +49,21 @@ class CalendarStorageTest {
         val trimmed = trimLeastActiveTitles(CalendarSnapshot(titles = titles), count = 2)
         assertEquals("oldest non-bell dropped", listOf("series:imdb:tt1", "series:imdb:tt4", "series:imdb:tt5"), trimmed.titles.map { it.key })
     }
+
+    @Test fun theLastRunRoundTripsAndAnOldFileWithoutItDecodesToNull() = runBlocking {
+        val dir = Files.createTempDirectory("calendar-storage-lastrun").toFile()
+        try {
+            val storage = CalendarStorage({ dir }, { now.toEpochMilli() })
+            val run = CalendarRunResult(finishedAtMs = now.toEpochMilli(), attempted = 2, succeeded = 0, carriedFailure = true)
+            assertTrue("written", storage.save(1, CalendarSnapshot(lastRun = run), storage.generation(), force = true))
+            assertEquals("the last run is kept", run, storage.load(1).lastRun)
+
+            storage.file(2).writeText("""{"version":1,"titles":[],"traktCalendarFetchedAtMs":5}""")
+            val old = storage.load(2)
+            assertEquals("an old file still decodes", 5L, old.traktCalendarFetchedAtMs)
+            assertEquals("and has no last run", null, old.lastRun)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }

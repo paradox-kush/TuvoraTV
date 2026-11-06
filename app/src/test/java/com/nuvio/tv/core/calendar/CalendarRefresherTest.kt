@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -163,6 +164,24 @@ class CalendarRefresherTest {
         assertEquals("asked nothing", 0, second.attempted)
         assertTrue("so the failure is kept, not replaced by an all-quiet page", second.failed)
         assertTrue("published to the screen", refresher.state.value.lastRun?.failed == true)
+    }
+
+    @Test fun theLastRunsFailureSurvivesARestart() {
+        val store = storage()
+        val remote = FakeRemote(fail = true)
+        assertTrue("the first run failed", runOnce(CalendarRefresher(store, FakeInputs(listOf(show("tt1"))), remote, clock, scope)).failed)
+        val calls = remote.calls.get()
+
+        // A restart: a new refresher over the same storage; the failed title is still in its back-off.
+        val restarted = CalendarRefresher(store, FakeInputs(listOf(show("tt1"))), remote, clock, scope)
+        restarted.requestRefresh(CalendarRefreshReason.CALENDAR_OPENED)
+        val result = runBlocking {
+            withTimeoutOrNull(5_000) { restarted.state.first { it.loaded && !it.refreshing && it.lastRun?.attempted == 0 } }
+        }?.lastRun
+        assertNotNull("the run after the restart finished", result)
+        assertEquals("nothing is due, nothing asked", calls, remote.calls.get())
+        assertTrue("the failure still shows after the restart", result!!.failed)
+        assertTrue("published to the screen", restarted.state.value.lastRun?.failed == true)
     }
 
     @Test fun retryAsksTheBackedOffFailedTitleAndTheCalendarLoads() {
