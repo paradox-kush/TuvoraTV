@@ -53,7 +53,7 @@ class LiveCaptureLoopAwaitEndTest {
         server.start()
         val seg = Buffer().write(Ts.concat(Ts.tables(), Ts.stream(0, 1_500, stepMs = 100))).readByteString()
         routes["/hls/index.m3u8"] = { MockResponse().setResponseCode(200).setBody(playlist(ended = false)) }
-        routes["/hls/seg0.ts"] = { MockResponse().setResponseCode(200).setBody(Buffer().write(seg)) }
+        for (i in 0..1) routes["/hls/seg$i.ts"] = { MockResponse().setResponseCode(200).setBody(Buffer().write(seg)) }
     }
 
     @After
@@ -65,7 +65,7 @@ class LiveCaptureLoopAwaitEndTest {
     private fun hitsOf(path: String) = hits[path]?.get() ?: 0
 
     private fun playlist(ended: Boolean) =
-        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:30\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:30.000,\nseg0.ts\n" +
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:30\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:30.000,\nseg0.ts\n#EXTINF:30.000,\nseg1.ts\n" +
             if (ended) "#EXT-X-ENDLIST\n" else ""
 
     private fun loop(
