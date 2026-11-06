@@ -86,7 +86,9 @@ class LiveCaptureLoop(
         // The files go on the cleanup scope: the caller (a ViewModel on Main) never touches the disk.
         cleanupScope.launch(io) {
             running?.cancelAndJoin()
-            store.deleteAll()
+            // A recording is the user's: dispose only ends the capture (finalised, playable); only a rewind
+            // buffer is deleted.
+            if (retention is LiveRetention.KeepAll) finalise() else store.deleteAll()
         }
     }
 
@@ -159,8 +161,8 @@ class LiveCaptureLoop(
                     while (isActive) {
                         delay(WATCHDOG_TICK_MS)
                         if (monotonicMs() - lastProgress.get() > stallLimitMs()) {
-                            emit(LiveCaptureEvent.Failed(LivePauseFailure.STALLED))
-                            main.cancel()
+                            main.cancelAndJoin()
+                            emitFailed(LivePauseFailure.STALLED)
                             return@launch
                         }
                     }
@@ -188,11 +190,11 @@ class LiveCaptureLoop(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (stop: Stop) {
-            emit(LiveCaptureEvent.Failed(stop.reason))
+            emitFailed(stop.reason)
         } catch (error: IOException) {
-            emit(LiveCaptureEvent.Failed(if (isSpaceError(error)) LivePauseFailure.NO_SPACE else LivePauseFailure.PROVIDER_REFUSED))
+            emitFailed(if (isSpaceError(error)) LivePauseFailure.NO_SPACE else LivePauseFailure.PROVIDER_REFUSED)
         } catch (_: Exception) {
-            emit(LiveCaptureEvent.Failed(LivePauseFailure.PROVIDER_REFUSED))
+            emitFailed(LivePauseFailure.PROVIDER_REFUSED)
         }
     }
 
@@ -456,6 +458,12 @@ class LiveCaptureLoop(
             emit(LiveCaptureEvent.Ready("file://" + store.playlistFile.absolutePath))
         }
         emit(LiveCaptureEvent.Window(totalMs, trimmedMs, bufferFull = trimmedMs > 0))
+    }
+
+    /** A recording that stops on a failure is still a playable recording: finalise it before announcing. */
+    private fun emitFailed(reason: LivePauseFailure) {
+        if (retention is LiveRetention.KeepAll) finalise()
+        emit(LiveCaptureEvent.Failed(reason))
     }
 
     private fun emit(event: LiveCaptureEvent) {

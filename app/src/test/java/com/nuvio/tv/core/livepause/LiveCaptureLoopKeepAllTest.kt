@@ -137,7 +137,29 @@ class LiveCaptureLoopKeepAllTest {
         assertEquals(LivePauseFailure.NO_SPACE, failed.reason)
         assertTrue("the first piece was kept, not dropped for room", File(dir, "seg0.ts").exists())
         assertTrue("the playlist was kept", File(dir, "index.m3u8").exists())
+        assertTrue("and finalised, so it plays to the end", File(dir, "index.m3u8").readText().contains("#EXT-X-ENDLIST"))
         delay(300)
         assertTrue("still there: Failed does not delete", File(dir, "seg0.ts").exists())
+    }
+
+    @Test
+    fun `dispose keeps a recording's files`() = runBlocking {
+        val keepAll = loop(LiveRetention.KeepAll)
+        keepAll.start()
+        awaitAllSegments()
+        keepAll.dispose()
+        delay(500)
+        assertTrue("seg0.ts survived dispose", File(dir, "seg0.ts").exists())
+        assertTrue("playlist survived dispose", File(dir, "index.m3u8").exists())
+    }
+
+    @Test
+    fun `dispose still deletes a rewind buffer`() = runBlocking {
+        val trim = loop(LiveRetention.Trim(keepMs = 60_000))
+        trim.start()
+        awaitAllSegments()
+        trim.dispose()
+        withTimeout(10_000) { while (dir.exists()) delay(50) }
+        assertFalse(dir.exists())
     }
 }
