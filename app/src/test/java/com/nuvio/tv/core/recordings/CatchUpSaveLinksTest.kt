@@ -23,11 +23,26 @@ class CatchUpSaveLinksTest {
     }
 
     @Test
-    fun `xtream links are the panel's candidates with the ts form first`() {
-        val expected = XtreamCatchUp.candidateUrls("http://p.example:8080", "user", "pass", 42, from, to, null, null)
+    fun `xtream links are the panel's candidates with the ts form first and extensionless ones last`() {
+        val all = XtreamCatchUp.candidateUrls("http://p.example:8080", "user", "pass", 42, from, to, null, null)
+        val expected = all.filterNot(L::isUnknownFormat) + all.filter(L::isUnknownFormat)
         val got = L.candidates(xt(null), from, to, NOW)
-        assertEquals(expected, got)
-        assertTrue(got.all(L::isProgressive))
+        assertEquals("known formats first, unknown last", expected, got)
+        assertTrue("the extension-less timeshift.php is in the list", got.any(L::isUnknownFormat))
+        val firstUnknown = got.indexOfFirst(L::isUnknownFormat)
+        assertTrue("nothing known after the first unknown: $got", got.drop(firstUnknown).none { !L.isUnknownFormat(it) })
+        assertTrue("the extension form stays ahead", got.indexOfFirst { "extension=ts" in it } in 0 until firstUnknown)
+    }
+
+    @Test
+    fun `a timeshift php link without an extension is an unknown format and not progressive`() {
+        val bare = "http://a/streaming/timeshift.php?username=u&password=p&stream=1&start=2&duration=30"
+        assertTrue(L.isUnknownFormat(bare))
+        assertFalse("not claimed to be a file", L.isProgressive(bare))
+        assertTrue(L.isUnknownFormat("http://a/timeshift.php?stream=1"))
+        assertFalse(L.isUnknownFormat("$bare&extension=ts"))
+        assertFalse(L.isUnknownFormat("http://a/timeshift/u/p/30/2026-01-01:10-00/1.ts"))
+        assertNull("an unknown format is still worth a try", L.problemFor(listOf(bare)))
     }
 
     @Test
@@ -99,7 +114,7 @@ class CatchUpSaveLinksTest {
         assertTrue(L.isProgressive("http://a/b/c.ts"))
         assertTrue(L.isProgressive("http://a/b/c.mp4?x=1"))
         assertTrue(L.isProgressive("http://a/b/c"))
-        assertTrue(L.isProgressive("http://a/streaming/timeshift.php?stream=1&start=2"))
+        assertTrue(L.isProgressive("http://a/streaming/timeshift.php?stream=1&start=2&extension=ts"))
         assertFalse(L.isProgressive("http://a/b/c.m3u8"))
         assertFalse(L.isProgressive("http://a/b/C.M3U8?token=1"))
         assertFalse(L.isProgressive("http://a/streaming/timeshift.php?stream=1&extension=m3u8"))

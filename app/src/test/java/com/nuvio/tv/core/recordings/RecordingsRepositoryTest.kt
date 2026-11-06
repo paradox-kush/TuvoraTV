@@ -899,4 +899,29 @@ class RecordingsRepositoryTest {
         assertEquals(500L, row.sizeBytes)
         assertTrue("nothing left to retry", rig.repo.state.value.schedules.isEmpty())
     }
+
+    private fun leftover(size: Long, programmeMs: Long) = recording("rec:x", size = size).let { it.copy(programmeEndMs = it.programmeStartMs + programmeMs) }
+
+    @Test
+    fun `a 1 KB DONE recording of a half hour programme loads as FAILED unsupported and keeps its file`() = runTest {
+        val files = FakeFiles()
+        files.texts["recordings.json"] = stateText(recs = listOf(leftover(1_024, 30 * MIN)))
+        files.sizes["/rec/rec:x.ts"] = 1_024
+        val rig = Rig(files = files)
+        rig.repo.start(NOW)
+        val row = rig.repo.state.value.recordings.single()
+        assertEquals("failed", RecordingStatus.FAILED, row.status)
+        assertEquals("problem", RecordingProblem.UNSUPPORTED_FORMAT, row.problem)
+        assertTrue("file not deleted: ${files.deleted}", files.deleted.isEmpty())
+        assertTrue("not retried", rig.saver.calls.isEmpty() && rig.repo.state.value.schedules.isEmpty())
+    }
+
+    @Test
+    fun `a 1 KB DONE recording of a 30 second programme and a 200 MB one stay DONE`() = runTest {
+        val files = FakeFiles()
+        files.texts["recordings.json"] = stateText(recs = listOf(leftover(1_024, 30_000L), recording("rec:big", size = 200L * 1024 * 1024)))
+        val rig = Rig(files = files)
+        rig.repo.start(NOW)
+        assertEquals("both done", listOf(RecordingStatus.DONE, RecordingStatus.DONE), rig.repo.state.value.recordings.map { it.status })
+    }
 }
