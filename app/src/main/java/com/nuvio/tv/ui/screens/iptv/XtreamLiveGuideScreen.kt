@@ -322,9 +322,15 @@ fun LiveGuide(
     val readyPlayback = playbackState as? CleanLiveGuidePlaybackState.Ready
     val playbackUi = readyPlayback?.presentation
     // Live pause / rewind: while the saved part is in play its own state is the truth.
-    val livePause by playbackViewModel.livePause.collectAsStateWithLifecycle()
+    // Only the projection is collected: position ticks (about 2 Hz while shifted) must not recompose the guide.
+    val pauseFlow = remember(playbackViewModel) {
+        playbackViewModel.livePause.map { it.toGuideProjection() }.distinctUntilChanged()
+    }
+    val livePause by pauseFlow.collectAsStateWithLifecycle(
+        initialValue = playbackViewModel.livePause.value.toGuideProjection(),
+    )
     val pauseFailed = livePause.phase == LivePausePhase.FAILED
-    val scrubbable = LiveControlsPolicy.isScrubbable(livePause.phase)
+    val scrubbable = livePause.scrubbable
     val effectivePaused = LiveControlsPolicy.effectivePaused(livePause.phase, livePause.paused, hostPaused = playbackUi?.isPaused == true)
     com.nuvio.tv.ui.screens.ambient.AmbientPlaybackEffect(
         active = fullscreen || playbackUi?.playWhenReady == true
@@ -536,9 +542,10 @@ fun LiveGuide(
                         } else {
                             LiveControlsPolicy.ScrubDirection.FORWARD
                         }
+                        val view = playbackViewModel.livePause.value
                         playbackViewModel.requestSeekInLivePause(
                             LiveControlsPolicy.scrubTarget(
-                                livePause.positionMs, livePause.windowStartMs, livePause.windowEndMs, direction,
+                                view.positionMs, view.windowStartMs, view.windowEndMs, direction,
                                 LiveControlsPolicy.scrubStepMs(event.nativeKeyEvent.repeatCount),
                             ),
                         )
