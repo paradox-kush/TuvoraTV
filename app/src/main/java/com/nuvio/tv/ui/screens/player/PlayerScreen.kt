@@ -2966,7 +2966,8 @@ private fun PlayerControlsOverlay(
                             downFocusRequester = playPauseFocusRequester,
                             onUpKey = onHideControls,
                             onFocused = onResetHideTimer,
-                            onClick = onPlayPause
+                            onClick = onPlayPause,
+                            seekable = uiState.seekable
                         )
                     }
                 }
@@ -3215,7 +3216,8 @@ private fun PlayerControlsProgressBarHost(
     downFocusRequester: FocusRequester? = null,
     onUpKey: (() -> Unit)? = null,
     onFocused: (() -> Unit)? = null,
-    onClick: (() -> Unit)? = null
+    onClick: (() -> Unit)? = null,
+    seekable: Boolean = true
 ) {
     val playbackTimeline by viewModel.playbackTimeline.collectAsState()
 
@@ -3236,8 +3238,16 @@ private fun PlayerControlsProgressBarHost(
         onUpKey = onUpKey,
         onFocused = onFocused,
         onClick = onClick,
-        bufferedPosition = playbackTimeline.bufferedPosition
+        bufferedPosition = playbackTimeline.bufferedPosition,
+        seekable = seekable
     )
+    if (!seekable) {
+        Text(
+            text = stringResource(R.string.player_replay_not_seekable),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White.copy(alpha = 0.7f)
+        )
+    }
 }
 
 @Composable
@@ -3392,7 +3402,9 @@ private fun ProgressBar(
     /** Position (ms) up to which content is buffered. Pass 0 to skip the overlay. */
     bufferedPosition: Long = 0L,
     /** Each chapter after the first gets a mark where it starts. */
-    chapters: List<PlayerChapter> = emptyList()
+    chapters: List<PlayerChapter> = emptyList(),
+    /** False for a single-use replay: the bar only shows progress; LEFT/RIGHT do nothing and it never grows. */
+    seekable: Boolean = true
 ) {
     val accentBrush = NuvioTheme.palette.accentBrush()
     val seekBarLabel = stringResource(R.string.cd_seek_bar)
@@ -3500,6 +3512,7 @@ private fun ProgressBar(
                             }
                         }
                         KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (!seekable) return@onPreviewKeyEvent true
                             onSeekPreview(
                                 PlayerScrubRates.deltaMsForKeyRepeat(
                                     repeatCount = keyEvent.nativeKeyEvent.repeatCount,
@@ -3509,6 +3522,7 @@ private fun ProgressBar(
                             true
                         }
                         KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (!seekable) return@onPreviewKeyEvent true
                             onSeekPreview(
                                 PlayerScrubRates.deltaMsForKeyRepeat(
                                     repeatCount = keyEvent.nativeKeyEvent.repeatCount,
@@ -3528,7 +3542,7 @@ private fun ProgressBar(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (isFocused) NuvioTheme.spacing.md else NuvioTheme.spacing.sm)
+                .height(if (isFocused && seekable) NuvioTheme.spacing.md else NuvioTheme.spacing.sm)
                 .clip(RoundedCornerShape(3.dp))
                 .background(
                     if (isFocused) Color.White.copy(alpha = 0.45f)

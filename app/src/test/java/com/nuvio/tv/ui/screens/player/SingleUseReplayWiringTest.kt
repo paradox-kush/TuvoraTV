@@ -111,4 +111,13 @@ class SingleUseReplayWiringTest {
             assertTrue("$branch must check allowsSeek first", events.substring(start, end).contains("SingleUseReplayPolicy.allowsSeek(isSingleUseCatchUp())"))
         }
     }
+
+    @Test
+    fun `the progress bar is drawn flat with a reason for a single-use replay`() {
+        assertTrue("decided once with the link", initBody.contains("seekable = SingleUseReplayPolicy.allowsSeek(singleUseLink)"))
+        val screen = source("PlayerScreen.kt")
+        assertTrue("the controls pass it to the bar host", screen.contains("seekable = uiState.seekable"))
+        assertTrue("the bar ignores LEFT/RIGHT when not seekable", screen.contains("if (!seekable) return@onPreviewKeyEvent true"))
+        assertTrue("and says why", screen.contains("R.string.player_replay_not_seekable"))
+    }
 }

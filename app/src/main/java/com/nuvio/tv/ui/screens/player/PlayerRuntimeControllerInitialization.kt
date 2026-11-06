@@ -199,6 +199,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             // nothing below may open it before the player does (AFR preflight, DoVi probe, parallel Range,
             // the VOD cache), and the viewer's leaving must let its mint go.
             val singleUseLink = isSingleUseCatchUp()
+            _uiState.update { it.copy(seekable = SingleUseReplayPolicy.allowsSeek(singleUseLink)) }
             holdSingleUseCatchUpAtStart()
             if (startPaused) {
                 // A background rebuild (releaseForBackground) pauses on the lifecycle's behalf, not the viewer's.

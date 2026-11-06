@@ -2591,6 +2591,7 @@
     <string name="cd_emoji_option">Emoji %1$s</string>
     <string name="cd_trailer_controls">Trailer controls</string>
     <string name="cd_seek_bar">Seek bar</string>
+    <string name="player_replay_not_seekable">This provider\'s replays can\'t be skipped</string>
     <string name="cd_unlink">Unlink</string>
     <string name="cd_nuvio_logo">Tuvora</string>
     <string name="cd_trakt_logo">Trakt Logo</string>

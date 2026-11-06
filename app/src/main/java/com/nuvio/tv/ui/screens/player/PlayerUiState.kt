@@ -62,6 +62,8 @@ sealed interface PostPlayMode {
 }
 
 data class PlayerUiState(
+    /** False for a single-use replay (a Stalker archive): its progress bar shows position but cannot seek. */
+    val seekable: Boolean = true,
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = true,
     val playbackEnded: Boolean = false,
