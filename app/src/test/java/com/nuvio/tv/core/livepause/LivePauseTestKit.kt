@@ -25,7 +25,9 @@ internal class KitEngine : LivePauseEngine {
 
     override suspend fun pause() { calls += "pause" }
     override suspend fun play() { calls += "play" }
-    override suspend fun seekTo(positionMs: Long) { calls += "seek:$positionMs" }
+    /** When set, seekTo suspends here (the actor is busy while a tick is queued behind it). */
+    var seekGate: CompletableDeferred<Unit>? = null
+    override suspend fun seekTo(positionMs: Long) { calls += "seek:$positionMs"; seekGate?.await() }
     override fun window(): LivePauseWindow? = window
     override suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long) { calls += "budget" }
     /** When set, releaseLiveSource suspends here (the actor is mid-command, before any capture exists). */
@@ -70,6 +72,8 @@ internal class KitRig(parent: CoroutineScope, io: CoroutineDispatcher, probe: Pr
     val captures = mutableListOf<KitCapture>()
     var free = 10L * 1024 * 1024 * 1024
     var createFails = false
+    /** Runs inside captureFactory.create, to model the player being released mid-create. */
+    var onCreate: (() -> Unit)? = null
     var singleUse = false
     val freeOnIo = mutableListOf<Boolean>()
     val createOnIo = mutableListOf<Boolean>()
@@ -81,6 +85,7 @@ internal class KitRig(parent: CoroutineScope, io: CoroutineDispatcher, probe: Pr
         engine = engine,
         captureFactory = { spec, _ ->
             createOnIo += probe?.inside ?: false
+            onCreate?.invoke()
             if (createFails) throw IOException("cannot create")
             KitCapture(spec).also { captures += it }
         },

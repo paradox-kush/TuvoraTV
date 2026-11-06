@@ -86,7 +86,12 @@ interface LivePauseControl {
     fun seekInWindow(positionMs: Long)
     fun goLive()
     fun retry()
-    fun onChannelChanged()
+    /**
+     * The viewer zapped. Returns true when this control had already released the live source (or dropped a
+     * buffer the host may still be playing), so a failed zap must put the channel being left back on live.
+     * Returns only after any command still running for the old channel has stopped.
+     */
+    suspend fun onChannelChanged(): Boolean
     fun onLiveStarted()
     fun dispose()
 }

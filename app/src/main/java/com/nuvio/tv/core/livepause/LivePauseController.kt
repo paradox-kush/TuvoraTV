@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -61,16 +62,16 @@ class LivePauseController(
     // ---- actor-confined state (touched only inside handle())
     private var mechanism = LivePauseMechanism.UNAVAILABLE
     private var generation = 0
-    private var capture: LiveCapture? = null
+    @Volatile private var capture: LiveCapture? = null
     private var eventsJob: Job? = null
     private var prepareJob: Job? = null
     private var tickJob: Job? = null
     private var ready: CompletableDeferred<String>? = null
-    private var sourceReleased = false
+    @Volatile private var sourceReleased = false
     private var captureWindow = LiveCaptureEvent.Window(0, 0, false)
     private var pauseMono = 0L
     private var pauseWall = 0L
-    private var catchUpBaseWall: Long? = null
+    @Volatile private var catchUpBaseWall: Long? = null
     private var disposed = false
     /** A capture failure that arrived after its first piece but before the Prepared result was handled. */
     private var captureFailure: LivePauseFailure? = null
@@ -91,9 +92,10 @@ class LivePauseController(
             try {
                 for (command in commands) {
                     if (disposed) break
-                    if (command is Command.UserCommand && command.epoch != epoch) continue
+                    if (command is Command.Epoched && command.epoch != epoch) continue
                     val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) { handle(command) }
-                    if (command is Command.UserCommand) running = job
+                    // Everything but the zap's own reset, dispose and the live-start plan is cancellable.
+                    if (command is Command.Epoched) running = job
                     job.start()
                     job.join()
                     running = null
@@ -122,10 +124,13 @@ class LivePauseController(
      * running for the old channel (a mint, a tune of the old buffer) is cancelled now, and commands queued
      * for it are dropped, so nothing for the old channel happens after the zap starts.
      */
-    fun onChannelChanged() {
+    suspend fun onChannelChanged(): Boolean {
         epoch++
-        running?.cancel()
+        // Wait for the old channel's command to stop: nothing may tune or mint for it after this returns.
+        running?.cancelAndJoin()
+        val touched = sourceReleased || catchUpBaseWall != null || state.value is LivePauseState.Shifted
         post(Command.ChannelChanged)
+        return touched
     }
 
     /** A live channel just started playing: mpv gets its live cache plan. */
@@ -142,7 +147,9 @@ class LivePauseController(
     }
 
     private sealed interface Command {
-        sealed interface UserCommand : Command { val epoch: Int }
+        /** Belongs to the channel it was posted for: dropped (or cancelled while running) once the viewer zaps. */
+        sealed interface Epoched { val epoch: Int }
+        sealed interface UserCommand : Command, Epoched
         data class Pause(override val epoch: Int) : UserCommand
         data class Play(override val epoch: Int) : UserCommand
         data class Seek(val positionMs: Long, override val epoch: Int) : UserCommand
@@ -151,9 +158,9 @@ class LivePauseController(
         data object ChannelChanged : Command
         data object LiveStarted : Command
         data object Dispose : Command
-        data object Tick : Command
-        class Capture(val generation: Int, val event: LiveCaptureEvent) : Command
-        class Prepared(val generation: Int, val outcome: LoadOutcome<String>) : Command
+        class Tick(override val epoch: Int) : Command, Epoched
+        class Capture(val generation: Int, val event: LiveCaptureEvent, override val epoch: Int) : Command, Epoched
+        class Prepared(val generation: Int, val outcome: LoadOutcome<String>, override val epoch: Int) : Command, Epoched
     }
 
     private class CaptureFailure(val reason: LivePauseFailure) : RuntimeException("live pause capture failed")
@@ -173,7 +180,7 @@ class LivePauseController(
                     disposed = true
                     ownJob.cancel()
                 }
-                Command.Tick -> tick()
+                is Command.Tick -> tick()
                 is Command.Capture -> onCapture(command)
                 is Command.Prepared -> onPrepared(command)
             }
@@ -253,9 +260,10 @@ class LivePauseController(
             )
         // deleteRecursively + mkdirs: disk work, so off the actor's (Main) thread. Not cancellable: a capture
         // that was created must reach `capture` so the teardown can delete it.
-        val created = withContext(NonCancellable + io) { captureFactory.create(spec, scope) }
-        capture = created
-        eventsJob = scope.launch { created.events.collect { post(Command.Capture(gen, it)) } }
+        // Assigned inside the block: a cancel that lands as the block ends must still find the capture.
+        val created = withContext(NonCancellable + io) { captureFactory.create(spec, scope).also { capture = it } }
+        eventsJob = scope.launch { created.events.collect { post(Command.Capture(gen, it, epoch)) } }
+        val preparedEpoch = epoch
         mutableState.value = LivePauseState.Preparing(BoundedLoad.begin(LoadSurface.LIVE_PAUSE))
         prepareJob = scope.launch {
             val outcome = BoundedLoad.run(LoadSurface.LIVE_PAUSE, report = mapOf("mechanism" to "disk")) {
@@ -265,7 +273,7 @@ class LivePauseController(
                 created.start()
                 readyForThis.await()
             }
-            post(Command.Prepared(gen, outcome))
+            post(Command.Prepared(gen, outcome, preparedEpoch))
         }
     }
 
@@ -437,7 +445,7 @@ class LivePauseController(
         tickJob = scope.launch {
             while (isActive) {
                 delay(tickMs)
-                post(Command.Tick)
+                post(Command.Tick(epoch))
             }
         }
     }

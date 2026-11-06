@@ -121,7 +121,7 @@ internal class LivePauseControlFactoryImpl @Inject constructor(
         override fun seekInWindow(positionMs: Long) = controller.seekInWindow(positionMs)
         override fun goLive() = controller.goLive()
         override fun retry() = controller.retry()
-        override fun onChannelChanged() = controller.onChannelChanged()
+        override suspend fun onChannelChanged(): Boolean = controller.onChannelChanged()
         override fun onLiveStarted() = controller.onLiveStarted()
         override fun dispose() = controller.dispose()
     }
