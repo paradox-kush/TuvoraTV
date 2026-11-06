@@ -706,6 +706,41 @@ class CleanLiveGuidePlaybackViewModelTest {
     }
 
     @Test
+    fun `a successful retune after a failed zap off a buffer reapplies the live cache plan`() = runTest {
+        val controls = mutableListOf<RecordingPauseControl>()
+        val fixture = fixture(
+            livePauseFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { request ->
+                RecordingPauseControl(request.selection).also { controls += it }
+            },
+        )
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        val before = controls[0].liveStarted
+        controls[0].channelChangedResult = true
+        fixture.firstHost.zapFailures = 1
+        fixture.viewModel.requestTune(fixture.next.contentId)
+        advanceUntilIdle()
+        assertEquals("onLiveStarted once more after the retune", before + 1, controls[0].liveStarted)
+    }
+
+    @Test
+    fun `a failed retune after a failed zap does not call onLiveStarted`() = runTest {
+        val controls = mutableListOf<RecordingPauseControl>()
+        val fixture = fixture(
+            livePauseFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { request ->
+                RecordingPauseControl(request.selection).also { controls += it }
+            },
+        )
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        val before = controls[0].liveStarted
+        controls[0].channelChangedResult = true
+        fixture.firstHost.zapFailures = 1
+        fixture.firstHost.tuneFailures = 1
+        fixture.viewModel.requestTune(fixture.next.contentId)
+        advanceUntilIdle()
+        assertEquals("no live start on the visible-failure path", before, controls[0].liveStarted)
+    }
+
+    @Test
     fun `a zap that fails after the buffer was dropped and cannot retune fails visibly`() = runTest {
         val controls = mutableListOf<RecordingPauseControl>()
         val fixture = fixture(
@@ -864,7 +899,8 @@ class CleanLiveGuidePlaybackViewModelTest {
         override fun retry() { calls += "retry" }
         var channelChangedResult = false
         override suspend fun onChannelChanged(): Boolean { calls += "channelChanged"; return channelChangedResult }
-        override fun onLiveStarted() {}
+        var liveStarted = 0
+        override fun onLiveStarted() { liveStarted++ }
         override fun dispose() { calls += "dispose" }
     }
 

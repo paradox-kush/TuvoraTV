@@ -748,7 +748,8 @@ class CleanLivePlayerViewModelTest {
         override fun goLive() {}
         override fun retry() {}
         override suspend fun onChannelChanged(): Boolean = channelChangedResult
-        override fun onLiveStarted() {}
+        var liveStarted = 0
+        override fun onLiveStarted() { liveStarted++ }
         override fun dispose() {}
     }
 
@@ -774,6 +775,33 @@ class CleanLivePlayerViewModelTest {
         advanceUntilIdle()
         assertEquals("the channel being left is tuned live again", 2, fixture.operations.count { it == "tune" })
         assertEquals(true, fixture.viewModel.routeState.value is CleanLivePlayerRouteState.Ready)
+    }
+
+    @Test
+    fun `a successful retune after a failed zap off a buffer reapplies the live cache plan`() = runTest {
+        val controls = mutableListOf<PauseControlFake>()
+        val (fixture, _) = zapFixture(controls)
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+        val before = controls[0].liveStarted
+        controls[0].channelChangedResult = true
+        fixture.host.zapFailure = RuntimeException("zap failed")
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        advanceUntilIdle()
+        assertEquals("onLiveStarted once more after the retune", before + 1, controls[0].liveStarted)
+    }
+
+    @Test
+    fun `a failed retune after a failed zap does not call onLiveStarted`() = runTest {
+        val controls = mutableListOf<PauseControlFake>()
+        val (fixture, _) = zapFixture(controls)
+        fixture.viewModel.initialize("route", fixture.activity, fixture.lifecycle, fixture.owner)
+        val before = controls[0].liveStarted
+        controls[0].channelChangedResult = true
+        fixture.host.zapFailure = RuntimeException("zap failed")
+        fixture.host.failNextTune = true
+        fixture.viewModel.requestZap(LiveZapDirection.NEXT)
+        advanceUntilIdle()
+        assertEquals("no live start on the visible-failure path", before, controls[0].liveStarted)
     }
 
     @Test
