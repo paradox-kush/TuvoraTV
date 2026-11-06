@@ -5,6 +5,7 @@ import com.nuvio.tv.core.recordings.api.ArmKind
 import com.nuvio.tv.core.recordings.api.CaptureMode
 import com.nuvio.tv.core.recordings.api.FireResult
 import com.nuvio.tv.core.recordings.api.ListingInfo
+import com.nuvio.tv.core.recordings.api.KnownSizeDecision
 import com.nuvio.tv.core.recordings.api.LowSpacePolicy
 import com.nuvio.tv.core.recordings.api.Recording
 import com.nuvio.tv.core.recordings.api.RecordingAlarms
@@ -277,7 +278,9 @@ class RecordingsRepository(
         edit(schedules = { it + candidate })
         val arm = armAt(candidate, nowMs)
         commit()
-        ScheduleResult.Scheduled(candidate, arm, clashes)
+        // Only a notice: the estimate (padded) plus the floor against what is free now. Never blocks.
+        val tight = RecordingSpacePolicy.spaceTight(files.freeBytes(), endMs - startMs + preMs + postMs)
+        ScheduleResult.Scheduled(candidate, arm, clashes, spaceTight = tight)
     }
 
     override suspend fun addSeriesRule(
@@ -456,7 +459,8 @@ class RecordingsRepository(
         val resumeFrom = files.sizeOf(partPath(target))
         val estimate = RecordingSpacePolicy.estimateBytes(d.toMs - d.fromMs)
 
-        when (val space = RecordingSpacePolicy.check(files.freeBytes(), (estimate - resumeFrom).coerceAtLeast(0), lowSpacePolicy(), doc.recordingValues)) {
+        // Only the floor refuses a start; the estimate never does (the real size is checked once it is declared).
+        when (val space = RecordingSpacePolicy.preStart(files.freeBytes(), lowSpacePolicy(), doc.recordingValues)) {
             SpaceDecision.Proceed -> Unit
             is SpaceDecision.DeleteThenProceed -> deleteRecordings(space.ids)
             is SpaceDecision.Refuse -> return Begin.Finished(failTerminal(schedule, token, space.problem, nowMs))
@@ -481,8 +485,22 @@ class RecordingsRepository(
             candidates = candidates, headers = schedule.channel.headers, targetPath = target,
             resumeFromBytes = resumeFrom, estimatedBytes = estimate,
             spaceCheck = { expected -> checkSpaceDuringCapture(expected) },
+            onKnownTotal = { total, onDisk -> checkKnownSize(total, onDisk) },
         )
         return Begin.Go(Run(schedule, token, request, target, d.fromMs, d.toMs, cancelJob, recordingId))
+    }
+
+    /** Asked once by the saver when the provider declared the size. May delete oldest under DELETE_OLDEST. */
+    private suspend fun checkKnownSize(totalBytes: Long, onDiskBytes: Long): KnownSizeDecision = mutex.withLock {
+        when (val d = RecordingSpacePolicy.knownSize(files.freeBytes(), totalBytes, onDiskBytes, lowSpacePolicy(), doc.recordingValues)) {
+            SpaceDecision.Proceed -> KnownSizeDecision.Continue
+            is SpaceDecision.DeleteThenProceed -> {
+                deleteRecordings(d.ids)
+                commit()
+                KnownSizeDecision.Continue
+            }
+            is SpaceDecision.Refuse -> KnownSizeDecision.Refuse(d.needBytes ?: 0L, d.freeBytes ?: files.freeBytes())
+        }
     }
 
     /** Asked by the saver every ~16 MB. Deletes old recordings if the user chose DELETE_OLDEST. */
@@ -561,6 +579,7 @@ class RecordingsRepository(
                     is SaveOutcome.Done -> finishDone(run, outcome, now, durationMs)
                     is SaveOutcome.Failed -> afterFailureLocked(
                         run.schedule, outcome.problem, outcome.offline, now, outcome.writtenBytes, outcome.rangeSupported, run.token,
+                        needBytes = outcome.needBytes, freeBytes = outcome.freeBytes,
                     )
                 }
             }
@@ -576,7 +595,9 @@ class RecordingsRepository(
                 list.map {
                     if (it.id == run.recordingId) it.copy(
                         status = RecordingStatus.DONE, endedAtMs = nowMs, sizeBytes = done.bytes,
-                        durationMs = run.toMs - run.fromMs, problem = null, retrySource = null,
+                        // A save cut short keeps the note and has no honest duration.
+                        durationMs = if (done.stoppedFor == null) run.toMs - run.fromMs else 0L,
+                        problem = done.stoppedFor, retrySource = null, problemNeedBytes = null, problemFreeBytes = null,
                     ) else it
                 }
             },
@@ -620,6 +641,8 @@ class RecordingsRepository(
         written: Long,
         rangeSupported: Boolean,
         token: String? = null,
+        needBytes: Long? = null,
+        freeBytes: Long? = null,
     ): FireResult {
         token?.let { ledger.release(it, FireOutcome.FAILED, problem) }
         val recordingId = recordingIdFor(schedule.id)
@@ -635,7 +658,7 @@ class RecordingsRepository(
                 FireResult.Retrying(d.schedule.nextTryMs)
             }
             is RetryDecision.GiveUp -> {
-                terminalRow(schedule, d.problem, nowMs, target)
+                terminalRow(schedule, d.problem, nowMs, target, needBytes, freeBytes)
                 commit()
                 FireResult.Failed(d.problem)
             }
@@ -653,7 +676,10 @@ class RecordingsRepository(
     }
 
     /** Removes the schedule and leaves a FAILED row the UI can show and Retry can restart. */
-    private suspend fun terminalRow(schedule: RecordingSchedule, problem: RecordingProblem, nowMs: Long, target: String?) {
+    private suspend fun terminalRow(
+        schedule: RecordingSchedule, problem: RecordingProblem, nowMs: Long, target: String?,
+        needBytes: Long? = null, freeBytes: Long? = null,
+    ) {
         val id = recordingIdFor(schedule.id)
         alarms.disarm(schedule.id)
         if (target != null) deletePartial(target)
@@ -664,7 +690,10 @@ class RecordingsRepository(
             programmeStartMs = schedule.programmeStartMs, programmeEndMs = schedule.programmeEndMs,
             startedAtMs = nowMs, endedAtMs = nowMs, status = RecordingStatus.FAILED, mode = schedule.mode,
             fileName = fileNameFor(schedule, null), seriesRuleId = schedule.seriesRuleId,
-        )).copy(status = RecordingStatus.FAILED, problem = problem, endedAtMs = nowMs, retrySource = schedule)
+        )).copy(
+            status = RecordingStatus.FAILED, problem = problem, endedAtMs = nowMs, retrySource = schedule,
+            problemNeedBytes = needBytes, problemFreeBytes = freeBytes,
+        )
         edit(
             schedules = { list -> list.filterNot { it.id == schedule.id } },
             recordings = { list -> list.filterNot { it.id == id } + row },

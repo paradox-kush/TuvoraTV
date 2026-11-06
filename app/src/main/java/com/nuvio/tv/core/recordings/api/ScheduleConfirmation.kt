@@ -37,9 +37,11 @@ object ScheduleConfirmationPolicy {
         is ScheduleResult.Scheduled -> {
             val clashes = result.clashes.map { it.title }.distinct()
             when (result.arm) {
-                ArmKind.EXACT -> ScheduleConfirmation(ConfirmationKind.SET, clashes)
-                ArmKind.INEXACT -> ScheduleConfirmation(ConfirmationKind.MAY_START_LATE, clashes, offerExactAlarmSettings = takeExactPromptTurn())
-                ArmKind.NONE -> ScheduleConfirmation(ConfirmationKind.SAVES_ON_NEXT_OPEN, clashes)
+                ArmKind.EXACT -> ScheduleConfirmation(ConfirmationKind.SET, clashes, spaceTight = result.spaceTight)
+                ArmKind.INEXACT -> ScheduleConfirmation(
+                    ConfirmationKind.MAY_START_LATE, clashes, offerExactAlarmSettings = takeExactPromptTurn(), spaceTight = result.spaceTight,
+                )
+                ArmKind.NONE -> ScheduleConfirmation(ConfirmationKind.SAVES_ON_NEXT_OPEN, clashes, spaceTight = result.spaceTight)
             }
         }
         is ScheduleResult.Duplicate -> ScheduleConfirmation(ConfirmationKind.ALREADY_SCHEDULED)
