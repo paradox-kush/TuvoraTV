@@ -540,6 +540,8 @@ internal class CleanLivePlayerViewModel private constructor(
                             SessionProfile.FULLSCREEN,
                             mediaSessionMetadata(basis.launch),
                         )
+                        // Back on live: reapply the mpv live cache plan the buffer had replaced.
+                        livePauseControl?.onLiveStarted()
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: Exception) {

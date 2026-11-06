@@ -3,6 +3,7 @@ package com.nuvio.tv.core.livepause
 import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.ProxyMode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,17 +67,28 @@ class LiveCaptureLoop(
     private val freeBytes: () -> Long,
     private val cleanupScope: CoroutineScope,
     private val retention: LiveRetention,
+    /** Test seam: shortens the reconnect backoff (production: identity, so 2/4/8 s from [LiveCaptureReconnect]). */
+    private val reconnectDelayMs: (Long) -> Long = { it },
 ) {
     private val mutableEvents = MutableSharedFlow<LiveCaptureEvent>(replay = 16, extraBufferCapacity = 64)
     val events: SharedFlow<LiveCaptureEvent> = mutableEvents
 
     private var job: Job? = null
     private var disposed = false
+    private val ended = CompletableDeferred<Unit>()
 
     fun start() {
         if (job != null || disposed) return
-        job = scope.launch(io) { run() }
+        // invokeOnCompletion also fires for a coroutine cancelled before it ran.
+        job = scope.launch(io) { run() }.also { it.invokeOnCompletion { ended.complete(Unit) } }
     }
+
+    /**
+     * Returns once the capture coroutine is over for any reason: stopped, disposed, failed (a Failed event was
+     * emitted first) or the provider ended the stream (no event). A recording waits on this; the event flow
+     * never completes.
+     */
+    suspend fun awaitEnd() = ended.await()
 
     fun dispose() {
         if (disposed) return
@@ -205,7 +217,7 @@ class LiveCaptureLoop(
     /** The one capped rule: Retry waits and goes round again; GiveUp stops the capture. */
     private suspend fun backoffOrStop() {
         when (val decision = reconnect.onDrop()) {
-            is LiveCaptureReconnect.Decision.Retry -> delay(decision.delayMs)
+            is LiveCaptureReconnect.Decision.Retry -> delay(reconnectDelayMs(decision.delayMs))
             LiveCaptureReconnect.Decision.GiveUp ->
                 throw Stop(if (landed == 0) LivePauseFailure.PROVIDER_REFUSED else LivePauseFailure.STALLED)
         }
