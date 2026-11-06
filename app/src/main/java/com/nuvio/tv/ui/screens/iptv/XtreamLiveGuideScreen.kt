@@ -139,6 +139,8 @@ fun LiveGuide(
     onSwitchAccount: (accountId: String) -> Unit = {},
     /** F48: the hub header's Search chip was pressed on Live — opens this guide's own channel search (bumped per press). */
     searchRequest: Int = 0,
+    /** The Recordings page, for "View recordings" on the record confirmation. */
+    onOpenRecordings: () -> Unit = {},
     viewModel: XtreamLiveGuideViewModel = hiltViewModel(),
 ) {
     val playbackViewModel: CleanLiveGuidePlaybackViewModel = hiltViewModel()
@@ -1082,21 +1084,18 @@ fun LiveGuide(
                     channelListFocus.requestFocusOrFalse()
                 }
             }
-            GuideRecordNoticeToast(
+            GuideRecordNoticeSheet(
                 notice = notice,
+                offerExactTimes = (notice as? GuideRecordNotice.Scheduled)?.confirmation?.offerExactAlarmSettings == true &&
+                    recordings.exactAlarmSettingsIntent() != null,
+                onDone = { restoreRecordingFocus(); recordings.dismissNotice() },
                 onUndo = { restoreRecordingFocus(); recordings.undo(it) },
                 onOpenExactSettings = {
-                    recordings.exactAlarmSettingsIntent()?.let { intent ->
-                        if (com.nuvio.tv.core.recordings.internal.ExactAlarmSettingsLaunch.needsNewTask(activityContext is android.app.Activity)) {
-                            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        runCatching { activityContext.startActivity(intent) }
-                    }
+                    recordings.exactAlarmSettingsIntent()?.let { launchExactAlarmSettings(activityContext, it) }
+                    restoreRecordingFocus()
+                    recordings.dismissNotice()
                 },
-                onDismiss = { restoreRecordingFocus(); recordings.dismissNotice() },
-                modifier = Modifier
-                    .align(if (fullscreen) Alignment.TopCenter else Alignment.BottomCenter)
-                    .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.xl),
+                onViewRecordings = { recordings.dismissNotice(); onOpenRecordings() },
             )
         }
 

@@ -337,6 +337,7 @@ fun XtreamHubScreen(
                 onPlayCatchUp = onPlayCatchUp,
                 onSwitchAccount = viewModel::selectAccount,
                 searchRequest = liveSearchRequest,
+                onOpenRecordings = onOpenRecordings,
             )
         } else {
             HubBrowseContent(

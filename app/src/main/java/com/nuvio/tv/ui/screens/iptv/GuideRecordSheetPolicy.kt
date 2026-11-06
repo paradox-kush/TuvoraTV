@@ -3,16 +3,14 @@ package com.nuvio.tv.ui.screens.iptv
 import com.nuvio.tv.core.iptv.XtreamCatchUp.ProgrammeAction
 import com.nuvio.tv.core.iptv.XtreamProgram
 import com.nuvio.tv.core.recordings.api.CaptureMode
-import com.nuvio.tv.core.recordings.api.ConfirmationKind
 import com.nuvio.tv.core.recordings.api.RecordOffer
 import com.nuvio.tv.core.recordings.api.RecordUnavailable
-import com.nuvio.tv.core.recordings.api.ScheduleConfirmation
 import com.nuvio.tv.core.recordings.api.SeriesOffer
 
 /**
  * What the guide's programme sheet shows and says about recording. Pure: the sheet draws the answer.
  * The facts come from `ProgrammeRecordPolicy`; this maps them to rows, one-line reasons and the
- * confirmation toast's button.
+ * confirmation sheet's rows.
  */
 internal object GuideRecordSheetPolicy {
 
@@ -63,17 +61,6 @@ internal object GuideRecordSheetPolicy {
     /** "Watch live" is for an airing programme. */
     fun showsWatchLive(action: ProgrammeAction): Boolean =
         action == ProgrammeAction.START_OVER || action == ProgrammeAction.PLAY_LIVE
-
-    enum class NoticeAction { UNDO, OPEN_EXACT_SETTINGS, DISMISS }
-
-    fun noticeAction(confirmation: ScheduleConfirmation, isSeries: Boolean): NoticeAction = when {
-        confirmation.offerExactAlarmSettings -> NoticeAction.OPEN_EXACT_SETTINGS
-        isSeries -> NoticeAction.DISMISS
-        confirmation.kind == ConfirmationKind.SET ||
-            confirmation.kind == ConfirmationKind.MAY_START_LATE ||
-            confirmation.kind == ConfirmationKind.SAVES_ON_NEXT_OPEN -> NoticeAction.UNDO
-        else -> NoticeAction.DISMISS
-    }
 
     /** A programme that has not started: nothing to play, but it can be recorded. */
     fun isUpcoming(programme: XtreamProgram, nowMs: Long): Boolean =

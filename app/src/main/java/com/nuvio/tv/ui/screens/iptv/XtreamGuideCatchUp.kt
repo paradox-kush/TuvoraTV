@@ -632,16 +632,17 @@ internal fun GuideStartOverSheet(
 
 /** Sheet button. Focused = solid Primary + focus ring; unfocused primary keeps a Primary outline. */
 @Composable
-private fun GuideSheetButton(
+internal fun GuideSheetButton(
     label: String,
     primary: Boolean,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    modifier: Modifier = Modifier,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val latestOnClick by rememberUpdatedState(onClick)
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(NuvioTheme.radii.sm))
             .background(
                 when {

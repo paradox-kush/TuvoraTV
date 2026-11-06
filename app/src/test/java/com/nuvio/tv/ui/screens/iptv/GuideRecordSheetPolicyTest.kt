@@ -2,13 +2,10 @@ package com.nuvio.tv.ui.screens.iptv
 
 import com.nuvio.tv.core.iptv.XtreamCatchUp.ProgrammeAction
 import com.nuvio.tv.core.recordings.api.CaptureMode
-import com.nuvio.tv.core.recordings.api.ConfirmationKind
 import com.nuvio.tv.core.recordings.api.RecordOffer
 import com.nuvio.tv.core.recordings.api.RecordUnavailable
-import com.nuvio.tv.core.recordings.api.ScheduleConfirmation
 import com.nuvio.tv.core.recordings.api.SeriesOffer
 import com.nuvio.tv.ui.screens.iptv.GuideRecordSheetPolicy.Note
-import com.nuvio.tv.ui.screens.iptv.GuideRecordSheetPolicy.NoticeAction
 import com.nuvio.tv.ui.screens.iptv.GuideRecordSheetPolicy.Primary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -87,26 +84,5 @@ class GuideRecordSheetPolicyTest {
         assertTrue(GuideRecordSheetPolicy.showsWatchLive(ProgrammeAction.PLAY_LIVE))
         assertFalse("a programme not on air has no live", GuideRecordSheetPolicy.showsWatchLive(ProgrammeAction.NONE))
         assertFalse(GuideRecordSheetPolicy.showsWatchLive(ProgrammeAction.REPLAY))
-    }
-
-    @Test
-    fun `the first inexact schedule offers the exact alarm settings on its button`() {
-        val c = ScheduleConfirmation(ConfirmationKind.MAY_START_LATE, offerExactAlarmSettings = true)
-        assertEquals(NoticeAction.OPEN_EXACT_SETTINGS, GuideRecordSheetPolicy.noticeAction(c, isSeries = false))
-        assertEquals(NoticeAction.OPEN_EXACT_SETTINGS, GuideRecordSheetPolicy.noticeAction(c, isSeries = true))
-    }
-
-    @Test
-    fun `a single schedule can be undone from its confirmation`() {
-        listOf(ConfirmationKind.SET, ConfirmationKind.MAY_START_LATE, ConfirmationKind.SAVES_ON_NEXT_OPEN).forEach {
-            assertEquals("$it", NoticeAction.UNDO, GuideRecordSheetPolicy.noticeAction(ScheduleConfirmation(it), isSeries = false))
-        }
-    }
-
-    @Test
-    fun `a series confirmation and a refusal only dismiss`() {
-        assertEquals(NoticeAction.DISMISS, GuideRecordSheetPolicy.noticeAction(ScheduleConfirmation(ConfirmationKind.SET, count = 4), isSeries = true))
-        assertEquals(NoticeAction.DISMISS, GuideRecordSheetPolicy.noticeAction(ScheduleConfirmation(ConfirmationKind.ALREADY_SCHEDULED), isSeries = false))
-        assertEquals(NoticeAction.DISMISS, GuideRecordSheetPolicy.noticeAction(ScheduleConfirmation(ConfirmationKind.CANNOT_RECORD), isSeries = false))
     }
 }

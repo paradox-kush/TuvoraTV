@@ -3840,6 +3840,9 @@
     <string name="rec_notice_failed">Couldn’t change the recording for %1$s. Try again.</string>
     <string name="rec_notice_clash">%1$s Overlaps with %2$s.</string>
     <string name="rec_notice_undo">Undo</string>
+    <string name="rec_notice_done">Done</string>
+    <string name="rec_notice_view">View recordings</string>
+    <string name="rec_hint_allow_exact">Recordings may start a little late on this device. Allow exact times.</string>
     <string name="rec_notice_allow_exact">Allow exact times</string>
     <plurals name="rec_notice_series_set">
         <item quantity="one">Series recording set: %2$d airing of %1$s scheduled</item>

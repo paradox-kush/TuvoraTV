@@ -28,6 +28,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +56,7 @@ import com.nuvio.tv.core.recordings.api.RecordingAction
 import com.nuvio.tv.core.recordings.api.RecordingActionsPolicy
 import com.nuvio.tv.core.recordings.api.RecordingProblem
 import com.nuvio.tv.core.recordings.api.RecordingRow
+import com.nuvio.tv.core.recordings.api.RecordingsAndroid
 import com.nuvio.tv.core.recordings.api.RecordingSection
 import com.nuvio.tv.core.recordings.api.RecordingStatus
 import com.nuvio.tv.core.recordings.api.RecordingsLoadAttempt
@@ -59,8 +65,8 @@ import com.nuvio.tv.core.recordings.api.RecordingsPagePolicy
 import com.nuvio.tv.core.recordings.api.RecordingsView
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.NuvioDialog
-import com.nuvio.tv.ui.components.NuvioUndoToast
 import com.nuvio.tv.ui.screens.iptv.GuideFocusRequestLoop
+import com.nuvio.tv.ui.screens.iptv.launchExactAlarmSettings
 import com.nuvio.tv.ui.screens.iptv.guideDayLabel
 import com.nuvio.tv.ui.screens.iptv.guideHhMm
 import com.nuvio.tv.ui.screens.iptv.requestFocusOrFalse
@@ -174,6 +180,25 @@ fun RecordingsScreen(
 
     val nowMs = remember(ui.page) { System.currentTimeMillis() }
 
+    // The "Allow exact times" offer lives here too, so closing the record confirmation without choosing
+    // never loses it. Re-read on resume: the viewer may have just allowed it in the system screen.
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var systemAllowsExact by remember { mutableStateOf(canScheduleExactNow(context)) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) systemAllowsExact = canScheduleExactNow(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val exactSettings = remember { RecordingsAndroid.exactAlarmSettingsIntent(context) }
+    val offerExact = ExactAlarmOfferPolicy.showOnRecordingsScreen(
+        exactAllowed = ui.exactAllowed || systemAllowsExact,
+        scheduledCount = ui.page.rows(RecordingSection.SCHEDULED).size,
+        settingsAvailable = exactSettings != null,
+    )
+
     Box(Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -186,7 +211,10 @@ fun RecordingsScreen(
                 color = NuvioTheme.colors.TextPrimary,
                 fontWeight = FontWeight.Bold,
             )
-            if (ui.page.rows(RecordingSection.SCHEDULED).isNotEmpty() && !ui.exactAllowed) {
+            if (offerExact) {
+                Spacer(Modifier.height(NuvioTheme.spacing.sm))
+                ExactTimesOffer(onClick = { exactSettings?.let { launchExactAlarmSettings(context, it) } })
+            } else if (ui.page.rows(RecordingSection.SCHEDULED).isNotEmpty() && !(ui.exactAllowed || systemAllowsExact)) {
                 Spacer(Modifier.height(NuvioTheme.spacing.xs))
                 Text(
                     text = stringResource(R.string.rec_hint_may_start_late),
@@ -274,14 +302,8 @@ fun RecordingsScreen(
         }
 
         if (actionFailed) {
-            NuvioUndoToast(
-                message = stringResource(R.string.rec_action_failed),
-                actionLabel = stringResource(R.string.rec_ok),
-                onAction = { actionFailed = false; entered = false },
-                onDismiss = { actionFailed = false; entered = false },
-                durationMillis = 6_000L,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(NuvioTheme.spacing.xl),
-            )
+            // Persistent, like the details sheet: a toast that timed out moved the cursor under the next OK.
+            ActionFailedDialog(onDismiss = { actionFailed = false; entered = false })
         }
     }
 }
@@ -462,6 +484,8 @@ private fun RecordingDetailsDialog(
     var confirmDelete by remember { mutableStateOf(false) }
     val first = remember { FocusRequester() }
     val keep = remember { FocusRequester() }
+    // Play for a saved recording, Close otherwise; Cancel recording / Delete / Try again never take the first OK.
+    val defaultTarget = RecordingDetailsFocusPolicy.defaultFocus(row.status, actions)
     LaunchedEffect(confirmDelete) {
         GuideFocusRequestLoop.requestUntilLanded(minimumAsks = 2) { (if (confirmDelete) keep else first).requestFocusOrFalse() }
     }
@@ -510,10 +534,12 @@ private fun RecordingDetailsDialog(
                 Text(stringResource(R.string.rec_action_delete))
             }
         } else {
-            actions.forEachIndexed { index, action ->
+            actions.forEach { action ->
                 Button(
                     onClick = { if (action == RecordingAction.DELETE) confirmDelete = true else onAction(action) },
-                    modifier = Modifier.fillMaxWidth().then(if (index == 0) Modifier.focusRequester(first) else Modifier),
+                    modifier = Modifier.fillMaxWidth().then(
+                        if (action == RecordingAction.PLAY && defaultTarget == RecordingDetailsFocusPolicy.Target.PLAY) Modifier.focusRequester(first) else Modifier,
+                    ),
                 ) {
                     Text(
                         stringResource(
@@ -530,8 +556,58 @@ private fun RecordingDetailsDialog(
             }
             Button(
                 onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth().then(if (actions.isEmpty()) Modifier.focusRequester(first) else Modifier),
+                modifier = Modifier.fillMaxWidth().then(
+                    if (defaultTarget == RecordingDetailsFocusPolicy.Target.CLOSE) Modifier.focusRequester(first) else Modifier,
+                ),
             ) { Text(stringResource(R.string.rec_sheet_close)) }
         }
     }
 }
+
+/** The viewer's way to allow exact times when they closed the confirmation without choosing. Highlights on focus. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ExactTimesOffer(onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(NuvioTheme.radii.md)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (focused) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.BackgroundElevated)
+            .border(if (focused) 2.dp else 1.dp, if (focused) NuvioTheme.colors.BorderFocused else NuvioTheme.colors.Border, shape)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg),
+    ) {
+        Text(
+            text = stringResource(R.string.rec_hint_allow_exact),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (focused) NuvioTheme.colors.FocusContent else NuvioTheme.colors.TextPrimary,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = stringResource(R.string.rec_notice_allow_exact),
+            style = MaterialTheme.typography.labelLarge,
+            color = if (focused) NuvioTheme.colors.FocusContent else NuvioTheme.colors.TextPrimary,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ActionFailedDialog(onDismiss: () -> Unit) {
+    val ok = remember { FocusRequester() }
+    LaunchedEffect(Unit) { GuideFocusRequestLoop.requestUntilLanded(minimumAsks = 2) { ok.requestFocusOrFalse() } }
+    NuvioDialog(onDismiss = onDismiss, title = stringResource(R.string.rec_action_failed), width = 480.dp) {
+        Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth().focusRequester(ok)) { Text(stringResource(R.string.rec_ok)) }
+    }
+}
+
+/** Android 12+ gates exact alarms behind a user setting; earlier versions always allow them. */
+private fun canScheduleExactNow(context: android.content.Context): Boolean =
+    android.os.Build.VERSION.SDK_INT < 31 ||
+        (context.getSystemService(android.content.Context.ALARM_SERVICE) as? android.app.AlarmManager)?.canScheduleExactAlarms() == true
