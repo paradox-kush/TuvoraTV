@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import com.nuvio.tv.core.recordings.api.RecordingStatus
 import com.nuvio.tv.core.recordings.api.RecordingsAccess
@@ -24,7 +25,7 @@ import kotlinx.coroutines.launch
  * when none is left. START_NOT_STICKY: if the system kills it, the repository's startup recovery
  * (not a sticky restart) decides what to retry.
  */
-class RecordingService : Service() {
+open class RecordingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // Touched on the main thread only (onStartCommand and completion posts).
@@ -79,7 +80,7 @@ class RecordingService : Service() {
         val port = RecordingsAccess.current() ?: return
         notifier = scope.launch {
             combine(port.state, port.progress) { state, progress -> state to progress }
-                .sample(NOTIFICATION_INTERVAL_MS)
+                .sample(notificationIntervalMs)
                 .collect { (state, progress) ->
                     val live = state.recordings.filter { it.status == RecordingStatus.RECORDING }
                     val first = live.firstOrNull() ?: return@collect
@@ -89,18 +90,20 @@ class RecordingService : Service() {
                     val title = if (live.size > 1) "Recording ${live.size} shows" else first.title
                     val text = "${bytes / (1024 * 1024)} MB saved"
                     first.scheduleId?.let { sid ->
-                        promote(RecordingNotifications.ongoing(this@RecordingService, title, text, percent, sid))
+                        refresh(RecordingNotifications.ongoing(this@RecordingService, title, text, percent, sid))
                     }
                 }
         }
     }
 
-    /** False when Android refuses to make us foreground (started from the background without an exemption). */
+    /**
+     * Enters the foreground once per start command with its first notification. Re-calling
+     * startForeground on every progress sample is a background-start policy risk on Android 14+
+     * (and logs a warning each time); progress goes through [refresh] instead.
+     * False when Android refuses to make us foreground (started from the background without an exemption).
+     */
     private fun promote(notification: Notification): Boolean = try {
-        ServiceCompat.startForeground(
-            this, RecordingNotifications.ONGOING_ID, notification,
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-        )
+        enterForeground(notification)
         true
     } catch (e: IllegalStateException) {
         RecordingNotifications.couldNotStart(this)
@@ -109,6 +112,26 @@ class RecordingService : Service() {
         RecordingNotifications.couldNotStart(this)
         false
     }
+
+    /** Seam: the single startForeground call (tests count it). */
+    internal open fun enterForeground(notification: Notification) {
+        ServiceCompat.startForeground(
+            this, RecordingNotifications.ONGOING_ID, notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+        )
+    }
+
+    /** Seam: progress update of the SAME ongoing notification id, no startForeground. */
+    internal open fun refresh(notification: Notification) {
+        try {
+            NotificationManagerCompat.from(this).notify(RecordingNotifications.ONGOING_ID, notification)
+        } catch (_: SecurityException) {
+            // POST_NOTIFICATIONS not granted: the foreground notification itself is unaffected.
+        }
+    }
+
+    /** Seam: progress refresh cadence. */
+    internal open val notificationIntervalMs: Long get() = NOTIFICATION_INTERVAL_MS
 
     private fun finish() {
         notifier?.cancel()

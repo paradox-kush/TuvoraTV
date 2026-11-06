@@ -9,6 +9,8 @@ import com.nuvio.tv.core.recordings.api.Recording
 import com.nuvio.tv.core.recordings.api.RecordingCapabilities
 import com.nuvio.tv.core.recordings.api.RecordingChannel
 import com.nuvio.tv.core.recordings.api.RecordingSchedule
+import com.nuvio.tv.core.recordings.api.CaptureMode
+import com.nuvio.tv.core.recordings.api.RecordingStatus
 import com.nuvio.tv.core.recordings.api.RecordingsAccess
 import com.nuvio.tv.core.recordings.api.RecordingsPort
 import com.nuvio.tv.core.recordings.api.RecordingsState
@@ -33,14 +35,16 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.ConscryptMode
 
 private class FakePort(
+    stateFlow: MutableStateFlow<RecordingsState> = MutableStateFlow(RecordingsState()),
+    val progressFlow: MutableStateFlow<Map<String, Long>> = MutableStateFlow(emptyMap()),
     val onFire: suspend (String) -> FireResult = { FireResult.Saved },
     val onRearm: suspend () -> Unit = {},
 ) : RecordingsPort {
     val cancelled = ArrayList<String>()
-    override val state: StateFlow<RecordingsState> = MutableStateFlow(RecordingsState())
+    override val state: StateFlow<RecordingsState> = stateFlow
     override val capabilities = RecordingCapabilities.ANDROID
     override fun playableUri(recording: Recording): String? = null
-    override val progress: StateFlow<Map<String, Long>> = MutableStateFlow(emptyMap())
+    override val progress: StateFlow<Map<String, Long>> = progressFlow
     override suspend fun start(nowMs: Long) {}
     override suspend fun scheduleProgramme(channel: RecordingChannel, title: String, episode: String?, description: String?, startMs: Long, endMs: Long, nowMs: Long): ScheduleResult = ScheduleResult.CannotRecord
     override suspend fun addSeriesRule(channel: RecordingChannel, title: String, keepLast: Int, listings: List<ListingInfo>, nowMs: Long): List<RecordingSchedule> = emptyList()
@@ -53,6 +57,21 @@ private class FakePort(
     override suspend fun overdueIds(nowMs: Long): List<String> = emptyList()
     override suspend fun sweepOverdue(nowMs: Long) {}
     override suspend fun fire(scheduleId: String, nowMs: Long): FireResult = onFire(scheduleId)
+}
+
+/** Counts the foreground promotions and progress refreshes the real service performs. */
+private class CountingRecordingService : RecordingService() {
+    var startForegroundCalls = 0
+    var refreshCalls = 0
+    override val notificationIntervalMs: Long get() = 20L
+    override fun enterForeground(notification: android.app.Notification) {
+        startForegroundCalls++
+        super.enterForeground(notification)
+    }
+    override fun refresh(notification: android.app.Notification) {
+        refreshCalls++
+        super.refresh(notification)
+    }
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -112,5 +131,35 @@ class RecordingServiceTest {
         }
         assertTrue("cancellation must propagate", thrown is CancellationException)
         assertEquals(1, finished)
+    }
+
+    @Test
+    fun `progress samples refresh the notification and startForeground is called once per start`() {
+        val recording = Recording(
+            id = "r1", scheduleId = "s1", channelKey = "c", channelName = "C", title = "Show", episode = null,
+            description = null, programmeStartMs = 0, programmeEndMs = 3_600_000, startedAtMs = 0, endedAtMs = null,
+            status = RecordingStatus.RECORDING, mode = CaptureMode.values().first(), fileName = "f.ts",
+        )
+        val progress = MutableStateFlow<Map<String, Long>>(emptyMap())
+        val release = java.util.concurrent.CountDownLatch(1)
+        RecordingsAccess.register(
+            FakePort(
+                stateFlow = MutableStateFlow(RecordingsState(recordings = listOf(recording))),
+                progressFlow = progress,
+                onFire = { release.await(5, java.util.concurrent.TimeUnit.SECONDS); FireResult.Saved },
+            ),
+        )
+        val ctl = Robolectric.buildService(CountingRecordingService::class.java, intent(RecordingService.ACTION_FIRE, "s1")).create()
+        ctl.startCommand(0, 1)
+        val service = ctl.get()
+        for (i in 1..6) {
+            progress.value = mapOf("r1" to i * 1_000_000L)
+            Thread.sleep(80)
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+        release.countDown()
+        assertTrue("progress must be pushed through notify, got ${service.refreshCalls}", service.refreshCalls >= 2)
+        assertEquals("startForeground once per start, never per progress sample", 1, service.startForegroundCalls)
+        awaitStopped(shadowOf(service))
     }
 }
