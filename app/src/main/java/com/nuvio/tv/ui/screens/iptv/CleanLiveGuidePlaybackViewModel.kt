@@ -740,6 +740,8 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
                 // on its live source, or fail visibly. Never leave a black screen.
                 try {
                     currentHost.tune(previous.selection, sessionProfile, mediaMetadata(previous))
+                    // Back on live: reapply the mpv live cache plan the buffer had replaced.
+                    livePauseControl?.onLiveStarted()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
