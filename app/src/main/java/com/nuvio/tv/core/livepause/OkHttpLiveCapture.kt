@@ -29,10 +29,11 @@ class OkHttpLiveCapture(
     monotonicMs: () -> Long,
     freeBytes: () -> Long,
     cleanupScope: CoroutineScope,
+    reconnectDelayMs: (Long) -> Long = { it },
 ) : LiveCapture {
     // The pause buffer is the shared capture loop with rewind retention.
     private val loop = LiveCaptureLoop(
-        spec, scope, store, clients, io, monotonicMs, freeBytes, cleanupScope, LiveRetention.Trim(spec.keepMs),
+        spec, scope, store, clients, io, monotonicMs, freeBytes, cleanupScope, LiveRetention.Trim(spec.keepMs), reconnectDelayMs,
     )
     override val events: SharedFlow<LiveCaptureEvent> get() = loop.events
     override fun start() = loop.start()

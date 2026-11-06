@@ -87,6 +87,7 @@ class OkHttpLiveCaptureTest {
         parent: CoroutineScope = scope,
         io: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
         clock: () -> Long = { System.nanoTime() / 1_000_000L },
+        reconnectDelayMs: (Long) -> Long = { it },
     ): OkHttpLiveCapture {
         val dir = File(root, "player-1")
         val store = FileLiveSegmentStore(dir)
@@ -99,6 +100,7 @@ class OkHttpLiveCaptureTest {
             monotonicMs = clock,
             freeBytes = free,
             cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            reconnectDelayMs = reconnectDelayMs,
         )
     }
 
@@ -149,7 +151,7 @@ class OkHttpLiveCaptureTest {
         val minted = AtomicInteger()
         routes["/live/1"] = { MockResponse().setResponseCode(200).setBody(tsBody()) }
         routes["/live/2"] = { MockResponse().setResponseCode(200).setBody(tsBody()) }
-        val capture = capture({ link("/live/${minted.incrementAndGet()}") }, singleUse = true)
+        val capture = capture({ link("/live/${minted.incrementAndGet()}") }, singleUse = true, reconnectDelayMs = { 0L })
         capture.start()
         // The first body ends (a drop): the second open must be a fresh link.
         withTimeout(20_000) { while (hitsOf("/live/2") == 0) delay(50) }
