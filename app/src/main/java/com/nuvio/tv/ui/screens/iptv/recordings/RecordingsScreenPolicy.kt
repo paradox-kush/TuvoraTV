@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.iptv.recordings
 
 import com.nuvio.tv.core.recordings.api.RecordingRow
 import com.nuvio.tv.core.recordings.api.RecordingSection
+import com.nuvio.tv.core.recordings.api.RecordingProblem
 import com.nuvio.tv.core.recordings.api.RecordingStatus
 import com.nuvio.tv.core.recordings.api.RecordingsPageModel
 import com.nuvio.tv.core.recordings.api.RecordingsPagePolicy
@@ -55,6 +56,9 @@ internal object RecordingRowFormat {
     private const val MB = KB * 1024
     private const val GB = MB * 1024
 
+    /** An amount inside a sentence: never empty ("0 MB" for nothing). */
+    fun amount(bytes: Long): String = size(bytes).ifEmpty { "0 MB" }
+
     /** "" for nothing yet, "<1 MB", "480 MB", "1.5 GB". */
     fun size(bytes: Long): String = when {
         bytes <= 0L -> ""
@@ -79,9 +83,22 @@ internal object ExactAlarmOfferPolicy {
 internal object RecordingRowTextPolicy {
     const val REASON_MAX_LINES = 4
 
-    /** True when the reason sits on its own wrapping line under the row instead of the narrow status column. */
+    /**
+     * True when the reason sits on its own wrapping line under the row instead of the narrow status column:
+     * a Failed row, or a Done row that was cut short (it keeps its size in the status column).
+     */
     fun reasonOnOwnLine(row: RecordingRow): Boolean =
-        row.section == RecordingSection.FAILED && row.problem != null
+        row.problem != null && (row.section == RecordingSection.FAILED || row.status == RecordingStatus.DONE)
+
+    /** Which sentence explains a row's problem. Pure, so the choice is tested without a screen. */
+    enum class ProblemTextKind { CUT_SHORT, NO_SPACE_KNOWN, GENERIC }
+
+    fun problemTextKind(row: RecordingRow): ProblemTextKind = when {
+        row.problem == RecordingProblem.NO_SPACE && row.status == RecordingStatus.DONE -> ProblemTextKind.CUT_SHORT
+        row.problem == RecordingProblem.NO_SPACE && row.problemNeedBytes != null && row.problemFreeBytes != null ->
+            ProblemTextKind.NO_SPACE_KNOWN
+        else -> ProblemTextKind.GENERIC
+    }
 
     /** Every row of every status takes the cursor and opens its details on OK. */
     fun focusable(@Suppress("UNUSED_PARAMETER") status: RecordingStatus): Boolean = true

@@ -3818,6 +3818,8 @@
     <string name="rec_delete_confirm">Delete this recording? The file is removed from this device.</string>
     <string name="rec_delete_keep">Keep it</string>
     <string name="rec_problem_no_space">There wasn’t enough free space on this device.</string>
+    <string name="rec_problem_no_space_known">Needs about %1$s but only %2$s is free. Free some space, then retry.</string>
+    <string name="rec_problem_no_space_cut_short">Stopped, storage almost full. Kept what was saved.</string>
     <string name="rec_problem_no_catch_up">The provider no longer keeps this programme.</string>
     <string name="rec_problem_provider_refused">The provider refused the download.</string>
     <string name="rec_problem_network">The connection dropped before it finished.</string>
@@ -3849,6 +3851,7 @@
     <string name="rec_notice_series_stopped">Series recording stopped: %1$s. Upcoming airings were cancelled; saved ones stay in Recordings.</string>
     <string name="rec_notice_cancelled">Recording cancelled: %1$s</string>
     <string name="rec_notice_failed">Couldn’t change the recording for %1$s. Try again.</string>
+    <string name="rec_notice_space_tight">May stop early if space runs out.</string>
     <string name="rec_notice_clash">%1$s Overlaps with %2$s.</string>
     <string name="rec_notice_undo">Undo</string>
     <string name="rec_notice_done">Done</string>

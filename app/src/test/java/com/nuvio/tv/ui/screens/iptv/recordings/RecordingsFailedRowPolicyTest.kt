@@ -8,6 +8,7 @@ import com.nuvio.tv.core.recordings.api.RecordingRow
 import com.nuvio.tv.core.recordings.api.RecordingSection
 import com.nuvio.tv.core.recordings.api.RecordingStatus
 import com.nuvio.tv.core.recordings.api.RecordingsPageModel
+import com.nuvio.tv.ui.screens.iptv.recordings.RecordingRowTextPolicy.ProblemTextKind
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -123,6 +124,34 @@ class RecordingsFailedRowPolicyTest {
         assertTrue(RecordingRowTextPolicy.reasonOnOwnLine(failed))
         assertFalse(RecordingRowTextPolicy.reasonOnOwnLine(done))
         assertFalse(RecordingRowTextPolicy.reasonOnOwnLine(failed.copy(problem = null)))
+    }
+
+    // --- the space reasons (space policy change)
+
+    @Test
+    fun `a done row cut short by space says it kept what was saved and puts that on its own line`() {
+        val cut = done.copy(problem = RecordingProblem.NO_SPACE, sizeBytes = 48_000_000L)
+        assertEquals(ProblemTextKind.CUT_SHORT, RecordingRowTextPolicy.problemTextKind(cut))
+        assertTrue(RecordingRowTextPolicy.reasonOnOwnLine(cut))
+    }
+
+    @Test
+    fun `a failed no-space row with both numbers names them`() {
+        val r = failed.copy(problemNeedBytes = 1_100_000_000L, problemFreeBytes = 900_000_000L)
+        assertEquals(ProblemTextKind.NO_SPACE_KNOWN, RecordingRowTextPolicy.problemTextKind(r))
+    }
+
+    @Test
+    fun `without both numbers or for other problems the generic sentence is used`() {
+        assertEquals(ProblemTextKind.GENERIC, RecordingRowTextPolicy.problemTextKind(failed.copy(problemNeedBytes = 5L)))
+        assertEquals(ProblemTextKind.GENERIC, RecordingRowTextPolicy.problemTextKind(failed.copy(problem = RecordingProblem.NETWORK, problemNeedBytes = 5L, problemFreeBytes = 4L)))
+    }
+
+    @Test
+    fun `an amount inside a sentence is never empty`() {
+        assertEquals("0 MB", RecordingRowFormat.amount(0L))
+        assertEquals("1.0 GB", RecordingRowFormat.amount(1_100_000_000L))
+        assertEquals("858 MB", RecordingRowFormat.amount(900_000_000L))
     }
 
     @Test

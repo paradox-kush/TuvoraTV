@@ -70,6 +70,8 @@ internal fun GuideRecordNoticeSheet(
             else stringResource(R.string.rec_notice_clash, base, c.clashTitles.joinToString(", "))
         }
     }
+    // Space is tight for the estimated size: say so as its own line (never blocks, never takes the cursor).
+    val spaceTightNote = if (scheduled?.confirmation?.spaceTight == true) stringResource(R.string.rec_notice_space_tight) else null
     val rows = RecordConfirmationFocusPolicy.rows(
         undoable = scheduled != null && RecordConfirmationFocusPolicy.undoable(scheduled.confirmation.kind, scheduled.isSeries),
         offerExact = scheduled != null && offerExactTimes,
@@ -100,6 +102,14 @@ internal fun GuideRecordNoticeSheet(
                 color = NuvioTheme.colors.TextPrimary,
                 modifier = Modifier.padding(bottom = NuvioTheme.spacing.sm),
             )
+            spaceTightNote?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioTheme.colors.TextSecondary,
+                    modifier = Modifier.padding(bottom = NuvioTheme.spacing.sm),
+                )
+            }
             rows.forEach { row ->
                 val rowModifier = Modifier.fillMaxWidth()
                 val focus = defaultFocus.takeIf { row == defaultRow }

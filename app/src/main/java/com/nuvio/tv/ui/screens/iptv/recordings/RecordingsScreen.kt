@@ -472,7 +472,7 @@ private fun RecordingRowItem(
             if (RecordingRowTextPolicy.reasonOnOwnLine(row)) {
                 row.problem?.let {
                     Text(
-                        text = problemText(it),
+                        text = rowProblemText(row),
                         style = MaterialTheme.typography.bodySmall,
                         color = statusColor,
                         maxLines = RecordingRowTextPolicy.REASON_MAX_LINES,
@@ -511,6 +511,17 @@ private fun rowStatus(row: RecordingRow, reasonOnOwnLine: Boolean = false): Stri
             else row.problem?.let { problemText(it) } ?: stringResource(R.string.rec_status_failed)
         RecordingStatus.CANCELLED -> stringResource(R.string.rec_status_cancelled)
     }
+}
+
+/** The full plain-words reason of a row: the need/free numbers when the size was known, a note when a save was cut short. */
+@Composable
+private fun rowProblemText(row: RecordingRow): String = when (RecordingRowTextPolicy.problemTextKind(row)) {
+    RecordingRowTextPolicy.ProblemTextKind.CUT_SHORT -> stringResource(R.string.rec_problem_no_space_cut_short)
+    RecordingRowTextPolicy.ProblemTextKind.NO_SPACE_KNOWN -> stringResource(
+        R.string.rec_problem_no_space_known,
+        RecordingRowFormat.amount(row.problemNeedBytes ?: 0L), RecordingRowFormat.amount(row.problemFreeBytes ?: 0L),
+    )
+    RecordingRowTextPolicy.ProblemTextKind.GENERIC -> row.problem?.let { problemText(it) }.orEmpty()
 }
 
 /** The problem in plain words; never an exception message or a provider host. */
@@ -562,8 +573,8 @@ private fun RecordingDetailsDialog(
             fontWeight = FontWeight.Bold,
         )
         // DETAIL-REASON-BEGIN
-        row.problem?.takeIf { row.section == RecordingSection.FAILED }?.let {
-            Text(text = problemText(it), style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary)
+        row.problem?.takeIf { RecordingRowTextPolicy.reasonOnOwnLine(row) }?.let {
+            Text(text = rowProblemText(row), style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary)
         }
         // DETAIL-REASON-END
         if (row.status == RecordingStatus.DONE && !fileAvailable) {
