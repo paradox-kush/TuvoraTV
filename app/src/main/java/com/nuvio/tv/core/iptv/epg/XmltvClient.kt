@@ -269,7 +269,8 @@ class XmltvClient @Inject constructor(
                 sources = attempted, sourcesFailed = failed, builtAtMs = System.currentTimeMillis(),
             )
         }
-        Log.i(TAG, "EPG for ${acc.name}: sources=$attempted failed=$failed stored $count programmes; lineup=${lineup.size} matched=${assignments.size} (id=$byId name=$byName)")
+        // pl= tells two playlists on one host apart (acc.name is host-only); a short hash, never the id (host + login).
+        Log.i(TAG, "EPG for ${acc.name} pl=${Integer.toHexString(acc.id.hashCode())}: sources=$attempted failed=$failed stored $count programmes; lineup=${lineup.size} matched=${assignments.size} (id=$byId name=$byName)")
         com.nuvio.tv.core.epg.EpgTelemetry.ingestFinished(
             source = com.nuvio.tv.core.epg.EpgTelemetry.Source.PLAYLIST_XMLTV,
             outcome = if (count > 0) com.nuvio.tv.core.epg.EpgTelemetry.Outcome.OK
