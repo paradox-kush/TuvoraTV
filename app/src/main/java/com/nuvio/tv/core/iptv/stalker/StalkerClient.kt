@@ -83,12 +83,15 @@ class StalkerClient @Inject constructor(
     private val seriesDialects = ConcurrentHashMap<String, StalkerSeriesDialect.Dialect>()
     private val ministraSeasons = ConcurrentHashMap<String, List<StalkerSeriesDialect.Node>>()
     private val ministraEpisodes = ConcurrentHashMap<String, List<MinistraEpisode>>()
+    // UX147/UX164: playlists whose series probe ended with positive evidence of "no series section".
+    private val seriesAbsentIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** Drop an account's cached lineup/rows (portal or MAC edited, playlist removed). */
     fun evictCaches(accountId: String) {
         epgUnsupported.remove(accountId)
         seasonCache.keys.removeAll { it.startsWith("$accountId:") }
         seriesDialects.remove(accountId)
+        seriesAbsentIds.remove(accountId)
         ministraSeasons.keys.removeAll { it.startsWith("$accountId:") }
         ministraEpisodes.keys.removeAll { it.startsWith("$accountId:") }
         rowCache.keys.removeAll { it.startsWith("$accountId:") }
@@ -154,22 +157,41 @@ class StalkerClient @Inject constructor(
         val xc = categories(acc, "series", "get_categories")
         if (xc.getOrNull()?.isNotEmpty() == true) {
             seriesDialects[acc.id] = StalkerSeriesDialect.Dialect.XC
+            seriesAbsentIds.remove(acc.id)
             return xc
         }
         val failure = xc.exceptionOrNull()
         if (failure is kotlinx.coroutines.CancellationException) throw failure
+        val emptySection = (failure as? StalkerSessionUnavailableException)?.emptySection == true
         // An unavailable series module is capability evidence; a network/auth failure is not.
-        if (!StalkerSeriesDialect.allowsVodFallback(failure != null, (failure as? StalkerSessionUnavailableException)?.emptySection == true)) return xc
+        if (!StalkerSeriesDialect.allowsVodFallback(failure != null, emptySection)) return xc
         val vod = categories(acc, "vod", "get_categories")
-        return when (StalkerSeriesDialect.decide(false, vod.getOrNull()?.isNotEmpty() == true)) {
-            StalkerSeriesDialect.Dialect.MINISTRA -> {
-                Log.i(TAG, "stalker: no type=series module — using the Ministra vod series tree")
-                seriesDialects[acc.id] = StalkerSeriesDialect.Dialect.MINISTRA
-                vod
-            }
-            else -> xc
+        val ministra = StalkerSeriesDialect.decide(false, vod.getOrNull()?.isNotEmpty() == true) ==
+            StalkerSeriesDialect.Dialect.MINISTRA
+        // UX147: "no series" is only claimed on positive evidence (see StalkerCapabilities); a failed vod
+        // probe proves nothing, and unknown keeps the Series tab.
+        val absent = vod.isSuccess && StalkerCapabilities.seriesAbsent(
+            modulesSeriesDisabled = runCatching { sessions.sessionFor(acc).seriesModuleDisabled }.getOrNull(),
+            xcEmptySection = emptySection,
+            xcAnsweredEmpty = failure == null,
+            xcFailedOtherwise = false,
+            vodFallbackHasSeries = ministra,
+        )
+        if (absent) seriesAbsentIds += acc.id else seriesAbsentIds -= acc.id
+        return if (ministra) {
+            Log.i(TAG, "stalker: no type=series module — using the Ministra vod series tree")
+            seriesDialects[acc.id] = StalkerSeriesDialect.Dialect.MINISTRA
+            vod
+        } else {
+            xc
         }
     }
+
+    /** True once this session's series probe positively found the portal has no series section (UX147). */
+    fun seriesAbsent(acc: XtreamAccount): Boolean = acc.id in seriesAbsentIds
+
+    /** F9: a refreshed playlist re-asks — forget the verdict so the Series tab is judged again. */
+    fun forgetSeriesVerdict(accountId: String) { seriesAbsentIds.remove(accountId) }
 
     /** The portal's series dialect, learned once per session through [seriesCategories]. */
     private suspend fun seriesDialect(acc: XtreamAccount): StalkerSeriesDialect.Dialect =
@@ -182,7 +204,9 @@ class StalkerClient @Inject constructor(
         // No lineup = the portal could not be read (nothing stored, nothing fetched). That is a FAILURE the
         // page shows with Retry — it used to read as "this category has no channels" and the row vanished.
         if (!ensureLineup(acc)) throw StalkerLineupUnavailableException()
-        contentDb.channelsFor(acc.id, categoryId).map { r ->
+        // B179: divider rows stay stored (saved ids resolve) but are not listed.
+        com.nuvio.tv.core.iptv.ChannelSeparatorPolicy.withoutSeparators(
+            contentDb.channelsFor(acc.id, categoryId).map { r ->
             XtreamChannel(
                 streamId = r.sid,
                 name = r.name,
@@ -190,9 +214,12 @@ class StalkerClient @Inject constructor(
                 epgChannelId = r.tvgId,
                 categoryId = r.categoryId,
                 hasArchive = r.hasArchive,
+                catchUpDays = r.archiveDays,
                 streamUrl = ""   // create_link resolves the real single-use URL at play time
             )
-        }
+        },
+            { it.name }, { it.epgChannelId }, { it.hasArchive },
+        )
     }
 
     /** Windowed lineup read for the hub (item 5). Ensures the mirror, then a paged indexed read. */
@@ -206,6 +233,7 @@ class StalkerClient @Inject constructor(
                 epgChannelId = r.tvgId,
                 categoryId = r.categoryId,
                 hasArchive = r.hasArchive,
+                catchUpDays = r.archiveDays,
                 streamUrl = ""   // create_link resolves the real single-use URL at play time
             )
         }
@@ -259,6 +287,7 @@ class StalkerClient @Inject constructor(
                     url = "",
                     cmd = item.str("cmd"),
                     hasArchive = (item.int("tv_archive") ?: 0) > 0,
+                    archiveDays = StalkerArchiveDepth.days(item.int("tv_archive"), item.int("tv_archive_duration")),
                     // Stored as plain booleans (false = flag absent OR panel said false — the
                     // column cannot tell them apart), so reads treat only TRUE as evidence.
                     useHttpTmpLink = item.flag("use_http_tmp_link") ?: false,
@@ -282,6 +311,7 @@ class StalkerClient @Inject constructor(
         epgChannelId = item.str("xmltv_id")?.takeIf { it.isNotBlank() },
         categoryId = item.str("tv_genre_id") ?: item.str("genre_id"),
         hasArchive = (item.int("tv_archive") ?: 0) > 0,
+        catchUpDays = StalkerArchiveDepth.days(item.int("tv_archive"), item.int("tv_archive_duration")),
         // Placeholder: create_link resolves the real single-use URL at play time.
         streamUrl = ""
     )
@@ -465,6 +495,8 @@ class StalkerClient @Inject constructor(
                     startMs = it.startMs,
                     endMs = it.endMs,
                     nowPlaying = now in it.startMs until it.endMs,
+                    hasArchive = it.hasArchive.takeIf { marked -> marked },
+                    programmeId = it.programmeId,
                 )
             }
         }
@@ -512,14 +544,16 @@ class StalkerClient @Inject constructor(
             for (attempt in 1..2) {
                 val result = runCatching {
                     contentDb.replaceEpg(acc.id, now) { writer ->
-                        val parser = StalkerEpgStreamParser { chId, title, descr, startMs, endMs ->
+                        val parser = StalkerEpgStreamParser { row ->
                             writer.add(
                                 com.nuvio.tv.core.iptv.content.EpgProgramme(
-                                    channelId = chId.toString(),
-                                    startMs = startMs,
-                                    endMs = endMs,
-                                    title = title,
-                                    desc = descr.takeIf { it.isNotBlank() },
+                                    channelId = row.channelId.toString(),
+                                    startMs = row.startMs,
+                                    endMs = row.endMs,
+                                    title = row.title,
+                                    desc = row.descr.takeIf { it.isNotBlank() },
+                                    hasArchive = row.hasArchive,
+                                    programmeId = row.programmeId,
                                 )
                             )
                         }
@@ -865,17 +899,11 @@ class StalkerClient @Inject constructor(
         session: StalkerSession,
         type: String,
         cmd: String,
-        extraParams: Map<String, String> = emptyMap()
+        extraParams: Map<String, String> = emptyMap(),
+        /** Told the portal's refusal when it gave one (session cap, nothing to play, link fault). */
+        onRefusal: ((com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError) -> Unit)? = null,
     ): String? {
-        val params = buildMap {
-            put("type", type)
-            put("action", "create_link")
-            put("cmd", cmd)
-            put("forced_storage", "undefined")
-            put("disable_ad", "0")
-            put("JsHttpRequest", "1-xml")   // harmless dup; StalkerSession adds it too
-            putAll(extraParams)
-        }.filterKeys { it != "JsHttpRequest" }   // let the session own JsHttpRequest
+        val params = StalkerArchiveLink.createLinkParams(type, cmd, extraParams)
         val js = try { session.request(params) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (error: Exception) {
             val status = (error as? com.nuvio.tv.core.iptv.HttpStatusException)?.status
             Log.w(TAG, "create_link failed: ${error::class.simpleName}, HTTP=$status")
@@ -885,19 +913,55 @@ class StalkerClient @Inject constructor(
         // The portal's two documented refusals. `{error:'limit'}` is the account's session cap —
         // surfaced as its own message because "couldn't open this channel" sends the viewer to
         // Discord blaming the app when the fix is to close the other device.
-        when (com.nuvio.tv.core.iptv.CatchUpFailure.stalkerLinkErrorOf(obj.toString())) {
+        val refusal = com.nuvio.tv.core.iptv.CatchUpFailure.stalkerLinkErrorOf(obj.toString())
+        if (refusal != com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.NONE) onRefusal?.invoke(refusal)
+        when (refusal) {
             com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.SESSION_LIMIT -> {
                 lastResolveErrorInternal = SESSION_LIMIT_MESSAGE
                 return null
             }
             com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.LINK_FAULT -> {
-                lastResolveErrorInternal = LINK_FAULT_MESSAGE
+                lastResolveErrorInternal =
+                    if (type == "tv_archive") StalkerArchiveLink.ARCHIVE_LINK_FAULT_MESSAGE else LINK_FAULT_MESSAGE
+                return null
+            }
+            com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.NOTHING_TO_PLAY -> {
+                lastResolveErrorInternal = StalkerArchiveLink.NOTHING_TO_PLAY_MESSAGE
                 return null
             }
             com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.NONE -> lastResolveErrorInternal = null
         }
         val rawCmd = obj.str("cmd") ?: return null
         return StalkerProtocol.extractStreamUrl(rawCmd)
+    }
+
+    /**
+     * The playback link of one archived programme, minted from the portal's own EPG [programmeId]
+     * (`type=tv_archive`). Null on any refusal, with [lastResolveError] naming it: the session cap,
+     * "nothing to play" (the portal has no recording) and a link fault read differently to the viewer.
+     * Like every create_link the result is single-use: never probe it.
+     */
+    suspend fun createArchiveLink(acc: XtreamAccount, programmeId: String): String? {
+        lastResolveErrorInternal = null
+        return createLink(
+            playbackSession(acc), "tv_archive", StalkerArchiveLink.cmd(programmeId),
+            extraParams = StalkerArchiveLink.ARCHIVE_EXTRA,
+        )
+    }
+
+    /**
+     * [createArchiveLink] with the portal's refusal kept as a TYPE instead of a message to be matched
+     * back: a fresh single-use mint for one archived programme. Never cached, never probed.
+     */
+    suspend fun mintArchiveLink(acc: XtreamAccount, programmeId: String): StalkerArchiveSource.Minted {
+        lastResolveErrorInternal = null
+        var refusal = com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.NONE
+        val url = createLink(
+            playbackSession(acc), "tv_archive", StalkerArchiveLink.cmd(programmeId),
+            extraParams = StalkerArchiveLink.ARCHIVE_EXTRA,
+            onRefusal = { refusal = it },
+        )
+        return if (url != null) StalkerArchiveSource.Minted.Link(url) else StalkerArchiveSource.Minted.Refused(refusal)
     }
 
     // --- cmd lookup (browse-time cmd needed for create_link) ------------------

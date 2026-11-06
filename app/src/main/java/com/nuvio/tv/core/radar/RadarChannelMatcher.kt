@@ -77,6 +77,8 @@ class RadarChannelMatcher @Inject constructor(
         val epgChannelId: String? = null,
         /** Channel offers catch-up (Xtream tv_archive) — enables Replay for past fixtures. */
         val hasArchive: Boolean = false,
+        /** An M3U playlist's own catch-up settings for this channel (null on Xtream/Stalker, or none). */
+        val m3uCatchUp: com.nuvio.tv.core.iptv.M3uCatchUpInfo? = null,
         val catalogRevision: String = "",
     )
 
@@ -332,6 +334,9 @@ class RadarChannelMatcher @Inject constructor(
         val programmeTitle: String,
         val programmeStartMs: Long,
         val programmeEndMs: Long,
+        /** An M3U channel's own live URL and catch-up settings: selects the playlist's walk over the Xtream dialects. */
+        val liveUrl: String? = null,
+        val m3uCatchUp: com.nuvio.tv.core.iptv.M3uCatchUpInfo? = null,
     )
 
     /**
@@ -344,10 +349,11 @@ class RadarChannelMatcher @Inject constructor(
         if (!match.channel.hasArchive || start > RadarTime.nowMs()) return null
         val account = accountStore.accounts.first().firstOrNull { it.id == match.channel.playlistId }
             ?: return null
-        // Xtream-with-credentials only, the same rule the guide's replays play by: a Stalker
-        // portal builds archive links server-side (none of the dialects apply) and an M3U playlist
-        // has no panel to ask — the coordinator is the one place that knows.
-        if (!catchUp.supports(account)) return null
+        // The same rule the guide's replays play by, and the coordinator is the one place that knows
+        // it: an Xtream panel with credentials, or an M3U channel whose playlist carries its own
+        // catch-up settings. A Stalker portal builds archive links from its own programme ids, which
+        // a Sports fixture does not have.
+        if (!catchUp.supports(account) && !catchUp.supports(account, match.channel.m3uCatchUp)) return null
         val programme = match.programme
         val replayStart = programme?.startMs?.takeIf { it > 0 } ?: (start - 15 * 60 * 1000L)
         val durationMin = (((programme?.endMs ?: 0L) - (programme?.startMs ?: 0L)) / 60_000L)
@@ -362,6 +368,8 @@ class RadarChannelMatcher @Inject constructor(
             programmeTitle = programme?.title ?: "Replay",
             programmeStartMs = replayStart,
             programmeEndMs = replayStart + durationMin * 60_000L,
+            liveUrl = match.channel.streamUrl.takeIf { it.isNotBlank() },
+            m3uCatchUp = match.channel.m3uCatchUp,
         )
     }
 
@@ -386,6 +394,9 @@ class RadarChannelMatcher @Inject constructor(
                 endMs = replay.programmeEndMs,
             ),
             nowMs = RadarTime.nowMs(),
+            // An M3U channel takes the playlist's own walk, exactly like the guide's replay.
+            liveUrl = replay.liveUrl,
+            m3uCatchUp = replay.m3uCatchUp,
         ) ?: return null
         registry.register(
             XtreamResolvedItem(
@@ -509,6 +520,7 @@ class RadarChannelMatcher @Inject constructor(
                             streamUrl = ch.streamUrl,
                             epgChannelId = ch.epgChannelId,
                             hasArchive = ch.hasArchive,
+                            m3uCatchUp = ch.m3uCatchUp,
                             catalogRevision = catalogKey,
                         )
                     )

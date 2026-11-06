@@ -291,7 +291,8 @@ class M3UClient @Inject constructor(
 
     override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = runCatching {
         ensureIngested(acc)
-        db.channelsFor(acc.id, categoryId).map { it.toChannel() }
+        // B179: divider rows stay stored (saved ids resolve) but are not listed.
+        ChannelSeparatorPolicy.withoutSeparators(db.channelsFor(acc.id, categoryId).map { it.toChannel() }, { it.name }, { it.epgChannelId }, { it.hasArchive })
     }
 
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = runCatching {
@@ -358,7 +359,8 @@ class M3UClient @Inject constructor(
 
     private fun ContentChannel.toChannel() = XtreamChannel(
         streamId = sid, name = name, logo = logo, epgChannelId = tvgId, categoryId = categoryId,
-        hasArchive = false, streamUrl = url
+        hasArchive = hasArchive || catchUp != null, catchUpDays = catchUp?.days ?: 0, streamUrl = url,
+        m3uCatchUp = catchUp,
     )
 
     private fun ContentVod.toMovie() = XtreamMovie(

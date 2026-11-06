@@ -93,6 +93,38 @@ class M3UFileIngestTest {
     }
 
     /**
+     * B179: a provider's divider row is STORED (a favourite saved against its id must still resolve) but the
+     * lineup the app lists, and the live count it stores, leave it out. Event slots (a prefix + decoration)
+     * are real channels and stay listed.
+     */
+    @Test
+    fun `divider rows are stored but not listed or counted`() = runTest {
+        val acc = fileAccount()
+        val lineup = """
+            #EXTM3U
+            #EXTINF:-1 group-title="BG",BG: ################ Bulgaria Channels
+            http://h/live/u/p/1.ts
+            #EXTINF:-1 group-title="BG",BG: Bnt 2
+            http://h/live/u/p/2.ts
+            #EXTINF:-1 group-title="BG",*** UK ***
+            http://h/live/u/p/3.ts
+            #EXTINF:-1 group-title="BG",PPV: ------
+            http://h/live/u/p/4.ts
+        """.trimIndent()
+        importSource(acc, lineup.toByteArray(Charsets.UTF_8))
+
+        client.ensureIngested(acc, force = true)
+
+        assertEquals("nothing deleted from storage", 4, db.channelsFor(acc.id, null).size)
+        assertEquals("the stored count is what the lists show", 2, db.liveCount(acc.id))
+        assertEquals(
+            "real channels and the event slot",
+            setOf("BG: Bnt 2", "PPV: ------"),
+            client.liveChannels(acc, null).getOrThrow().map { it.name }.toSet(),
+        )
+    }
+
+    /**
      * BoundedLoad self-heal: an IPTV page that stopped waiting on this import (its stall deadline passed)
      * learns the catalog landed from this event and re-shows — event-driven, never a poll.
      */

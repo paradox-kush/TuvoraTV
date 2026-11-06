@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.iptv
 
 import com.nuvio.tv.core.iptv.XtreamCatchUp.ProgrammeAction
+import com.nuvio.tv.core.iptv.XtreamProgram
 
 /**
  * What OK does on a programme cell.
@@ -32,6 +33,28 @@ internal object GuideCellIntent {
         ProgrammeAction.PLAY_LIVE -> Intent.PLAY_LIVE
         ProgrammeAction.START_OVER -> Intent.OPEN_SHEET
         ProgrammeAction.REPLAY -> Intent.REPLAY
+    }
+
+    /**
+     * OK on a programme that already aired, on a channel with nothing kept for it, used to do
+     * nothing at all. It now says so (the same notice a provider's refusal gives). The future and
+     * degenerate EPG rows stay quiet: there is no recording to miss.
+     */
+    fun explainsNoRecording(action: ProgrammeAction, programme: XtreamProgram, nowMs: Long): Boolean =
+        action == ProgrammeAction.NONE &&
+            programme.startMs > 0L && programme.endMs > programme.startMs && programme.endMs <= nowMs
+
+    /**
+     * The programme airing now whose cell would open the Start over sheet, so the channel menu
+     * (MENU / long OK on the channel row) can offer Start over without the viewer having to find
+     * the timeline first. Null when nothing is airing or the channel keeps no archive.
+     */
+    fun startOverCandidate(
+        programmes: List<XtreamProgram>,
+        nowMs: Long,
+        actionFor: (XtreamProgram) -> ProgrammeAction,
+    ): XtreamProgram? = programmes.firstOrNull {
+        nowMs >= it.startMs && nowMs < it.endMs && actionFor(it) == ProgrammeAction.START_OVER
     }
 
     /** Whether OK can activate playback; independent of inspection focus. */

@@ -214,7 +214,9 @@ class IptvIngressSelectionFactory internal constructor(
         if (!account.availableOnDevice) return rejected(IptvIngressSelectionFailure.ACCOUNT_DISABLED)
         val sourceType = account.providerSourceType()
             ?: return rejected(IptvIngressSelectionFailure.SOURCE_UNSUPPORTED)
-        if (requestedType == ContentType.CATCH_UP && sourceType != ProviderSourceType.XTREAM) {
+        // Xtream builds its replay from the panel, an M3U playlist from its own catch-up attributes; a Stalker
+        // archive link is minted server-side from a programme id this resolver does not have yet.
+        if (requestedType == ContentType.CATCH_UP && sourceType == ProviderSourceType.STALKER) {
             return rejected(IptvIngressSelectionFailure.CATCH_UP_SOURCE_UNSUPPORTED)
         }
         val accountType = if (requestedType == ContentType.VOD) {

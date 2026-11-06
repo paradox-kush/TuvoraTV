@@ -36,6 +36,23 @@ internal object GuideWindowRows {
     fun <T> pick(catchUpTable: List<T>, guideStore: List<T>): List<T>? =
         catchUpTable.ifEmpty { guideStore }.ifEmpty { null }
 
+    /**
+     * Whether rows follow the window from disk when focus settles (or guide data lands). A travelled
+     * window always does. The live window keeps its now/next first paint for panels, but a playlist
+     * whose history lives in its stored XMLTV ([historyFromStore], i.e. M3U) has no per-channel fetch
+     * to republish the window afterwards, so its live window must read the store too — otherwise only
+     * the airing and next cells ever show and the cells either side stay empty.
+     */
+    fun readsStoredWindowOnFocus(atLiveEdge: Boolean, historyFromStore: Boolean): Boolean =
+        !atLiveEdge || historyFromStore
+
+    /**
+     * Whether a playlist's past lives in a store already on disk, so the live window reads it too:
+     * an M3U playlist's XMLTV, and a Stalker portal's bulk `get_epg_info` (the only place its aired
+     * programmes and their archive ids exist - no per-channel history fetch republishes them).
+     */
+    fun historyFromStore(isM3u: Boolean, isStalker: Boolean): Boolean = isM3u || isStalker
+
     /** A now/next ladder result arriving for a row. */
     fun mergeNowNext(
         existing: GuideEpg?,

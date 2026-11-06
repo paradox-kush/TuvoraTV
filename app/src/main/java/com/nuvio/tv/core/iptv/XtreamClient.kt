@@ -264,7 +264,9 @@ data class XtreamChannel(
     val hasArchive: Boolean,
     /** Days of catch-up available; 0 = the panel did not say (see [XtreamCatchUp.isWithinWindow]). */
     val catchUpDays: Int = 0,
-    val streamUrl: String
+    val streamUrl: String,
+    /** An M3U playlist's own catch-up settings for this channel (null on Xtream/Stalker, or no catch-up). */
+    val m3uCatchUp: M3uCatchUpInfo? = null,
 )
 
 data class XtreamMovie(
@@ -320,7 +322,9 @@ data class XtreamProgram(
      * Per-programme `has_archive`: true/false = the panel spoke, null = it said nothing (every
      * get_short_epg row). Feeds [XtreamCatchUp.actionFor]'s positive override.
      */
-    val hasArchive: Boolean? = null
+    val hasArchive: Boolean? = null,
+    /** A Stalker portal's own EPG row id: the whole address of this programme's archive. Null elsewhere. */
+    val programmeId: String? = null,
 )
 
 /** Verify signals from get_vod_info during TMDB->stream matching. */
@@ -496,6 +500,9 @@ class XtreamClient @Inject constructor(
                 catchUpDays = (dto.tvArchiveDuration ?: 0).coerceAtLeast(0),
                 streamUrl = streamUrl(a, "live", id, "ts")
             )
+        }.let { rows ->
+            // B179: provider divider rows ("BG: #### Bulgaria Channels") are not streams.
+            ChannelSeparatorPolicy.withoutSeparators(rows, { it.name }, { it.epgChannelId }, { it.hasArchive })
         } }
     }
 

@@ -25,6 +25,8 @@ internal object GuideSyntheticRows {
             row.copy(
                 hasArchive = real.hasArchive,
                 catchUpDays = real.catchUpDays,
+                m3uCatchUp = real.m3uCatchUp,
+                replayNeedsProgrammeId = real.replayNeedsProgrammeId,
                 entityId = real.entityId,
                 // A favourite made on another device has no local ref and so no URL.
                 streamUrl = row.streamUrl.ifBlank { real.streamUrl },

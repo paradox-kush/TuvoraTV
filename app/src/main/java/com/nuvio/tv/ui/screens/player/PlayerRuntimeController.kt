@@ -189,6 +189,14 @@ class PlayerRuntimeController(
         programmeStartMs = navigationArgs.catchUpStartMs,
         programmeEndMs = navigationArgs.catchUpEndMs,
     )
+    /** Fork: the continuation port was asked once whether this replay follows its playhead. */
+    internal var catchUpContinuationChecked = false
+    /** Fork: this player already holds its replay's mint/continuation state (adopted once). */
+    internal var catchUpHeld = false
+    internal val catchUpEffects = com.nuvio.tv.core.lifecycle.EffectScope { Log.w(TAG, "catch-up teardown failed", it) }
+    internal var catchUpLookupJob: kotlinx.coroutines.Job? = null
+    /** Fork: the per-link first-frame deadline of a catch-up replay (see CatchUpStartupPolicy). */
+    internal var catchUpStartupJob: kotlinx.coroutines.Job? = null
     internal val initialStreamUrl: String = navigationArgs.streamUrl
     internal val title: String = navigationArgs.title
     internal val streamName: String? = navigationArgs.streamName
@@ -379,7 +387,8 @@ class PlayerRuntimeController(
         duration: Long = _playbackTimeline.value.duration,
         bufferedPosition: Long = _playbackTimeline.value.bufferedPosition,
         isLive: Boolean = _playbackTimeline.value.isLive,
-        watchedDurationMs: Long = _playbackTimeline.value.watchedDurationMs
+        watchedDurationMs: Long = _playbackTimeline.value.watchedDurationMs,
+        programmeLengthMs: Long? = _playbackTimeline.value.programmeLengthMs
     ) {
         if (_uiState.value.isLive != isLive) {
             _uiState.update { it.copy(isLive = isLive) }
@@ -390,7 +399,8 @@ class PlayerRuntimeController(
                 duration = duration.coerceAtLeast(0L),
                 bufferedPosition = bufferedPosition.coerceAtLeast(0L),
                 isLive = isLive,
-                watchedDurationMs = watchedDurationMs.coerceAtLeast(0L)
+                watchedDurationMs = watchedDurationMs.coerceAtLeast(0L),
+                programmeLengthMs = programmeLengthMs
             )
         }
     }
@@ -416,12 +426,15 @@ class PlayerRuntimeController(
             isPlaying = isPlaying,
             nowElapsedMs = android.os.SystemClock.elapsedRealtime()
         )
+        // A continuing catch-up replay shows the programme being watched, not the window it asked for.
+        val bar = catchUpReplay.barReading(currentPosition, duration, bufferedPosition, System.currentTimeMillis())
         updatePlaybackTimeline(
-            currentPosition = currentPosition,
-            duration = duration,
-            bufferedPosition = bufferedPosition,
+            currentPosition = bar.positionMs,
+            duration = bar.durationMs,
+            bufferedPosition = bar.bufferedMs,
             isLive = isLive,
-            watchedDurationMs = watched
+            watchedDurationMs = watched,
+            programmeLengthMs = bar.programmeLengthMs
         )
     }
 
@@ -486,6 +499,11 @@ class PlayerRuntimeController(
     internal var debridResolveJob: Job? = null
     internal var stillWatchingPromptJob: Job? = null
     internal var startupLoadingReportJob: Job? = null
+    // B214/B217: screen-level backstop so a VOD start always ends (PlayerLoadDeadlinePolicy).
+    internal val loadDeadlineClock = StartDeadlineClock()
+    internal var loadDeadlineFailed: Boolean = false
+    internal var loadDeadlineJob: Job? = null
+    internal var loadDeadlineFailedOffline: Boolean = false
     internal var sourceStreamsJob: Job? = null
     internal var sourceBadgeJob: Job? = null
     internal var sourceFilterFullList: List<com.nuvio.tv.domain.model.Stream> = emptyList()
@@ -549,6 +567,8 @@ class PlayerRuntimeController(
     internal var nextEpisodePreloadJob: Job? = null
     internal var nextEpisodePreloadTriggered: Boolean = false
     internal var userPausedManually = false
+    /** userPausedManually was set by the lifecycle pause (Home), not by the viewer: it must not park the load deadline. */
+    internal var userPauseSetByLifecycle = false
 
     internal var isInBackground: Boolean = false
     internal var pendingBackgroundCrashRecovery: Boolean = false
@@ -853,12 +873,14 @@ class PlayerRuntimeController(
     }
 
     fun onCleared() {
+        catchUpEffects.dispose()
         playerSession.close()
         stopServerPlayback()
         releasePlayer()
         stopTorrentStream()
         torrentService.shutdown()
         startupLoadingReportJob?.cancel()
+        loadDeadlineJob?.cancel()
         vodTelemetryJob?.cancel()
         mediaSourceFactory.shutdown()
         sourceChipErrorDismissJob?.cancel()

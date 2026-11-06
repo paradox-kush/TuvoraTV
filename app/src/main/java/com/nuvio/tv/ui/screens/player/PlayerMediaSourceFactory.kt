@@ -174,8 +174,12 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         mimeTypeOverride: String? = null,
         audioDelayUsProvider: (() -> Long)? = null,
         mediaMetadata: androidx.media3.common.MediaMetadata? = null,
-        cacheKey: String? = null
+        cacheKey: String? = null,
+        /** The link is spent by being opened (a Stalker archive): a rejected load fails at once, never retried. */
+        singleUseLink: Boolean = false,
     ): MediaSource {
+        val loadErrorHandlingPolicy: LoadErrorHandlingPolicy =
+            if (singleUseLink) SingleUseReplayLoadErrorHandlingPolicy else this.loadErrorHandlingPolicy
         val sanitizedHeaders = sanitizeHeaders(headers)
         val playbackDns = playbackDnsProvider()
         val resolvedMimeType = mimeTypeOverride ?: inferMimeType(
@@ -224,7 +228,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                 "safeNativeMb=${NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)} " +
                 "parallel=${if (useParallelConnections) parallelConnectionCount else 0} chunkKb=$parallelChunkSizeKb"
         )
-        val useChunkSessionSource = useParallelConnections && !isHls && !isDash
+        val useChunkSessionSource = SingleUseReplayPolicy.allowsParallelRange(useParallelConnections, singleUseLink) && !isHls && !isDash
         parallelStartupPrefetchUnlocked.set(!useChunkSessionSource)
         val networkProgressiveFactory: DataSource.Factory = if (useChunkSessionSource) {
             val sessionConnections = parallelConnectionCount
@@ -263,7 +267,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             }
 
         // 2. VOD disk cache (opt-in).
-        val useVodCache = ENABLE_VOD_CACHE && vodCacheEnabled && !isHls && !isDash && shouldUseVodCache(url)
+        val useVodCache = ENABLE_VOD_CACHE && SingleUseReplayPolicy.allowsVodCache(vodCacheEnabled, singleUseLink) && !isHls && !isDash && shouldUseVodCache(url)
         // A playback started inside the delay window would have its own data swept out from under it.
         pendingEvictionJob?.cancel()
         pendingEvictionJob = null
@@ -1167,6 +1171,18 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                 URLDecoder.decode(value.replace("+", "%2B"), Charsets.UTF_8.name())
             }.getOrNull()
     }
+}
+
+/**
+ * A single-use replay link (a Stalker archive) is spent by the first request: a rejected load must fail
+ * at once instead of being re-requested on the default backoff, which would burn a request (and a
+ * connection slot) per retry on a link that cannot play twice. [DefaultLoadErrorHandlingPolicy] alone
+ * still schedules retries, so the delay itself is withheld. The fresh link comes from the viewer's Retry.
+ * (The clean playback stack has its own twin; the two stacks stay isolated.)
+ */
+private object SingleUseReplayLoadErrorHandlingPolicy : DefaultLoadErrorHandlingPolicy(0) {
+    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long =
+        androidx.media3.common.C.TIME_UNSET
 }
 
 private class PlayerLoadErrorHandlingPolicy : DefaultLoadErrorHandlingPolicy(6) {

@@ -28,8 +28,58 @@ object XmltvIngestWindow {
     const val BACK_MS = 6L * 60 * 60 * 1000
     const val AHEAD_MS = 48L * 60 * 60 * 1000
 
+    /** The longest archive worth mirroring (the longest window seen in the field, see CatchUpEpgWindow). */
+    const val MAX_CATCHUP_BACK_MS = 7L * 24 * 60 * 60 * 1000
+
+    /**
+     * How far back to keep a channel that replays [catchUpDays] days (an M3U playlist's `catchup-days`):
+     * the whole archive, so the guide has something to replay, never more than [MAX_CATCHUP_BACK_MS] and
+     * never less than the default [BACK_MS]. Channels without an archive keep the default.
+     */
+    fun backMsForCatchUpDays(catchUpDays: Int): Long =
+        (catchUpDays.coerceAtLeast(0) * 24L * 60 * 60 * 1000).coerceIn(BACK_MS, MAX_CATCHUP_BACK_MS)
+
+    /**
+     * Per-guide-id back window for a playlist whose channels carry a catch-up depth. [assigned] are the
+     * matcher's (stream id, normalized guide id) pairs; [manual] are the user's hand-picked ones. A guide
+     * id shared by several channels keeps the longest depth. [catchUpDaysBySid] holds only channels that replay.
+     */
+    fun backMsByGuide(
+        assigned: List<Pair<Int, String>>,
+        manual: List<Pair<Int, String>>,
+        catchUpDaysBySid: Map<Int, Int>,
+    ): Map<String, Long> {
+        if (catchUpDaysBySid.isEmpty()) return emptyMap()
+        val out = HashMap<String, Long>()
+        for ((sid, guideId) in assigned + manual) {
+            val days = catchUpDaysBySid[sid] ?: continue
+            out.merge(guideId, backMsForCatchUpDays(days), ::maxOf)
+        }
+        return out
+    }
+
+    /** One lineup channel as far as the hand-pick mapping needs it. */
+    data class LineupRef(val name: String, val epgId: String?, val streamId: Int)
+
+    /**
+     * The user's hand-picked guide channels as (stream id, normalized guide id): [overrides] are the
+     * overlay's (entity id, guide id) pairs, resolved to a channel through the same identity key the
+     * overlay stored them under. A pick for a channel no longer in the [lineup] has nothing to widen.
+     */
+    fun manualPicks(
+        playlistId: String,
+        lineup: List<LineupRef>,
+        overrides: List<Pair<String, String>>,
+        normalize: (String) -> String,
+    ): List<Pair<Int, String>> {
+        val entityToSid = lineup.associate {
+            com.nuvio.tv.core.iptv.identity.IptvIdentity.entityId(playlistId, it.name, it.epgId) to it.streamId
+        }
+        return overrides.mapNotNull { (entity, guideId) -> entityToSid[entity]?.let { sid -> sid to normalize(guideId) } }
+    }
+
     /** Oldest instant worth keeping. */
-    fun windowStartMs(nowMs: Long): Long = nowMs - BACK_MS
+    fun windowStartMs(nowMs: Long, backMs: Long = BACK_MS): Long = nowMs - backMs
 
     /** Newest instant worth keeping. */
     fun windowEndMs(nowMs: Long): Long = nowMs + AHEAD_MS
@@ -42,9 +92,9 @@ object XmltvIngestWindow {
      * zero-length programme stored at epoch is returned by every window read that spans it, and a
      * feed with a broken date format produces thousands of them.
      */
-    fun keeps(programmeStartMs: Long, programmeEndMs: Long, nowMs: Long): Boolean {
+    fun keeps(programmeStartMs: Long, programmeEndMs: Long, nowMs: Long, backMs: Long = BACK_MS): Boolean {
         if (programmeEndMs <= programmeStartMs) return false
         if (programmeStartMs <= 0L) return false
-        return programmeEndMs > windowStartMs(nowMs) && programmeStartMs < windowEndMs(nowMs)
+        return programmeEndMs > windowStartMs(nowMs, backMs) && programmeStartMs < windowEndMs(nowMs)
     }
 }

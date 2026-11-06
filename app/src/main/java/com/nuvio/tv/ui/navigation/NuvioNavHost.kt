@@ -329,6 +329,9 @@ private fun PlaybackNavHost(
             }
 
             HomeScreen(
+                onNavigateToCalendar = {
+                    navController.navigate(Screen.Calendar.route) { launchSingleTop = true }
+                },
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
                     val heroBackdrop = HeroBackdropState.consumeAndClear()
                     navController.navigate(
@@ -1392,6 +1395,18 @@ private fun PlaybackNavHost(
                             streamDescription = info.item.name
                         )
                     )
+                }
+            )
+        }
+
+        composable(Screen.Calendar.route) {
+            com.nuvio.tv.ui.screens.calendar.CalendarScreen(
+                showBuiltInHeader = !hideBuiltInHeaders,
+                onOpenTitle = { contentId, type ->
+                    navController.navigate(Screen.Detail.createRoute(contentId, type))
+                },
+                onWatchGame = {
+                    navController.navigate(Screen.SportsHub.route) { launchSingleTop = true }
                 }
             )
         }

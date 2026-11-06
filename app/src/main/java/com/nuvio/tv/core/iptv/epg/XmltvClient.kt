@@ -269,7 +269,8 @@ class XmltvClient @Inject constructor(
                 sources = attempted, sourcesFailed = failed, builtAtMs = System.currentTimeMillis(),
             )
         }
-        Log.i(TAG, "EPG for ${acc.name}: sources=$attempted failed=$failed stored $count programmes; lineup=${lineup.size} matched=${assignments.size} (id=$byId name=$byName)")
+        // pl= tells two playlists on one host apart (acc.name is host-only); a short hash, never the id (host + login).
+        Log.i(TAG, "EPG for ${acc.name} pl=${Integer.toHexString(acc.id.hashCode())}: sources=$attempted failed=$failed stored $count programmes; lineup=${lineup.size} matched=${assignments.size} (id=$byId name=$byName)")
         com.nuvio.tv.core.epg.EpgTelemetry.ingestFinished(
             source = com.nuvio.tv.core.epg.EpgTelemetry.Source.PLAYLIST_XMLTV,
             outcome = if (count > 0) com.nuvio.tv.core.epg.EpgTelemetry.Outcome.OK
@@ -341,13 +342,29 @@ class XmltvClient @Inject constructor(
             val keep = result.assignments.mapTo(HashSet()) { it.guideId }
             guide.forEach { g -> normalizeChannelId(g.id).let { if (it in picked) keep.add(it) } }
             val nowMs = System.currentTimeMillis()
+            // M3U catch-up: a guide id matched to a channel that replays N days keeps N days of history.
+            val backByGuide: Map<String, Long> = if (acc.isXtream()) emptyMap() else {
+                // A channel the user gave a guide channel by hand is not among the matcher's
+                // assignments; without it the pick fell back to the 6 h default.
+                val manual = XmltvIngestWindow.manualPicks(
+                    playlistId = acc.id,
+                    lineup = lineup.map { XmltvIngestWindow.LineupRef(it.name, it.epgId, it.streamId) },
+                    overrides = overlay?.epgOverrideEntries(acc.id).orEmpty(),
+                    normalize = ::normalizeChannelId,
+                )
+                XmltvIngestWindow.backMsByGuide(
+                    assigned = result.assignments.map { it.streamId to it.guideId },
+                    manual = manual,
+                    catchUpDaysBySid = db.liveCatchUpDays(acc.id),
+                )
+            }
             file.bufferedReader().use { reader ->
                 val parser = android.util.Xml.newPullParser().apply {
                     setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
                     setInput(reader)
                 }
                 XmltvParser.parseGuide(parser, onChannel = { _, _ -> }, onChannelsDone = { keep }, onProgramme = { p ->
-                    if (XmltvIngestWindow.keeps(p.startMs, p.endMs, nowMs)) {
+                    if (XmltvIngestWindow.keeps(p.startMs, p.endMs, nowMs, backByGuide[normalizeChannelId(p.channelId)] ?: XmltvIngestWindow.BACK_MS)) {
                         emit(p.copy(channelId = EpgSourcePlan.storedKey(index, p.channelId)))
                     }
                 })

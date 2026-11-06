@@ -7,6 +7,7 @@ import com.nuvio.tv.R
 import com.nuvio.tv.core.iptv.BoundedLoad
 import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.IptvImportProgress
+import com.nuvio.tv.core.iptv.ChannelSeparatorPolicy
 import com.nuvio.tv.core.iptv.IptvLoadFailurePolicy
 import com.nuvio.tv.core.iptv.IptvPanelGuard
 import com.nuvio.tv.core.iptv.LoadOutcome
@@ -84,6 +85,10 @@ data class XtreamHubUiState(
     val rowLoads: Map<String, LoadStatus> = emptyMap(),
     val catalogueGeneration: Long = 0L,
     val error: String? = null,
+    /** UX164: the section whose portal said it has nothing there — shown plainly, with no Retry. */
+    val unavailableSection: XtreamSection? = null,
+    /** UX147: playlists whose portal positively has no series section; their Series tab is hidden. */
+    val seriesUnavailableIds: Set<String> = emptySet(),
     // The user's poster-size preference (Layout settings) — the hub's rails derive their card
     // size from the SAME source as the Modern home rows so the two surfaces always match.
     val posterCardWidthDp: Int = 126,
@@ -174,6 +179,8 @@ class XtreamHubViewModel @Inject constructor(
      * least-recently-loaded category drops and re-fetches if scrolled back to — a cheap
      * category call. (research/iptv-catalog-loading.md)
      */
+    /** Raw provider rows each loaded category's windows have covered — the paging offset (see [RawWindow]). */
+    private val rawOffsets = mutableMapOf<String, Int>()
     private val itemsCache = object : LinkedHashMap<String, List<XtreamHubItem>>(32, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<XtreamHubItem>>): Boolean =
             size > MAX_LOADED_CATEGORIES
@@ -272,14 +279,14 @@ class XtreamHubViewModel @Inject constructor(
         com.nuvio.tv.core.iptv.stalker.StalkerPlaybackTraffic.onProviderSwitched()
         posterEnricher.onProviderSwitched(accountId)
         val section = coerceSection(_uiState.value.section, _uiState.value.accounts.firstOrNull { it.id == accountId })
-        _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap()) }
+        _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap(), unavailableSection = null) }
         rememberSelection()
         loadCategories()
     }
 
     fun selectSection(section: XtreamSection) {
         if (section == _uiState.value.section) return
-        _uiState.update { it.copy(section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap()) }
+        _uiState.update { it.copy(section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap(), unavailableSection = null) }
         rememberSelection()
         loadCategories()
     }
@@ -316,14 +323,25 @@ class XtreamHubViewModel @Inject constructor(
     private fun onCatalogLanded(accountId: String) {
         if (_uiState.value.selectedAccountId == accountId) pendingHeals.addAll(_uiState.value.rowLoads.filterValues { it is LoadStatus.Failed }.keys)
         catalogEpochs[accountId] = catalogEpoch(accountId) + 1L
+        forgetSeriesVerdict(accountId)
         cacheCheckedAt[accountId] = System.currentTimeMillis()
         inFlightCategories.removeAll { it.startsWith("$accountId|") }
         categoriesCache.keys.removeAll { it.startsWith("$accountId|") }
         itemsCache.keys.removeAll { it.startsWith("$accountId|") }
+        rawOffsets.keys.removeAll { it.startsWith("$accountId|") }
         if (_uiState.value.selectedAccountId == accountId) {
             _uiState.update { it.copy(catalogueGeneration = it.catalogueGeneration + 1L, itemsByCategory = emptyMap(), rowLoads = emptyMap(), hasMoreByCategory = emptyMap()) }
             loadCategories()
         }
+    }
+
+    /** F9: a refreshed catalogue re-asks whether the portal has series, so a hidden Series tab can come back. */
+    private fun forgetSeriesVerdict(accountId: String) {
+        // Only a Stalker playlist has a series verdict (and only it needs the Stalker client).
+        if (_uiState.value.accounts.firstOrNull { it.id == accountId }?.sourceType == XtreamAccount.SOURCE_STALKER) {
+            clientFactory.stalker().forgetSeriesVerdict(accountId)
+        }
+        _uiState.update { it.copy(seriesUnavailableIds = it.seriesUnavailableIds - accountId) }
     }
 
     private fun healRows() {
@@ -335,11 +353,16 @@ class XtreamHubViewModel @Inject constructor(
     private fun loadCategories() {
         val acc = _uiState.value.selectedAccount ?: return
         val section = _uiState.value.section
+        // Every exit below (file missing, disabled type, cache hit, new load) starts from "no verdict": a
+        // "no series" card from another playlist or section must never outlive the thing it described.
+        if (_uiState.value.unavailableSection != null) _uiState.update { it.copy(unavailableSection = null) }
         if (com.nuvio.tv.core.iptv.IptvCatalogFreshness.stale(cacheCheckedAt[acc.id], acc.autoRefreshHours, System.currentTimeMillis())) {
             catalogEpochs[acc.id] = catalogEpoch(acc.id) + 1L
+            forgetSeriesVerdict(acc.id)
             inFlightCategories.removeAll { it.startsWith("${acc.id}|") }
             categoriesCache.keys.removeAll { it.startsWith("${acc.id}|") }
             itemsCache.keys.removeAll { it.startsWith("${acc.id}|") }
+            rawOffsets.keys.removeAll { it.startsWith("${acc.id}|") }
             cacheCheckedAt[acc.id] = System.currentTimeMillis()
         }
         // A file playlist synced from another device has no local copy (file contents don't
@@ -379,7 +402,7 @@ class XtreamHubViewModel @Inject constructor(
             }
             return
         }
-        _uiState.update { it.copy(categoriesLoad = BoundedLoad.begin(LoadSurface.HUB_CATEGORIES), error = null) }
+        _uiState.update { it.copy(categoriesLoad = BoundedLoad.begin(LoadSurface.HUB_CATEGORIES), error = null, unavailableSection = null) }
         val epoch = catalogEpoch(acc.id)
         viewModelScope.launch {
             // Xtream reads its section rows from the local catalog once it's built (P7, item 4) —
@@ -422,6 +445,13 @@ class XtreamHubViewModel @Inject constructor(
             }
             // A slow answer for a section the viewer already left must not paint over the new one.
             if (catalogEpoch(acc.id) != epoch || !isCurrent(acc.id, section)) return@launch
+            var seriesAbsent = false
+            if (section == XtreamSection.SERIES && acc.sourceType == XtreamAccount.SOURCE_STALKER) {
+                // UX147: the series probe has settled; a portal with positive "no series" evidence loses the tab.
+                val absent = clientFactory.stalker().seriesAbsent(acc)
+                seriesAbsent = absent
+                _uiState.update { it.copy(seriesUnavailableIds = if (absent) it.seriesUnavailableIds + acc.id else it.seriesUnavailableIds - acc.id) }
+            }
             val cats = outcome.valueOrNull()
             if (cats != null) {
                 categoriesCache[catKey] = cats
@@ -438,6 +468,8 @@ class XtreamHubViewModel @Inject constructor(
             val failure = IptvLoadFailurePolicy.classify(
                 (outcome as? LoadOutcome.Failed)?.error,
                 if (failedHost != null) IptvPanelGuard.panelOriginUrlOf(acc, failedHost) else IptvPanelGuard.panelOriginUrlOf(acc),
+                // "No series" only when the whole probe agreed (a failed follow-up vod probe is a plain failure).
+                forSeriesSection = section == XtreamSection.SERIES && seriesAbsent,
             )
             val text = when (failure.kind) {
                 IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER ->
@@ -446,6 +478,12 @@ class XtreamHubViewModel @Inject constructor(
                     failure.portalText ?: context.getString(R.string.iptv_hub_error_unreachable)
                 IptvLoadFailurePolicy.Kind.UNREACHABLE ->
                     context.getString(R.string.iptv_hub_error_unreachable)
+                IptvLoadFailurePolicy.Kind.SECTION_UNAVAILABLE -> ""
+            }
+            if (!IptvLoadFailurePolicy.offersRetry(failure.kind)) {
+                // UX164: the portal has no such section. A fact, not a failure: no Retry, no breadcrumb.
+                _uiState.update { it.copy(categoriesLoad = LoadStatus.Empty, error = null, unavailableSection = section) }
+                return@launch
             }
             _uiState.update { it.copy(categoriesLoad = outcome.status, error = "$text\n\n${failure.detail}") }
         }
@@ -533,22 +571,20 @@ class XtreamHubViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val existing = itemsCache[key].orEmpty()
-                val offset = existing.size
+                // Page on the RAW row count: rows hidden from the shown list (divider rows) still occupy
+                // provider offsets, so the shown count would drift below it and re-read the same rows.
+                val start = PagedState(existing, true, rawOffsets[key] ?: existing.size)
                 // Bounded like the row's first window; a stalled page just ends paging for now.
-                val (more, hasMore) = BoundedLoad.run(LoadSurface.HUB_ROW) {
-                    fetchWindow(acc, section, categoryId, offset)
-                }.valueOrNull() ?: return@launch
-                // Dedup + no-progress guard. The row triggers loadMore as focus nears its end, so a
-                // window that returns rows ALREADY loaded (a stale index, or a tied ORDER BY
-                // overlapping its pages) would append dupes, grow the row, re-trigger, and spin
-                // forever — the "category rotating on a loop" bug. Only NEW ids extend the row, and
-                // a window that adds nothing new ends paging.
+                // Dedup + no-progress guard live in advancePaged (the "category rotating on a loop" bug): only NEW
+                // ids extend the row, a window of only hidden rows keeps going, and a source that consumes nothing stops.
+                val next = advancePaged(start, id = { it.cardId }) { raw ->
+                    BoundedLoad.run(LoadSurface.HUB_ROW) { fetchWindow(acc, section, categoryId, raw) }.valueOrNull()
+                }
                 if (catalogEpoch(acc.id) != epoch) return@launch
-                val seen = existing.mapTo(HashSet(existing.size)) { it.cardId }
-                val fresh = more.filter { it.cardId !in seen }
-                val merged = existing + fresh
+                val merged = next.items
                 itemsCache[key] = merged
-                val stillMore = hasMore && fresh.isNotEmpty()
+                rawOffsets[key] = next.rawOffset
+                val stillMore = next.hasMore
                 if (_uiState.value.selectedAccountId == acc.id && _uiState.value.section == section) {
                     _uiState.update {
                         it.copy(
@@ -576,11 +612,16 @@ class XtreamHubViewModel @Inject constructor(
         categoryId: String,
         offset: Int,
         prefetch: Boolean = false,
-    ): Pair<List<XtreamHubItem>, Boolean> {
+    ): RawWindow<XtreamHubItem> {
         if (acc.isXtream() && matchIndex.builtAt(acc.id, section.matchKind) != null) {
             val client = clientFactory.clientFor(acc) as com.nuvio.tv.core.iptv.XtreamClient
             val rows = matchIndex.itemsFor(acc.id, section.matchKind, categoryId, offset, PAGE_SIZE + 1)
-            val page = rows.take(PAGE_SIZE)
+            // B179: hasMore is judged on the RAW window; divider rows are dropped from what is shown
+            // (the next window starts at the RAW rows consumed, see RawWindow, so hidden rows never shift it).
+            val page = rows.take(PAGE_SIZE).let { raw ->
+                if (section != XtreamSection.LIVE) raw
+                else ChannelSeparatorPolicy.withoutSeparators(raw, { it.name }, { it.epgId }, { it.hasArchive })
+            }
             // Panels that ship no icons in the bulk list (or rows indexed before artwork was
             // known) get filled lazily: ask get_vod_info per null row, in list order, while the
             // user is on this window. Results land in the DB + patch in via posterUpdates.
@@ -625,11 +666,11 @@ class XtreamHubViewModel @Inject constructor(
                     }
                 }
             }
-            return items to (rows.size > PAGE_SIZE)
+            return RawWindow(items, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size)
         }
         if (acc.sourceType == XtreamAccount.SOURCE_STALKER && section == XtreamSection.LIVE) {
             val rows = clientFactory.stalker().liveChannelsPage(acc, categoryId, offset, PAGE_SIZE + 1)
-            val page = rows.take(PAGE_SIZE)
+            val page = ChannelSeparatorPolicy.withoutSeparators(rows.take(PAGE_SIZE), { it.name }, { it.epgChannelId }, { it.hasArchive })
             val items = page.map { ch ->
                 val id = XtreamItemRegistry.liveId(acc.id, ch.streamId)
                 registry.register(
@@ -641,12 +682,12 @@ class XtreamHubViewModel @Inject constructor(
                 )
                 XtreamHubItem(id, ch.name, ch.logo, isLive = true, contentId = id, streamUrl = ch.streamUrl)
             }
-            return items to (rows.size > PAGE_SIZE)
+            return RawWindow(items, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size)
         }
         if (acc.isM3UBacked()) {
             return when (section) {
                 XtreamSection.LIVE -> contentDb.pageChannels(acc.id, categoryId, offset, PAGE_SIZE + 1).let { rows ->
-                    val page = rows.take(PAGE_SIZE)
+                    val page = ChannelSeparatorPolicy.withoutSeparators(rows.take(PAGE_SIZE), { it.name }, { it.tvgId }, { it.hasArchive })
                     page.map { r ->
                         val id = XtreamItemRegistry.liveId(acc.id, r.sid)
                         registry.register(
@@ -657,7 +698,7 @@ class XtreamHubViewModel @Inject constructor(
                             )
                         )
                         XtreamHubItem(id, r.name, r.logo, isLive = true, contentId = id, streamUrl = r.url)
-                    } to (rows.size > PAGE_SIZE)
+                    }.let { RawWindow(it, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size) }
                 }
                 XtreamSection.MOVIES -> contentDb.pageVod(acc.id, categoryId, offset, PAGE_SIZE + 1).let { rows ->
                     val page = rows.take(PAGE_SIZE)
@@ -670,7 +711,7 @@ class XtreamHubViewModel @Inject constructor(
                             )
                         )
                         XtreamHubItem(id, r.name, r.logo, isLive = false, contentId = id, streamUrl = null)
-                    } to (rows.size > PAGE_SIZE)
+                    }.let { RawWindow(it, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size) }
                 }
                 XtreamSection.SERIES -> contentDb.pageSeries(acc.id, categoryId, offset, PAGE_SIZE + 1).let { rows ->
                     val page = rows.take(PAGE_SIZE)
@@ -684,14 +725,14 @@ class XtreamHubViewModel @Inject constructor(
                             )
                         )
                         XtreamHubItem(id, r.name, r.logo, isLive = false, contentId = id, streamUrl = null, detailType = "series")
-                    } to (rows.size > PAGE_SIZE)
+                    }.let { RawWindow(it, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size) }
                 }
             }
         }
         // Fallbacks (Xtream before its index exists; Stalker VOD/series): the old full fetch,
         // once — bounded to one window for Xtream, see fetchCategoryItemsLegacy.
-        if (offset > 0) return emptyList<XtreamHubItem>() to false
-        return fetchCategoryItemsLegacy(acc, section, categoryId) to false
+        if (offset > 0) return RawWindow(emptyList(), false, 0)
+        return fetchCategoryItemsLegacy(acc, section, categoryId).let { RawWindow(it, false, it.size) }
     }
 
     /**
@@ -747,7 +788,7 @@ class XtreamHubViewModel @Inject constructor(
         }
         val outcome = BoundedLoad.run(
             surface = LoadSurface.HUB_ROW,
-            isEmpty = { it.first.isEmpty() },
+            isEmpty = { it.items.isEmpty() },
             report = mapOf("source_type" to acc.sourceType, "section" to section.name.lowercase()),
         ) { fetchWindow(acc, section, categoryId, offset = 0, prefetch = prefetch) }
         if (catalogEpoch(acc.id) != epoch) return
@@ -759,8 +800,10 @@ class XtreamHubViewModel @Inject constructor(
             }
             return
         }
-        val (items, hasMore) = window
+        val items = window.items
+        val hasMore = window.hasMore
         itemsCache[key] = items
+        rawOffsets[key] = window.consumed
         // Publish only while this account/section is still on screen: a prefetch that lands after
         // a switch would otherwise inject its items under a category id the new section may reuse.
         // Nothing is lost — the cache above serves them the moment the user comes back.

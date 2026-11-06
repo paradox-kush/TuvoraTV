@@ -8,7 +8,9 @@ import com.nuvio.tv.core.profile.ProtectedProfilePreferences
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
@@ -48,7 +50,8 @@ class DeviceSources @Inject constructor(
                     ByteArray(32).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it.toInt() and 255) }
                 }, now = { System.currentTimeMillis() }, platform = "tv", localOnly = account == null,
                 automaticSetupName = com.nuvio.tv.core.auth.currentDeviceClientMetadata(context).deviceName.take(120),
-                existingInstallation = identity.sourceSetupUpgradeEligible)
+                existingInstallation = identity.sourceSetupUpgradeEligible,
+                onRefused = ::logRefusal)
             key = next
         }
         return controller!!
@@ -80,11 +83,50 @@ class DeviceSources @Inject constructor(
                 it.sourceId == id && it.accountEnabled && engine.choice(owner.profile(),id)
             }
         }
-        fun guard(kind: String, ref: String) { if (!allows(kind,ref)) throw CancellationException("Source disabled on this device") }
+        /** Debug level: guards sit on hot paths (every addon request), so a refusal must not flood the log. */
+        internal fun logRefusal(kind: String, mode: String, scope: RefusalScope) { android.util.Log.d("DeviceSources", "source refused on this device: kind=$kind mode=$mode scope=$scope") }
+        private fun refuse(kind: String, ref: String?): Nothing {
+            val owner = instance
+            val mode = owner?.engine()?.state?.value?.mode ?: "unknown"
+            val scope = if (owner == null || ref == null) RefusalScope.DEVICE else owner.engine().refusalScope(owner.profile(), kind, ref)
+            logRefusal(kind, mode, scope)
+            throw SourceDisabledOnDeviceException(kind, mode, scope)
+        }
+        private suspend fun currentAccess() = currentCoroutineContext()[DeviceSourceAccessElement]?.access ?: DeviceSourceAccess.DISCOVERY
+        /** The wrong profile must never be read: wait (bounded) for the sign-in state, else refuse. */
+        private suspend fun authSettled(owner: DeviceSources): Boolean = awaitAuthSettled(owner.auth.get().authState)
+        private fun refuseSigningIn(owner: DeviceSources, kind: String): Nothing = owner.engine().refuse(kind, RefusalScope.SIGNING_IN)
+        fun guard(kind: String, ref: String) { if (!allows(kind,ref)) refuse(kind, ref) }
+        /** [guard] for suspend callers: honours [verifying] / [inspecting] for the current request. */
+        suspend fun checkAccess(kind: String, ref: String) {
+            val owner = instance ?: return
+            when (val access = currentAccess()) {
+                DeviceSourceAccess.INSPECT -> return
+                DeviceSourceAccess.DISCOVERY -> guard(kind, ref)
+                else -> {
+                    if (!authSettled(owner)) refuseSigningIn(owner, kind)
+                    if (!owner.engine().permits(access, owner.profile(), kind, ref)) refuse(kind, ref)
+                }
+            }
+        }
         suspend fun <T> guarded(kind: String, ref: String, block: suspend () -> T): T {
             val owner = instance ?: return block()
-            return owner.engine().guarded(owner.profile(),kind,ref,block)
+            val access = currentAccess()
+            if (access == DeviceSourceAccess.VERIFY && !authSettled(owner)) refuseSigningIn(owner, kind)
+            return owner.engine().guarded(owner.profile(),kind,ref,access,block)
         }
-        fun guardAddon(url: String) { if (!addonAllowed(url)) throw CancellationException("Source disabled on this device") }
+        /** The add/edit form's live check of a playlist: allowed before the device has a choice for it. */
+        suspend fun <T> verifying(block: suspend () -> T): T = withContext(DeviceSourceAccessElement(DeviceSourceAccess.VERIFY)) { block() }
+        /** A read-only account lookup the user opened (expiry, connections): allowed for a source turned off here. */
+        suspend fun <T> inspecting(block: suspend () -> T): T = withContext(DeviceSourceAccessElement(DeviceSourceAccess.INSPECT)) { block() }
+        fun guardAddon(url: String) { if (!addonAllowed(url)) refuse("addon", null) }
     }
 }
+
+/** How long a verify waits for sign-in to settle before it says "still signing in". */
+const val AUTH_SETTLE_TIMEOUT_MS = 5_000L
+
+/** True once [state] is no longer Loading, waiting at most [timeoutMs]. */
+suspend fun awaitAuthSettled(state: kotlinx.coroutines.flow.StateFlow<com.nuvio.tv.domain.model.AuthState>, timeoutMs: Long = AUTH_SETTLE_TIMEOUT_MS): Boolean =
+    state.value != com.nuvio.tv.domain.model.AuthState.Loading ||
+        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { state.first { it != com.nuvio.tv.domain.model.AuthState.Loading } } != null
