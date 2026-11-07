@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.gamedetail
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +16,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -30,10 +34,12 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -53,10 +59,18 @@ import com.nuvio.tv.core.sports.detail.screen.PrimaryAction
 import com.nuvio.tv.core.sports.detail.screen.WatchMode
 import com.nuvio.tv.core.sports.detail.screen.WatchStatus
 import com.nuvio.tv.core.sports.detail.screen.WatchUi
+import com.nuvio.tv.core.sports.detail.SideKey
+import com.nuvio.tv.core.sports.detail.screen.TvForm
+import com.nuvio.tv.core.sports.detail.screen.TvLeader
+import com.nuvio.tv.core.sports.detail.screen.TvLinescore
+import com.nuvio.tv.core.sports.detail.screen.TvPlay
+import com.nuvio.tv.core.sports.detail.screen.TvStat
+import com.nuvio.tv.ui.components.AutoResizeText
+import com.nuvio.tv.ui.theme.NuvioPrimitives
 import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.delay
 
-private val LiveRed = Color(0xFFE5484D)
+private val LiveRed = NuvioPrimitives.marigoldLive
 
 /**
  * TV game screen (research/mocks/sports-game-screen-design.html): two panes, nothing scrolls, so the header
@@ -119,7 +133,7 @@ fun GameDetailScreen(
     }
 
     Box(
-        Modifier.fillMaxSize().background(NuvioTheme.colors.Background).padding(start = 56.dp, end = 56.dp, top = 40.dp, bottom = 64.dp),
+        Modifier.fillMaxSize().background(NuvioTheme.colors.Background).padding(start = 48.dp, end = 40.dp, top = 28.dp, bottom = 40.dp),
     ) {
         when (val s = ui) {
             is GameDetailUiState.Loading, GameDetailUiState.NoData -> CenterMessage(
@@ -128,17 +142,17 @@ fun GameDetailScreen(
             is GameDetailUiState.Failed -> FailedPane(s.timedOut, requesters.getValue(FocusKey.RETRY), { onFocused(FocusKey.RETRY) }, viewModel::retry)
             is GameDetailUiState.Loaded -> {
                 val model = GameDetailTvModel.from(s.detail, RadarTime.nowMs())
-                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
-                    Column(Modifier.weight(1.5f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        HeaderBlock(model, s.stale)
-                        model.situation?.let { SituationLine(it) }
-                        model.homeWinPercent?.let { WinProbability(it, model.sides.getOrNull(0)?.tvName.orEmpty(), model.sides.getOrNull(1)?.tvName.orEmpty()) }
-                        model.linescore?.let { Linescore(it.columns, it.rows, model.sides) }
-                        Spacer(Modifier.weight(1f))
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Column(Modifier.weight(1.12f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ScoreboardCard(model, s.stale)
+                        if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
+                            KickoffCard(model, Modifier.weight(1f))
+                        } else {
+                            if (model.situation != null || model.homeWinPercent != null) SituationCard(model)
+                            model.linescore?.let { ByPeriodCard(it, Modifier.weight(1f)) } ?: Spacer(Modifier.weight(1f))
+                        }
                         SourceRow(
-                            watch = watch,
-                            requesters = requesters,
-                            onFocused = onFocused,
+                            watch = watch, requesters = requesters, onFocused = onFocused,
                             onPrimary = {
                                 when (watch.primary) {
                                     PrimaryAction.AddProvider -> onAddProvider()
@@ -149,7 +163,16 @@ fun GameDetailScreen(
                             onChannels = { viewModel.requestMatchSheet(); onOpenMatchSheet() },
                         )
                     }
-                    LatestPlays(model, Modifier.weight(1f).fillMaxHeight())
+                    Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
+                            model.form?.let { FormCard(it, model) }
+                            MatchInfoCard(model, Modifier.weight(1f))
+                        } else {
+                            if (model.leaders.isNotEmpty()) PerformersCard(model.leaders)
+                            if (model.stats.isNotEmpty()) StatsCard(model)
+                            PlaysCard(model, Modifier.weight(1f))
+                        }
+                    }
                 }
             }
         }
@@ -158,10 +181,29 @@ fun GameDetailScreen(
 
 private suspend fun withFrame() { androidx.compose.runtime.withFrameNanos { } }
 
+// ---------------------------------------------------------------------------------------------
+// 10-foot building blocks (sizes are for a 960 x 540 dp TV canvas)
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+private fun Card(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(NuvioTheme.radii.md)
+    Column(
+        modifier.fillMaxWidth().clip(shape).background(NuvioTheme.colors.BackgroundCard).border(1.dp, NuvioTheme.colors.Border, shape).padding(horizontal = 18.dp, vertical = 14.dp),
+        content = content,
+    )
+}
+
+@Composable
+private fun CardTitle(text: String) {
+    Text(text.uppercase(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp, color = NuvioTheme.colors.TextSecondary)
+    Spacer(Modifier.height(8.dp))
+}
+
 @Composable
 private fun CenterMessage(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(text, style = MaterialTheme.typography.titleMedium, color = NuvioTheme.colors.TextSecondary)
+        Text(text, fontSize = 22.sp, color = NuvioTheme.colors.TextSecondary)
     }
 }
 
@@ -170,7 +212,7 @@ private fun FailedPane(timedOut: Boolean, requester: FocusRequester, onFocused: 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             if (timedOut) "This game is taking too long to load." else "Couldn't load this game.",
-            style = MaterialTheme.typography.titleMedium, color = NuvioTheme.colors.TextPrimary,
+            fontSize = 24.sp, color = NuvioTheme.colors.TextPrimary,
         )
         Spacer(Modifier.height(20.dp))
         TvButton("Retry", primary = true, requester = requester, onFocused = onFocused, onClick = onRetry)
@@ -178,87 +220,272 @@ private fun FailedPane(timedOut: Boolean, requester: FocusRequester, onFocused: 
 }
 
 @Composable
-private fun HeaderBlock(model: GameDetailTvModel, stale: Boolean) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        model.subtitle?.let {
-            Text(it, style = MaterialTheme.typography.labelLarge, color = NuvioTheme.colors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+private fun Badge(url: String?, name: String, size: androidx.compose.ui.unit.Dp) {
+    if (!url.isNullOrBlank()) {
+        AsyncImage(model = url, contentDescription = null, modifier = Modifier.size(size))
+    } else {
+        Box(Modifier.size(size).clip(CircleShape).background(NuvioTheme.colors.BackgroundElevated), contentAlignment = Alignment.Center) {
+            Text(name.take(2).uppercase(), fontSize = (size.value * 0.36f).sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextSecondary)
         }
-        if (model.sides.size == 2) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                SideBlock(model.sides[0], Modifier.weight(1f))
-                Column(Modifier.width(180.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (model.isLive) LivePill()
-                    model.liveLine?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = NuvioTheme.colors.TextPrimary, textAlign = TextAlign.Center) }
-                }
-                SideBlock(model.sides[1], Modifier.weight(1f))
-            }
-        } else {
-            Text(model.title, style = MaterialTheme.typography.headlineMedium, color = NuvioTheme.colors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            model.liveLine?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = NuvioTheme.colors.TextSecondary) }
-        }
-        val note = when {
-            stale -> "Showing the last update — retrying"
-            else -> model.updatedLabel
-        }
-        note?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.TextSecondary) }
     }
 }
 
 @Composable
-private fun SideBlock(side: Side, modifier: Modifier) {
-    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        if (!side.badgeUrl.isNullOrBlank()) {
-            AsyncImage(model = side.badgeUrl, contentDescription = null, modifier = Modifier.size(56.dp).clip(CircleShape))
-        }
-        Column(Modifier.weight(1f)) {
-            Text(side.tvName, style = MaterialTheme.typography.titleLarge, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
-            side.record?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.TextSecondary) }
-        }
-        side.score?.let { Text(it, style = MaterialTheme.typography.displaySmall, color = NuvioTheme.colors.TextPrimary, fontWeight = FontWeight.Bold) }
-    }
-}
-
-@Composable
-private fun LivePill() {
+private fun StatePill(model: GameDetailTvModel) {
+    val pill = model.pill ?: return
+    val live = model.isLive
     Text(
-        "LIVE", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
-        modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(LiveRed).padding(horizontal = 8.dp, vertical = 2.dp),
+        pill, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp,
+        color = if (live) Color.White else NuvioTheme.colors.TextPrimary,
+        modifier = Modifier.clip(RoundedCornerShape(6.dp))
+            .background(if (live) LiveRed else NuvioTheme.colors.BackgroundElevated)
+            .padding(horizontal = 12.dp, vertical = 5.dp),
     )
 }
 
 @Composable
-private fun SituationLine(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium, color = NuvioTheme.colors.FocusRing, maxLines = 1, overflow = TextOverflow.Ellipsis)
+private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean) {
+    Card {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                model.subtitle.orEmpty().uppercase(), fontSize = 14.sp, letterSpacing = 1.sp, color = NuvioTheme.colors.TextSecondary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
+            val note = if (stale) "Showing the last update" else model.updatedLabel
+            note?.let { Text(it, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary); Spacer(Modifier.width(12.dp)) }
+            StatePill(model)
+        }
+        Spacer(Modifier.height(10.dp))
+        if (model.sides.size == 2) {
+            val final = model.state == com.nuvio.tv.core.sports.detail.GameState.FINAL
+            val a = model.sides[0].score?.toIntOrNull(); val b = model.sides[1].score?.toIntOrNull()
+            TeamRow(model.sides[0], dim = final && a != null && b != null && a < b)
+            Spacer(Modifier.height(8.dp))
+            TeamRow(model.sides[1], dim = final && a != null && b != null && b < a)
+        } else {
+            Text(model.title, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
+            model.liveLine?.let { Text(it, fontSize = 20.sp, color = NuvioTheme.colors.TextSecondary) }
+        }
+    }
 }
 
 @Composable
-private fun WinProbability(homePercent: Int, home: String, away: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(Modifier.fillMaxWidth()) {
-            Text("$home $homePercent%", style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.weight(1f))
-            Text("${100 - homePercent}% $away", style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.TextSecondary)
+private fun TeamRow(side: Side, dim: Boolean) {
+    Row(Modifier.fillMaxWidth().height(72.dp), verticalAlignment = Alignment.CenterVertically) {
+        Badge(side.badgeUrl, side.name, 56.dp)
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+            // Long names shrink to fit (never "Wa…"); the record sits under in a legible size.
+            AutoResizeText(
+                text = side.name, color = NuvioTheme.colors.TextPrimary,
+                style = androidx.compose.ui.text.TextStyle(fontSize = 28.sp, fontWeight = FontWeight.SemiBold), minFontSize = 16.sp,
+            )
+            side.record?.let { Text(it, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary) }
         }
+        side.score?.let {
+            Text(
+                it, fontSize = 64.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End,
+                color = if (dim) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
+                modifier = Modifier.width(110.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SituationCard(model: GameDetailTvModel) {
+    Card {
+        model.situation?.let {
+            Text(it, fontSize = 24.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
+            if (model.homeWinPercent != null) Spacer(Modifier.height(10.dp))
+        }
+        model.homeWinPercent?.let { pct ->
+            if (model.situation == null) CardTitle("Win probability")
+            val home = model.sides.getOrNull(0)?.tvName.orEmpty(); val away = model.sides.getOrNull(1)?.tvName.orEmpty()
+            Row(Modifier.fillMaxWidth()) {
+                Text("$home $pct%", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.Secondary, modifier = Modifier.weight(1f))
+                Text("${100 - pct}% $away", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.Info)
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(NuvioTheme.colors.Border)) {
+                if (pct > 0) Box(Modifier.weight(pct.toFloat()).fillMaxHeight().background(NuvioTheme.colors.Secondary))
+                if (pct < 100) Box(Modifier.weight((100 - pct).toFloat()).fillMaxHeight().background(NuvioTheme.colors.Info))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ByPeriodCard(t: TvLinescore, modifier: Modifier) {
+    val title = when {
+        t.columns.firstOrNull()?.startsWith("Q") == true -> "By quarter"
+        t.columns.firstOrNull()?.startsWith("P") == true -> "By period"
+        t.columns.firstOrNull()?.all { it.isDigit() } == true -> "By inning"
+        else -> "Score"
+    }
+    Card(modifier) {
+        CardTitle(title)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.SpaceEvenly) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.width(150.dp))
+                t.columns.forEachIndexed { i, c -> PeriodCell(c, header = true, current = i == t.currentIndex, strong = false) }
+                t.totalLabel?.let { Text(it, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextSecondary, textAlign = TextAlign.Center, modifier = Modifier.width(64.dp)) }
+            }
+            t.rows.forEach { r ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.width(150.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Badge(r.badgeUrl, r.label, 30.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text(r.label, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 1)
+                    }
+                    r.cells.forEachIndexed { i, c -> PeriodCell(c, header = false, current = i == t.currentIndex, strong = false) }
+                    r.total?.let {
+                        Text(
+                            it, fontSize = if (r.leading) 34.sp else 30.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                            color = if (r.leading) NuvioTheme.colors.Secondary else NuvioTheme.colors.TextPrimary, modifier = Modifier.width(64.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.PeriodCell(text: String, header: Boolean, current: Boolean, strong: Boolean) {
+    Box(
+        Modifier.weight(1f).padding(horizontal = 3.dp).clip(RoundedCornerShape(6.dp))
+            .background(if (current) NuvioTheme.colors.Secondary.copy(alpha = 0.18f) else Color.Transparent).padding(vertical = 3.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text, fontSize = if (header) 16.sp else 24.sp, fontWeight = if (header || current || strong) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center,
+            color = when { current -> NuvioTheme.colors.Secondary; header -> NuvioTheme.colors.TextSecondary; else -> NuvioTheme.colors.TextPrimary },
+        )
+    }
+}
+
+@Composable
+private fun KickoffCard(model: GameDetailTvModel, modifier: Modifier) {
+    Card(modifier) {
+        CardTitle("Kickoff")
+        Spacer(Modifier.weight(1f))
+        Text(model.kickoffLabel ?: "Time to be confirmed", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary)
+        model.venue?.let { Spacer(Modifier.height(8.dp)); Text(it, fontSize = 22.sp, color = NuvioTheme.colors.TextSecondary) }
+        Spacer(Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun MatchInfoCard(model: GameDetailTvModel, modifier: Modifier) {
+    Card(modifier) {
+        CardTitle("Match info")
+        listOfNotNull(model.subtitle, model.venue).forEach {
+            Text(it, fontSize = 20.sp, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.padding(bottom = 8.dp))
+        }
+        if (model.form == null) Text("Form and lineups appear closer to kickoff.", fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary)
+    }
+}
+
+@Composable
+private fun FormCard(form: TvForm, model: GameDetailTvModel) {
+    Card {
+        CardTitle("Form · last 5")
+        listOf(form.home to model.sides.getOrNull(0), form.away to model.sides.getOrNull(1)).forEach { (results, side) ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(side?.tvName.orEmpty(), fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.weight(1f))
+                results.forEach { r ->
+                    val c = when (r) { "W" -> NuvioTheme.colors.Success; "L" -> NuvioTheme.colors.Error; else -> NuvioTheme.colors.TextSecondary }
+                    Text(
+                        r, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(start = 6.dp).size(30.dp).clip(RoundedCornerShape(6.dp)).background(c.copy(alpha = 0.85f)).padding(top = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PerformersCard(items: List<TvLeader>) {
+    Card {
+        CardTitle("Top performers")
+        items.forEach { l ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(l.category, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(112.dp), maxLines = 1)
+                Text(l.athlete, fontSize = 19.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.weight(1f), maxLines = 2)
+                l.tag?.let { TagChip(it, l.side); Spacer(Modifier.width(10.dp)) }
+                Text(l.value, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatsCard(model: GameDetailTvModel) {
+    Card {
+        CardTitle("Team stats")
+        model.stats.forEach { st -> StatRowView(st) }
+    }
+}
+
+@Composable
+private fun StatRowView(st: TvStat) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(st.home, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.width(72.dp))
+            Text(st.label, fontSize = 15.sp, color = NuvioTheme.colors.TextSecondary, textAlign = TextAlign.Center, modifier = Modifier.weight(1f), maxLines = 1)
+            Text(st.away, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, textAlign = TextAlign.End, modifier = Modifier.width(72.dp))
+        }
+        Spacer(Modifier.height(4.dp))
         Row(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(NuvioTheme.colors.Border)) {
-            if (homePercent > 0) Box(Modifier.weight(homePercent.toFloat()).fillMaxHeight().background(NuvioTheme.colors.FocusRing))
-            if (homePercent < 100) Box(Modifier.weight((100 - homePercent).toFloat()).fillMaxHeight())
+            val f = st.homeFraction.coerceIn(0.02f, 0.98f)
+            Box(Modifier.weight(f).fillMaxHeight().background(NuvioTheme.colors.Secondary))
+            Box(Modifier.weight(1f - f).fillMaxHeight().background(NuvioTheme.colors.Info))
         }
     }
 }
 
 @Composable
-private fun Linescore(columns: List<String>, rows: List<List<String>>, sides: List<Side>) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(NuvioTheme.colors.BackgroundElevated).padding(horizontal = 16.dp, vertical = 10.dp)) {
-        LineRow("", columns, header = true)
-        rows.forEachIndexed { i, r -> LineRow(sides.getOrNull(i)?.tvName.orEmpty(), r, header = false) }
+private fun TagChip(text: String, side: SideKey?) {
+    val c = if (side == SideKey.AWAY) NuvioTheme.colors.Info else NuvioTheme.colors.Secondary
+    Text(
+        text, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = c, maxLines = 1,
+        modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(c.copy(alpha = 0.2f)).padding(horizontal = 8.dp, vertical = 2.dp),
+    )
+}
+
+@Composable
+private fun PlaysCard(model: GameDetailTvModel, modifier: Modifier) {
+    Card(modifier) {
+        CardTitle(if (model.isLive) "Latest plays" else "Scoring & plays")
+        if (model.latestPlays.isEmpty()) {
+            Text("No plays yet", fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary)
+        } else {
+            // Focusable rows: D-pad up/down walks (and scrolls) the list when it is longer than the card.
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(model.latestPlays, key = { "${it.time}|${it.text}" }) { PlayRow(it) }
+            }
+        }
     }
 }
 
 @Composable
-private fun LineRow(label: String, cells: List<String>, header: Boolean) {
-    val color = if (header) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary
-    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Text(label, color = color, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(110.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        cells.forEach { Text(it, color = color, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, modifier = Modifier.weight(1f)) }
+private fun PlayRow(p: TvPlay) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(8.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape)
+            .background(if (focused) NuvioTheme.colors.FocusBackground else Color.Transparent)
+            .border(if (focused) 2.dp else 0.dp, if (focused) NuvioTheme.colors.FocusRing else Color.Transparent, shape)
+            .onFocusChanged { focused = it.isFocused }.focusable()
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(p.time, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(64.dp))
+        Box(Modifier.padding(top = 8.dp, end = 8.dp).size(10.dp).clip(CircleShape).background(if (p.scoring) NuvioTheme.colors.Secondary else Color.Transparent))
+        p.tag?.let { Box(Modifier.padding(end = 8.dp)) { TagChip(it, p.side) } }
+        Text(p.text, fontSize = 18.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 3, modifier = Modifier.weight(1f))
     }
 }
 
@@ -270,9 +497,8 @@ private fun SourceRow(
     onPrimary: () -> Unit,
     onChannels: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(watchStatusLine(watch), style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+    Card {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             when (val p = watch.primary) {
                 is PrimaryAction.Play -> TvButton("▶  Play ${p.channel.name}", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
                 is PrimaryAction.Switch -> TvButton("⇄  Switch to ${p.channel.name}", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
@@ -286,6 +512,10 @@ private fun SourceRow(
                     false, requesters.getValue(FocusKey.CHANNELS), { onFocused(FocusKey.CHANNELS) }, onChannels,
                 )
             }
+            Text(
+                watchStatusLine(watch), fontSize = 17.sp, color = NuvioTheme.colors.TextSecondary,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -299,49 +529,37 @@ private fun watchStatusLine(w: WatchUi): String = when (w.status) {
     WatchStatus.NO_PROVIDER -> "Add an IPTV playlist to watch this game"
 }
 
-@Composable
-private fun LatestPlays(model: GameDetailTvModel, modifier: Modifier) {
-    Column(
-        modifier.clip(RoundedCornerShape(10.dp)).background(NuvioTheme.colors.BackgroundElevated).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Text("LATEST PLAYS", style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.TextSecondary)
-        if (model.latestPlays.isEmpty()) {
-            Text("No plays yet", style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary)
-        }
-        model.latestPlays.forEach { p ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(p.time, style = MaterialTheme.typography.labelLarge, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(52.dp))
-                Text(
-                    listOfNotNull(p.tag, p.text).joinToString(" · "),
-                    style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-}
-
-/** Focus = FocusBackground fill + 2dp FocusRing border (the Sports cards' convention), never a bare colour shift. */
+/**
+ * The app's TV focus vocabulary: theme focus ring + scale ([NuvioTheme.focus]) + a brightened fill. The primary action
+ * is the brand accent (Secondary) with its own on-colour text, the secondary one an elevated surface.
+ */
 @Composable
 private fun TvButton(label: String, primary: Boolean, requester: FocusRequester, onFocused: () -> Unit, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) NuvioTheme.focus.scale else 1f, label = "gameDetailButtonScale")
     val shape = RoundedCornerShape(NuvioTheme.radii.md)
     Box(
         Modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .focusRequester(requester)
             .clip(shape)
             .background(
                 when {
+                    primary && focused -> NuvioTheme.colors.SecondaryVariant
+                    primary -> NuvioTheme.colors.Secondary
                     focused -> NuvioTheme.colors.FocusBackground
-                    primary -> NuvioTheme.colors.Primary
                     else -> NuvioTheme.colors.BackgroundElevated
                 },
             )
-            .border(if (focused) 2.dp else 1.dp, if (focused) NuvioTheme.colors.FocusRing else NuvioTheme.colors.Border, shape)
+            .border(if (focused) NuvioTheme.focusRing.border(3.dp) else androidx.compose.foundation.BorderStroke(1.dp, NuvioTheme.colors.Border), shape)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }
             .clickable(onClick = onClick)
-            .padding(horizontal = 22.dp, vertical = 12.dp),
+            .padding(horizontal = 26.dp, vertical = 14.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(label, style = MaterialTheme.typography.titleSmall, color = NuvioTheme.colors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            label, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            color = if (primary) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextPrimary,
+        )
     }
 }

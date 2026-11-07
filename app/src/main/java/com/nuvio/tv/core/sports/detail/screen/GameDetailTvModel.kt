@@ -5,72 +5,176 @@ import com.nuvio.tv.core.sports.detail.GameBlock
 import com.nuvio.tv.core.sports.detail.GameDetail
 import com.nuvio.tv.core.sports.detail.GameHeader
 import com.nuvio.tv.core.sports.detail.GameState
-import com.nuvio.tv.core.sports.detail.Side
 import com.nuvio.tv.core.sports.detail.LiveInfo
+import com.nuvio.tv.core.sports.detail.Side
 import com.nuvio.tv.core.sports.detail.SideKey
+import com.nuvio.tv.core.sports.detail.TimelineKind
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
-data class TvLinescore(val columns: List<String>, val rows: List<List<String>>)
+/** One line of the by-period table: a team, its period cells and its total. */
+data class TvLineRow(val label: String, val badgeUrl: String?, val cells: List<String>, val total: String?, val leading: Boolean)
 
-/** One play line; [tag] is the short name of the side it belongs to (so "who scored" is never ambiguous). */
-data class TvPlay(val time: String, val text: String, val tag: String?)
+/**
+ * [currentIndex] is the period being played (highlighted) while live; [totalLabel] is null when the sport's own
+ * columns already end in totals (baseball R/H/E).
+ */
+data class TvLinescore(val columns: List<String>, val rows: List<TvLineRow>, val totalLabel: String?, val currentIndex: Int?)
 
-/** Short name (abbreviation) when the source has one, else the full name: never a truncated team name on TV. */
+/** One play line; [tag] is the short name of the side it belongs to, [scoring] marks goals/baskets. */
+data class TvPlay(val time: String, val text: String, val tag: String?, val side: SideKey?, val scoring: Boolean)
+
+data class TvLeader(val category: String, val athlete: String, val value: String, val tag: String?, val side: SideKey?)
+
+/** A compact comparison row; [homeFraction] is the home share (0..1) the bar is drawn from. */
+data class TvStat(val label: String, val home: String, val away: String, val homeFraction: Float)
+
+data class TvForm(val home: List<String>, val away: List<String>)
+
+/** Short name (abbreviation) when the source has one, else the full name. */
 val Side.tvName: String get() = short?.takeIf { it.isNotBlank() } ?: name
 
 /**
- * The light set the TV screen shows: header, live line, situation, win probability, by-period linescore
- * and the latest plays. Stats, lineups, standings and results tables are deliberately never included.
+ * What the TV screen shows: a 10-foot, two-pane layout. Left: scoreboard header, situation + win probability,
+ * by-period table, source row. Right: top performers, a compact stats comparison (at most [STATS] rows) and the
+ * latest plays. Lineups, standings and results tables are never included. Upcoming games swap the live
+ * blocks for kickoff, venue and form.
  */
 data class GameDetailTvModel(
     val title: String,
     val subtitle: String?,
     val sides: List<Side>,
+    val state: GameState,
+    /** "LIVE · 3rd 10:12", "FINAL", "POSTPONED"; null for an upcoming game (kickoff is shown instead). */
+    val pill: String?,
     val liveLine: String?,
     val isLive: Boolean,
     val situation: String?,
     val homeWinPercent: Int?,
     val linescore: TvLinescore?,
+    val leaders: List<TvLeader>,
+    val stats: List<TvStat>,
+    val form: TvForm?,
     val latestPlays: List<TvPlay>,
+    val kickoffLabel: String?,
+    val venue: String?,
     val updatedLabel: String?,
     val shownBlocks: Set<BlockType>,
 ) {
     companion object {
-        const val PLAYS = 5
+        const val PLAYS = 12
+        const val STATS = 4
+        const val LEADERS = 3
         const val STALE_AFTER_MS = 20_000L
 
-        fun from(d: GameDetail, nowMs: Long): GameDetailTvModel {
-            val situation = (d.block(BlockType.SITUATION) as? GameBlock.Situation)?.text
-            val win = (d.block(BlockType.WIN_PROBABILITY) as? GameBlock.WinProbability)?.homePercent?.toInt()?.coerceIn(0, 100)
-            val line = (d.block(BlockType.LINESCORE) as? GameBlock.Linescore)?.let { TvLinescore(it.columns, it.rows) }
-            val sidesList = when (val h = d.header) {
+        fun from(
+            d: GameDetail,
+            nowMs: Long,
+            zone: ZoneId = ZoneId.systemDefault(),
+            locale: Locale = Locale.getDefault(),
+        ): GameDetailTvModel {
+            val sides = when (val h = d.header) {
                 is GameHeader.Teams -> listOf(h.home, h.away)
                 is GameHeader.Versus -> listOf(h.a, h.b)
                 is GameHeader.Event -> emptyList()
             }
+            val title = when (val h = d.header) {
+                is GameHeader.Teams -> "${h.home.name} v ${h.away.name}"
+                is GameHeader.Versus -> "${h.a.name} v ${h.b.name}"
+                is GameHeader.Event -> h.name
+            }
+            val live = d.state == GameState.LIVE
+            val line = liveLine(d.live)
+            val situation = (d.block(BlockType.SITUATION) as? GameBlock.Situation)?.text
+            val win = (d.block(BlockType.WIN_PROBABILITY) as? GameBlock.WinProbability)?.homePercent?.toInt()?.coerceIn(0, 100)
+            val linescore = (d.block(BlockType.LINESCORE) as? GameBlock.Linescore)?.let { linescore(it, sides, live, d.state) }
+            val leaders = leaders(d, sides)
+            val stats = stats(d)
+            val form = (d.block(BlockType.FORM) as? GameBlock.Form)?.let { TvForm(it.home.takeLast(5), it.away.takeLast(5)) }
             val plays = (d.block(BlockType.TIMELINE) as? GameBlock.Timeline)?.items?.takeLast(PLAYS)?.reversed().orEmpty().map {
-                TvPlay(it.time, it.text, when (it.side) { SideKey.HOME -> sidesList.getOrNull(0)?.tvName; SideKey.AWAY -> sidesList.getOrNull(1)?.tvName; null -> null })
+                TvPlay(
+                    time = it.time, text = it.text,
+                    tag = when (it.side) { SideKey.HOME -> sides.getOrNull(0)?.tvName; SideKey.AWAY -> sides.getOrNull(1)?.tvName; null -> null },
+                    side = it.side,
+                    scoring = it.kind == TimelineKind.GOAL || it.kind == TimelineKind.SCORE,
+                )
             }
-            val (title, sides) = when (val h = d.header) {
-                is GameHeader.Teams -> "${h.home.name} v ${h.away.name}" to listOf(h.home, h.away)
-                is GameHeader.Versus -> "${h.a.name} v ${h.b.name}" to listOf(h.a, h.b)
-                is GameHeader.Event -> h.name to emptyList()
+            val pill = when (d.state) {
+                GameState.LIVE -> if (line != null) "LIVE · ${line.replace(" · ", " ")}" else "LIVE"
+                GameState.FINAL -> "FINAL"
+                GameState.POSTPONED -> "POSTPONED"
+                GameState.UPCOMING -> null
             }
-            val subtitle = listOfNotNull(d.leagueName.takeIf { it.isNotBlank() }, d.round?.let { "Round $it" }, d.venue).joinToString(" · ").ifBlank { null }
-            val live = liveLine(d.live)
             return GameDetailTvModel(
-                title = title, subtitle = subtitle, sides = sides,
-                liveLine = live ?: (d.header as? GameHeader.Event)?.session,
-                isLive = d.state == GameState.LIVE,
-                situation = situation, homeWinPercent = win, linescore = line, latestPlays = plays,
+                title = title,
+                subtitle = listOfNotNull(d.leagueName.takeIf { it.isNotBlank() }, d.round?.let { "Round $it" }).joinToString(" · ").ifBlank { null },
+                sides = sides, state = d.state, pill = pill,
+                liveLine = line ?: (d.header as? GameHeader.Event)?.session,
+                isLive = live, situation = situation, homeWinPercent = win, linescore = linescore,
+                leaders = leaders, stats = stats, form = form, latestPlays = plays,
+                kickoffLabel = if (d.state == GameState.UPCOMING && d.startsAtMs > 0) kickoff(d.startsAtMs, zone, locale) else null,
+                venue = d.venue ?: (d.header as? GameHeader.Event)?.venue,
                 updatedLabel = updatedLabel(d, nowMs),
                 shownBlocks = buildSet {
                     if (situation != null) add(BlockType.SITUATION)
                     if (win != null) add(BlockType.WIN_PROBABILITY)
-                    if (line != null) add(BlockType.LINESCORE)
+                    if (linescore != null) add(BlockType.LINESCORE)
+                    if (leaders.isNotEmpty()) add(BlockType.LEADERS)
+                    if (stats.isNotEmpty()) add(BlockType.STATS)
+                    if (form != null) add(BlockType.FORM)
                     if (plays.isNotEmpty()) add(BlockType.TIMELINE)
                 },
             )
         }
+
+        private fun kickoff(ms: Long, zone: ZoneId, locale: Locale): String =
+            DateTimeFormatter.ofPattern("EEE d MMM · h:mm a", locale).withZone(zone).format(Instant.ofEpochMilli(ms))
+
+        private fun linescore(b: GameBlock.Linescore, sides: List<Side>, live: Boolean, state: GameState): TvLinescore? {
+            if (b.rows.isEmpty() || b.columns.isEmpty()) return null
+            val ownTotals = b.columns.takeLast(3) == listOf("R", "H", "E")
+            val current = if (live) b.columns.indices.lastOrNull { i -> b.rows.any { r -> r.getOrNull(i)?.isNotBlank() == true } } else null
+            val totals = b.rows.mapIndexed { i, r ->
+                if (ownTotals) null
+                else sides.getOrNull(i)?.score?.takeIf { it.isNotBlank() } ?: r.mapNotNull { it.toIntOrNull() }.takeIf { it.isNotEmpty() }?.sum()?.toString()
+            }
+            val best = totals.mapNotNull { it?.toIntOrNull() }.maxOrNull()
+            val rows = b.rows.mapIndexed { i, r ->
+                val side = sides.getOrNull(i)
+                TvLineRow(
+                    label = side?.tvName.orEmpty(), badgeUrl = side?.badgeUrl, cells = r, total = totals[i],
+                    leading = state == GameState.FINAL && best != null && totals[i]?.toIntOrNull() == best && totals.count { it?.toIntOrNull() == best } == 1,
+                )
+            }
+            return TvLinescore(b.columns, rows, if (ownTotals) null else "T", current)
+        }
+
+        private fun leaders(d: GameDetail, sides: List<Side>): List<TvLeader> {
+            val items = (d.block(BlockType.LEADERS) as? GameBlock.Leaders)?.items.orEmpty()
+            return items.distinctBy { it.category }.take(LEADERS).map {
+                TvLeader(
+                    category = pretty(it.category), athlete = it.athlete, value = it.value,
+                    tag = when (it.side) { SideKey.HOME -> sides.getOrNull(0)?.tvName; SideKey.AWAY -> sides.getOrNull(1)?.tvName; null -> null },
+                    side = it.side,
+                )
+            }
+        }
+
+        private fun pretty(k: String): String =
+            k.replace(Regex("([a-z])([A-Z])"), "$1 $2").replace('_', ' ').trim().lowercase(Locale.ROOT).replaceFirstChar { it.uppercase() }
+
+        private fun stats(d: GameDetail): List<TvStat> {
+            val rows = (d.block(BlockType.STATS) as? GameBlock.Stats)?.rows.orEmpty()
+            return rows.mapNotNull { r ->
+                val h = number(r.home) ?: return@mapNotNull null
+                val a = number(r.away) ?: return@mapNotNull null
+                TvStat(r.label, r.home + (r.unit ?: ""), r.away + (r.unit ?: ""), if (h + a > 0) (h / (h + a)).toFloat() else 0.5f)
+            }.take(STATS)
+        }
+
+        private fun number(s: String): Double? = s.trim().removeSuffix("%").toDoubleOrNull()?.takeIf { it >= 0 }
 
         private val pauseWords = Regex("halftime|half time|intermission|break|end of", RegexOption.IGNORE_CASE)
 
