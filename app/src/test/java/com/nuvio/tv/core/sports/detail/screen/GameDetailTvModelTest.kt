@@ -206,10 +206,10 @@ class GameDetailTvModelTest {
 
     @Test fun `a play keeps the scorer and only the first assist`() {
         assertEquals(
-            "Pavel Dorofeyev Goal (6) Backhand · assist Mika Zibanejad",
+            "Pavel Dorofeyev Goal (6) · assist Mika Zibanejad",
             GameDetailTvModel.condensePlay("Pavel Dorofeyev Goal (6) Backhand, assists: Mika Zibanejad (12), Alexis Lafreniere (11)"),
         )
-        assertEquals("one assist", "Nick Perbix Goal (2) Wrist Shot · assist Steven Stamkos", GameDetailTvModel.condensePlay("Nick Perbix Goal (2) Wrist Shot, assists: Steven Stamkos (9)"))
+        assertEquals("one assist", "Nick Perbix Goal (2) · assist Steven Stamkos", GameDetailTvModel.condensePlay("Nick Perbix Goal (2) Wrist Shot, assists: Steven Stamkos (9)"))
         assertEquals("unassisted untouched", "Ross Colton Goal (5) Snap Shot, unassisted", GameDetailTvModel.condensePlay("Ross Colton Goal (5) Snap Shot, unassisted"))
         assertEquals("dangling assists", "Goal (1)", GameDetailTvModel.condensePlay("Goal (1), assists:"))
     }

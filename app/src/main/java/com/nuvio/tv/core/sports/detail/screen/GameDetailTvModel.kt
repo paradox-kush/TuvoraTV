@@ -180,7 +180,8 @@ data class GameDetailTvModel(
          */
         fun condensePlay(text: String): String {
             val i = text.indexOf("assists:", ignoreCase = true).takeIf { it >= 0 } ?: return text
-            val head = text.substring(0, i).trim().trimEnd(',', ' ')
+            // Drop the shot type after "Goal (n)" ("Goal (6) Backhand" -> "Goal (6)"): the assist is worth more of the 2 lines.
+            val head = text.substring(0, i).trim().trimEnd(',', ' ').replace(Regex("(Goal \\(\\d+\\)).*$"), "$1")
             val first = text.substring(i + "assists:".length).trim().split(Regex("\\s*\\(\\d+\\)\\s*,?|,")).firstOrNull { it.isNotBlank() }?.trim()
             return if (first == null) head else "$head · assist $first"
         }

@@ -440,9 +440,9 @@ private fun PerformersCard(items: List<TvLeader>) {
         items.forEach { l ->
             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(l.category, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(112.dp), maxLines = 1)
-                Text(l.athlete, fontSize = 18.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.weight(1f), maxLines = 2)
+                Text(l.athlete, fontSize = 18.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 l.tag?.let { TagChip(it, l.side); Spacer(Modifier.width(10.dp)) }
-                Text(l.value, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary)
+                Text(l.value, fontSize = if (l.value.length > 4) 17.sp else 22.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary)
             }
         }
     }
