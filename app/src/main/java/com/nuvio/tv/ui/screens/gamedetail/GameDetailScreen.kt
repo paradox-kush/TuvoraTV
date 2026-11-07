@@ -97,12 +97,23 @@ fun GameDetailScreen(
 
     val requesters = remember { FocusKey.entries.associateWith { FocusRequester() } }
     var focusedKey by remember { mutableStateOf<FocusKey?>(null) }
+    var userMoved by remember { mutableStateOf(false) }
+    var autoFocusing by remember { mutableStateOf(false) }
+    val onFocused: (FocusKey) -> Unit = { key ->
+        if (!autoFocusing) userMoved = true
+        focusedKey = key
+    }
     val controls = GameDetailFocus.controls(ui, watch)
+    // The primary action usually appears after the channel match finished, when Channels already holds focus:
+    // until the viewer moves focus themselves, Play/Switch takes it the moment it exists.
     LaunchedEffect(controls) {
-        val target = GameDetailFocus.repair(focusedKey, controls)
-        if (target != null && (focusedKey == null || focusedKey !in controls)) {
+        val target = GameDetailFocus.target(focusedKey, userMoved, controls)
+        if (target != null && target != focusedKey) {
+            autoFocusing = true
             withFrame()
             runCatching { requesters.getValue(target).requestFocus() }
+            withFrame()
+            autoFocusing = false
         }
     }
 
@@ -113,7 +124,7 @@ fun GameDetailScreen(
             is GameDetailUiState.Loading, GameDetailUiState.NoData -> CenterMessage(
                 if (s is GameDetailUiState.NoData) "Opening channels…" else "Loading game…",
             )
-            is GameDetailUiState.Failed -> FailedPane(s.timedOut, requesters.getValue(FocusKey.RETRY), { focusedKey = FocusKey.RETRY }, viewModel::retry)
+            is GameDetailUiState.Failed -> FailedPane(s.timedOut, requesters.getValue(FocusKey.RETRY), { onFocused(FocusKey.RETRY) }, viewModel::retry)
             is GameDetailUiState.Loaded -> {
                 val model = GameDetailTvModel.from(s.detail, RadarTime.nowMs())
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
@@ -126,7 +137,7 @@ fun GameDetailScreen(
                         SourceRow(
                             watch = watch,
                             requesters = requesters,
-                            onFocused = { focusedKey = it },
+                            onFocused = onFocused,
                             onPrimary = {
                                 if (watch.primary == PrimaryAction.AddProvider) onAddProvider()
                                 else viewModel.playPrimary(onPlayChannel)

@@ -153,6 +153,8 @@ class SportsHubViewModel @Inject constructor(
     @Volatile private var matchGeneration: Long = 0
 
     init {
+        // Kill switches and mapping fixes reach TV through the remote mapping (ETag: a 304 when unchanged).
+        viewModelScope.launch { runCatching { sportsDetail.syncMapping() } }
         // The match sheet reads the mirror; refresh it (12h TTL, no-op when fresh) so the
         // EPG tier is warm by the time a fixture is opened.
         //

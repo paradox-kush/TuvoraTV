@@ -12,8 +12,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * supabase/functions/game-detail). This adapter only decodes it ([GameDetailWire]); there are no
  * TheSportsDB-shaped assemblers on the device. `disabled:true` (server kill switch) is honoured.
  *
- * SCOREBOARD-only ticks ask `blocks=none` (header/score/state only, a few hundred bytes); anything
- * with SUMMARY omits `blocks` so the server returns the sport's full block set (each on its own server cache).
+ * Only asked when SUMMARY is among the parts (see [wants]); `blocks` is omitted so the server returns the sport's
+ * full block set (each on its own server cache).
  */
 class TheSportsDbSource(
     private val http: HttpFetcher,
@@ -22,6 +22,12 @@ class TheSportsDbSource(
 ) : BlockSource {
     override val id = SourceId.TSDB
 
+    /**
+     * Delta rule: the backend is read on first load and on the slow (summary) cadence only. A live event tick
+     * is ESPN's per-game summary; TheSportsDB's cached payload doesn't change at 15 s.
+     */
+    override fun wants(parts: Set<RefreshPart>): Boolean = RefreshPart.SUMMARY in parts
+
     override suspend fun load(ref: GameRef, parts: Set<RefreshPart>, mapping: SportsMapping): SourceLoad {
         val eventId = ref.tsdbEventId ?: return SourceLoad.miss()
         val base = functionsBase()?.trimEnd('/') ?: return SourceLoad.miss()
@@ -29,7 +35,6 @@ class TheSportsDbSource(
         val url = buildString {
             append(base).append('/').append(SportsDetailPaths.GAME_DETAIL).append("?event_id=").append(URLEncoder.encode(eventId, "UTF-8"))
             if (ref.leagueId.isNotBlank()) append("&league_id=").append(URLEncoder.encode(ref.leagueId, "UTF-8"))
-            if (RefreshPart.SUMMARY !in parts) append("&blocks=none")
         }
         val resp = try {
             http.get(url, mapOf("Accept" to "application/json"), mapping.deadlineMs)
@@ -45,9 +50,14 @@ class TheSportsDbSource(
         } catch (_: Exception) {
             return SourceLoad.failed(FetchOutcome.PARSE_FAIL)
         }
-        return GameDetailWire.decode(root)
+        return GameDetailWire.decode(root).let { if (it.outcome == FetchOutcome.HIT) it.copy(asked = askedBlocks) else it }
     }
 }
+
+private val askedBlocks = setOf(
+    BlockType.STATS, BlockType.TIMELINE, BlockType.LINEUP, BlockType.RESULTS, BlockType.BROADCAST,
+    BlockType.HIGHLIGHTS, BlockType.STANDINGS, BlockType.FORM,
+)
 
 /** Decoder for the backend's normalised GameDetail JSON. Forward compatible: unknown blocks/fields are ignored. Never throws. */
 object GameDetailWire {

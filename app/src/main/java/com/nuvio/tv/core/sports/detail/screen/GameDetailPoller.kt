@@ -6,6 +6,8 @@ import com.nuvio.tv.core.sports.detail.GameDetailSource
 import com.nuvio.tv.core.sports.detail.GameState
 import com.nuvio.tv.core.sports.detail.plan
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * The polling loop of one open game screen, decided by [GameDetailRefreshPolicy.plan]. The CALLER runs
@@ -21,11 +23,13 @@ class GameDetailPoller(
     private val clock: () -> Long,
     private val delayFn: suspend (Long) -> Unit = { delay(it) },
 ) {
-    private var state = initialState
-    private var lastEvent: Long? = null
-    private var lastSummary: Long? = null
-    private var failures = 0
-    private var loadedOnce = false
+    @Volatile private var state = initialState
+    @Volatile private var lastEvent: Long? = null
+    @Volatile private var lastSummary: Long? = null
+    @Volatile private var failures = 0
+    @Volatile private var loadedOnce = false
+    /** The polling loop and a user Retry may race; ticks are serialised so they never overlap. */
+    private val tickLock = Mutex()
 
     suspend fun run(onLoad: (DetailLoad) -> Unit) {
         if (!loadedOnce) tick(fetchEvent = true, fetchSummary = true, onLoad)
@@ -45,12 +49,14 @@ class GameDetailPoller(
         tick(fetchEvent = true, fetchSummary = true, onLoad)
     }
 
-    private suspend fun tick(fetchEvent: Boolean, fetchSummary: Boolean, onLoad: (DetailLoad) -> Unit) {
-        val now = clock()
-        if (fetchEvent) lastEvent = now
-        if (fetchSummary) lastSummary = now
-        loadedOnce = true
+    private suspend fun tick(fetchEvent: Boolean, fetchSummary: Boolean, onLoad: (DetailLoad) -> Unit) = tickLock.withLock {
+        val startedAt = clock()
+        // Bookkeeping happens only AFTER the tick completes: a pause (cancellation) mid first load must leave
+        // the poller "never loaded", so the next RESUMED run starts the full tick again.
         val load = source.tick(fetchEvent, fetchSummary)
+        if (fetchEvent) lastEvent = startedAt
+        if (fetchSummary) lastSummary = startedAt
+        loadedOnce = true
         when (load) {
             is DetailLoad.Loaded -> { failures = 0; state = load.detail.state }
             is DetailLoad.Failed -> failures++

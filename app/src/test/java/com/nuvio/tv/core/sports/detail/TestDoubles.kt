@@ -34,7 +34,7 @@ fun stats(src: SourceId, vararg rows: Pair<String, String>) =
 
 fun nbaRef(id: String = "tsdb:100") = GameRef(
     gameId = id, sport = "Basketball", leagueId = "4387", leagueName = "NBA",
-    homeName = "Atlanta Hawks", awayName = "Boston Celtics", startsAtMs = 1_800_000_000_000L,
+    homeName = "Atlanta Hawks", awayName = "Boston Celtics", startsAtMs = 1_800_000_000_000L, seedState = GameState.LIVE,
     seedHome = Side("Atlanta Hawks", score = "10"), seedAway = Side("Boston Celtics", score = "7"),
 )
 

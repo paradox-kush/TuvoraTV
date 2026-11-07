@@ -149,6 +149,21 @@ data class GameRef(
         else GameHeader.Teams(seedHome ?: Side(homeName), seedAway ?: Side(awayName))
 }
 
+/** What belongs on screen in each state: live-only blocks vanish after the whistle, score blocks wait for it. */
+object BlockVisibility {
+    private val upcoming = setOf(
+        BlockType.BROADCAST, BlockType.FORM, BlockType.LINEUP, BlockType.RESULTS, BlockType.NEXT,
+        BlockType.STANDINGS, BlockType.HIGHLIGHTS,
+    )
+
+    fun visible(type: BlockType, state: GameState): Boolean = when (state) {
+        GameState.LIVE -> true
+        GameState.FINAL -> type != BlockType.SITUATION && type != BlockType.WIN_PROBABILITY
+        GameState.UPCOMING -> type in upcoming
+        GameState.POSTPONED -> type == BlockType.BROADCAST
+    }
+}
+
 data class GameDetail(
     val gameId: String,
     val sport: String,
@@ -167,6 +182,11 @@ data class GameDetail(
     val availability: Availability,
     /** Local fetch time per source (never a provider timestamp). UI shows "Updated 2 min ago" when stale > 20 s. */
     val asOf: Map<SourceId, Long>,
+    /**
+     * true when [header]/[state] came from an authoritative source this tick (the game's primary source, or
+     * ESPN when the primary is switched off). false = the hub seed stood in; [mergeOver] then keeps the older ones.
+     */
+    val headerFromPrimary: Boolean = true,
 ) {
     val startsAtIso: String get() = Instant.ofEpochMilli(startsAtMs).toString()
 
@@ -183,14 +203,21 @@ data class GameDetail(
                 availability = if (older.blocks.isEmpty()) Availability.FAILED else older.availability,
             )
         }
+        val authoritative = headerFromPrimary
+        val mergedState = if (authoritative) state else older.state
         val fresh = blocks.associateBy { it.type }
-        val merged = older.blocks.map { fresh[it.type] ?: it } + blocks.filter { b -> older.blocks.none { it.type == b.type } }
+        val combined = older.blocks.map { fresh[it.type] ?: it } + blocks.filter { b -> older.blocks.none { it.type == b.type } }
+        val shown = combined.filter { BlockVisibility.visible(it.type, mergedState) }
         return copy(
-            blocks = merged,
-            sources = older.sources + sources,
+            state = mergedState,
+            header = if (authoritative) header else older.header,
+            startsAtMs = if (authoritative) startsAtMs else older.startsAtMs,
+            blocks = shown,
+            sources = (older.sources + sources).filterKeys { k -> shown.any { it.type == k } },
             asOf = older.asOf + asOf,
-            live = live ?: older.live,
-            availability = if (merged.isNotEmpty()) Availability.FULL else availability,
+            live = if (mergedState == GameState.LIVE) live ?: older.live else live,
+            availability = if (shown.isNotEmpty()) Availability.FULL else availability,
+            headerFromPrimary = authoritative || older.headerFromPrimary,
         )
     }
 
@@ -200,6 +227,7 @@ data class GameDetail(
             profile = profile, round = ref.round, venue = ref.venue, startsAtMs = ref.startsAtMs,
             state = ref.seedState, header = ref.seedHeader(), live = null, blocks = emptyList(),
             sources = emptyMap(), sourceStatus = emptyMap(), availability = Availability.MATCH_SHEET, asOf = emptyMap(),
+            headerFromPrimary = false,
         )
     }
 }

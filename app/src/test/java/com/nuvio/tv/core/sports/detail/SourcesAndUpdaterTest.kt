@@ -158,13 +158,21 @@ class TheSportsDbSourceTest {
         assertEquals("highlights", "https://www.youtube.com/watch?v=abc", (b[BlockType.HIGHLIGHTS] as GameBlock.Highlights).url)
     }
 
-    @Test fun `calls the game-detail constant with ids and honours the blocks hint`() = runBlocking {
+    @Test fun `calls the game-detail constant with ids on a summary cadence load`() = runBlocking {
         val h = ok()
         source(h).load(ref, RefreshPart.ALL, SportsFixtures.mapping)
-        source(h).load(ref, setOf(RefreshPart.SCOREBOARD), SportsFixtures.mapping)
         assertEquals("full", "https://backend.example/functions/v1/${SportsDetailPaths.GAME_DETAIL}?event_id=2494097&league_id=4328", h.requests[0].first)
-        assertEquals("fast tick is header only", "https://backend.example/functions/v1/game-detail?event_id=2494097&league_id=4328&blocks=none", h.requests[1].first)
         assertEquals("function names are the backend's", "game-detail" to "sports-mapping", SportsDetailPaths.GAME_DETAIL to SportsDetailPaths.SPORTS_MAPPING)
+    }
+
+    @Test fun `a live event tick never reaches the backend`() = runBlocking {
+        val h = ok()
+        val s = source(h)
+        assertEquals("not wanted", false, s.wants(setOf(RefreshPart.SCOREBOARD)))
+        assertEquals("wanted on the slow cadence", true, s.wants(setOf(RefreshPart.SUMMARY)))
+        val r = GameDetailResolver({ SportsFixtures.mapping }, mapOf(SourceId.TSDB to s), clock = FakeClock()::read)
+        r.resolve(ref, setOf(RefreshPart.SCOREBOARD))
+        assertTrue("no request", h.requests.isEmpty())
     }
 
     @Test fun `disabled true from the server is honoured`() = runBlocking {
@@ -214,10 +222,16 @@ class SportsDetailFacadeTest {
         assertEquals("espn probed and answered; tsdb already filled every soccer block", SourceStatus.OK, d.sourceStatus[SourceId.ESPN])
     }
 
+    private val http = http()
+
     @Test fun `an event-only tick keeps the summary blocks from the previous tick`() = runBlocking {
-        val src = SportsDetail.create(http(), { "https://b/functions/v1" }).open(epl)
+        val src = SportsDetail.create(http, { "https://b/functions/v1" }).open(epl)
         val first = (src.tick() as DetailLoad.Loaded).detail
+        val h2 = http
+        h2.requests.clear()
         val second = (src.tick(fetchEvent = true, fetchSummary = false) as DetailLoad.Loaded).detail
+        assertEquals("live tick = exactly one ESPN summary, no backend, no scoreboard", 1, h2.requests.size)
+        assertTrue("it is the per-game summary", h2.requests[0].first.contains("/summary?event="))
         assertEquals("nothing lost", first.blocks.map { it.type }.toSet(), second.blocks.map { it.type }.toSet())
     }
 

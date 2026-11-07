@@ -160,10 +160,10 @@ class GameDetailResolverTest {
 
     @Test fun `merge keeps older blocks when a live tick carries only a subset`() {
         val old = GameDetail.skeleton(nbaRef()).copy(
-            blocks = listOf(stats(SourceId.TSDB, "A" to "1"), lineEspn), sources = mapOf(BlockType.STATS to SourceId.TSDB, BlockType.LINESCORE to SourceId.ESPN),
+            state = GameState.LIVE, blocks = listOf(stats(SourceId.TSDB, "A" to "1"), lineEspn), sources = mapOf(BlockType.STATS to SourceId.TSDB, BlockType.LINESCORE to SourceId.ESPN),
         )
         val newLine = lineEspn.copy(rows = listOf(listOf("9"), listOf("8")))
-        val tick = GameDetail.skeleton(nbaRef()).copy(blocks = listOf(newLine), sources = mapOf(BlockType.LINESCORE to SourceId.ESPN))
+        val tick = GameDetail.skeleton(nbaRef()).copy(state = GameState.LIVE, blocks = listOf(newLine), sources = mapOf(BlockType.LINESCORE to SourceId.ESPN))
         val merged = tick.mergeOver(old)
         assertEquals("both blocks", 2, merged.blocks.size)
         assertEquals("newer linescore", listOf("9"), (merged.blocks.first { it.type == BlockType.LINESCORE } as GameBlock.Linescore).rows[0])

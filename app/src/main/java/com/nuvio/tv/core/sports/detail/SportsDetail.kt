@@ -1,5 +1,7 @@
 package com.nuvio.tv.core.sports.detail
 
+import kotlinx.coroutines.sync.withLock
+
 /** BoundedLoad semantics: a load ends Loaded / Empty / Failed, and a failure is never rendered as empty. */
 sealed interface DetailLoad {
     data class Loaded(val detail: GameDetail) : DetailLoad
@@ -32,6 +34,8 @@ interface SportsDetailService {
 }
 
 object SportsDetail {
+    const val SYNC_MIN_INTERVAL_MS = 5 * 60_000L
+
     /**
      * Wires the core. [functionsBase] is the backend functions root (`https://<project>.supabase.co/functions/v1`),
      * or null when no backend is configured (ESPN-only then).
@@ -53,7 +57,15 @@ object SportsDetail {
         val updater = SportsMappingUpdater(store, HttpMappingRemote(http, functionsBase), persistence)
         return object : SportsDetailService {
             override fun open(ref: GameRef): GameDetailSource = ResolvingGameDetailSource(resolver, ref)
-            override suspend fun syncMapping() = updater.refresh()
+            @Volatile private var lastSyncAt = Long.MIN_VALUE
+
+            override suspend fun syncMapping(): OfferResult? {
+                // Safe on every screen open: at most one network attempt per interval (and that one is a 304 when unchanged).
+                val now = clock()
+                if (lastSyncAt != Long.MIN_VALUE && now - lastSyncAt < SYNC_MIN_INTERVAL_MS) return null
+                lastSyncAt = now
+                return updater.refresh()
+            }
             override fun refreshConfig() = GameDetailRefreshPolicy.Config.from(store.current.refresh)
             override fun currentMapping() = store.current
         }
@@ -62,8 +74,9 @@ object SportsDetail {
 
 internal class ResolvingGameDetailSource(private val resolver: GameDetailResolver, private val ref: GameRef) : GameDetailSource {
     private var last: GameDetail? = null
+    private val lock = kotlinx.coroutines.sync.Mutex()
 
-    override suspend fun tick(fetchEvent: Boolean, fetchSummary: Boolean): DetailLoad {
+    override suspend fun tick(fetchEvent: Boolean, fetchSummary: Boolean): DetailLoad = lock.withLock {
         val parts = buildSet {
             if (fetchEvent || last == null) add(RefreshPart.SCOREBOARD)
             if (fetchSummary || last == null) add(RefreshPart.SUMMARY)
@@ -71,8 +84,8 @@ internal class ResolvingGameDetailSource(private val resolver: GameDetailResolve
         val fresh = resolver.resolve(ref, parts)
         val prev = last
         val merged = if (prev == null) fresh else fresh.mergeOver(prev)
-        if (merged.availability == Availability.FAILED) return DetailLoad.Failed()
+        if (merged.availability == Availability.FAILED) return@withLock DetailLoad.Failed()
         last = merged
-        return DetailLoad.Loaded(merged)
+        DetailLoad.Loaded(merged)
     }
 }

@@ -65,20 +65,26 @@ class GameDetailViewModel @Inject constructor(
     val watch: StateFlow<WatchUi> = _watch.asStateFlow()
 
     private val pollerReady = CompletableDeferred<GameDetailPoller>()
-    private var fixture: RadarFixture? = null
-    private var matches: List<RadarChannelMatcher.ChannelMatch> = emptyList()
-    private var matching = true
-    private var matchingFailed = false
-    private var hasPlaylists = true
+    @Volatile private var fixture: RadarFixture? = null
+    @Volatile private var matches: List<RadarChannelMatcher.ChannelMatch> = emptyList()
+    @Volatile private var matching = true
+    @Volatile private var matchingFailed = false
+    @Volatile private var hasPlaylists = true
     private var matchJob: Job? = null
 
     init {
         viewModelScope.launch {
             accountStore.accounts.collect { list ->
-                hasPlaylists = list.any { it.enabled }
-                publishWatch()
+                val now = list.any { it.enabled }
+                val changed = now != hasPlaylists
+                hasPlaylists = now
+                val fx = fixture
+                // A playlist added (or removed) while the screen is open re-runs the channel match.
+                if (changed && fx != null) startMatching(fx) else publishWatch()
             }
         }
+        // Kill switches and mapping fixes reach TV through the remote mapping: refresh it (a 304 when unchanged).
+        viewModelScope.launch { runCatching { sportsDetail.syncMapping() } }
         viewModelScope.launch { bootstrap() }
     }
 
@@ -139,7 +145,7 @@ class GameDetailViewModel @Inject constructor(
 
     private fun startMatching(fx: RadarFixture) {
         matchJob?.cancel()
-        matching = true; matchingFailed = false; publishWatch()
+        matches = emptyList(); matching = true; matchingFailed = false; publishWatch()
         if (!hasPlaylists) { matching = false; publishWatch(); return }
         matchJob = viewModelScope.launch {
             try {

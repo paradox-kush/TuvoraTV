@@ -105,7 +105,11 @@ fun GameDetailRefreshPolicy.plan(
         GameState.UPCOMING -> {
             val untilKickoff = startsAtMs - nowMs
             if (untilKickoff > PRE_KICKOFF_LEAD_MS || -untilKickoff > STALE_UPCOMING_MS) RefreshPlan(false, false, null)
-            else RefreshPlan(eventWait == 0L, false, eventWait)
+            else {
+                // Pre-kickoff the card only needs to notice the flip to live: the slow kickoff cadence, not liveMs.
+                val wait = remaining(lastEventFetchMs, maxOf(config.kickoffPollMs, minMs) * backoff)
+                RefreshPlan(wait == 0L, false, wait)
+            }
         }
         GameState.LIVE -> RefreshPlan(eventWait == 0L, summaryWait == 0L, minOf(eventWait, summaryWait))
     }

@@ -22,6 +22,7 @@ class EspnSource(
     override val id = SourceId.ESPN
 
     private val matchedIds = ConcurrentHashMap<String, String>()
+    private val boardCache = ConcurrentHashMap<String, Pair<JsonElement, Long>>()
     private val dayFormat = DateTimeFormatter.ofPattern("yyyyMMdd").withZone(ZoneOffset.UTC)
 
     private sealed interface Fetched {
@@ -65,10 +66,14 @@ class EspnSource(
 
         // Delta rule: the whole-day scoreboard is fetched ONLY to resolve the event id (then cached per game).
         // A leagues without a per-game summary (F1, UFC, tennis) has no cheaper endpoint, so it keeps using it.
-        if (eventId == null || !hasSummary) {
+        // Leagues without a summary (F1, UFC, tennis) have nothing cheaper, so the scoreboard is re-read at the slow
+        // (summary) cadence and reused in between.
+        val cachedBoard = if (!hasSummary && eventId != null) boardCache[ref.gameId]?.takeIf { clock() - it.second < mapping.refresh.summaryMs } else null
+        if (cachedBoard != null) event = cachedBoard.first
+        else if (eventId == null || !hasSummary) {
             when (val found = scoreboard(ref, path, eventId, mapping, deadline)) {
                 is Board.Failed -> failure = found.outcome
-                is Board.Found -> { eventId = found.id; event = found.event; matchedIds[ref.gameId] = found.id }
+                is Board.Found -> { eventId = found.id; event = found.event; matchedIds[ref.gameId] = found.id; boardCache[ref.gameId] = found.event to clock() }
                 Board.None -> Unit
             }
         }

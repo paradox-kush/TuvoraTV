@@ -32,6 +32,8 @@ data class LeagueMapping(
     val summary: Boolean = true,
     /** Per-league chain order override; null = default TheSportsDB then ESPN. */
     val chain: List<SourceId>? = null,
+    /** false when the document listed a chain that is empty or names an unknown source. */
+    val chainValid: Boolean = true,
 )
 
 data class MatchConfig(val dateWindowHours: Int = 6, val minTeamsMatching: Int = 2)
@@ -183,6 +185,7 @@ object SportsMappingParser {
             profile = str(o["profile"]),
             summary = (o["summary"] as? JsonPrimitive)?.booleanOrNull ?: true,
             chain = (o["chain"] as? JsonArray)?.mapNotNull { SourceId.fromWire(str(it)) }?.takeIf { it.isNotEmpty() },
+            chainValid = (o["chain"] as? JsonArray).let { raw -> raw == null || (raw.isNotEmpty() && raw.all { SourceId.fromWire(str(it)) != null }) },
         )
     }
 
@@ -288,6 +291,17 @@ class SportsMappingStore(
 
     private fun validate(m: SportsMapping): String? {
         if (m.schemaVersion !in 1..SUPPORTED_SCHEMA) return "unsupported schemaVersion ${m.schemaVersion}"
+        if (m.version.isBlank()) return "no version"
+        if (m.profiles.isEmpty()) return "no profiles"
+        if (m.leagues.isEmpty()) return "no leagues"
+        m.leagues.firstOrNull { it.profile != null && it.profile !in m.profiles }?.let { return "league ${it.tsdbId} points at a missing profile" }
+        m.leagues.firstOrNull { !it.chainValid }?.let { return "league ${it.tsdbId}: bad chain" }
+        val sb = m.espnScoreboardUrl; val sm = m.espnSummaryUrl
+        if (!sb.startsWith(ESPN_PREFIX) || !sm.startsWith(ESPN_PREFIX)) return "espn template: not https on the ESPN host"
+        if ("{path}" !in sb || "{yyyymmdd}" !in sb) return "espn template: scoreboard needs {path} and {yyyymmdd}"
+        if ("{path}" !in sm || "{id}" !in sm) return "espn template: summary needs {path} and {id}"
+        if (m.deadlineMs !in 500L..60_000L) return "espn deadline out of range"
+        if (m.refresh.liveMs < 1_000L || m.refresh.summaryMs < 1_000L || m.refresh.minMs < 1_000L) return "refresh cadence out of range"
         if (m.profile(smoke.profile) == null) return "smoke parse failed: profile ${smoke.profile} missing"
         val asm = EspnBlockAssembler(m)
         val docs = EspnDocs(smoke.event, smoke.summary)
@@ -298,5 +312,8 @@ class SportsMappingStore(
         return null
     }
 
-    companion object { const val SUPPORTED_SCHEMA = 1 }
+    companion object {
+        const val SUPPORTED_SCHEMA = 1
+        const val ESPN_PREFIX = "https://site.api.espn.com/"
+    }
 }
