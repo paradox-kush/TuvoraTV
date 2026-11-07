@@ -95,6 +95,15 @@ class SportsMappingTest {
         assertEquals("bundled", "2026-11-07.1", s.current.version)
     }
 
+    @Test fun `game detail kill switch parses and gates the backend source`() {
+        val text = bundledText.replace(""""killSwitch": { "espn": false, "sports": [], "leagues": [] }""", """"killSwitch": { "espn": false, "sports": [], "leagues": [], "gameDetail": { "all": false, "sports": ["Soccer"], "leagues": ["4387"] } }""")
+        val m = (SportsMappingParser.parse(text) as MappingParseResult.Parsed).mapping
+        assertFalse("soccer off", m.gameDetailEnabled("soccer", "4328"))
+        assertFalse("nba league off", m.gameDetailEnabled("Basketball", "4387"))
+        assertTrue("nfl on", m.gameDetailEnabled("American Football", "4391"))
+        assertTrue("espn switch untouched", m.espnEnabled("soccer", "4328"))
+    }
+
     @Test fun `profile falls back from sport name`() {
         val m = BundledSportsMapping.load()
         assertEquals("by league", "basketball", m.profileNameFor("4387", "Whatever"))

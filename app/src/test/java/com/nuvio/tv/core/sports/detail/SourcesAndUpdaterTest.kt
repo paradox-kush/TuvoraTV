@@ -40,10 +40,40 @@ class EspnSourceTest {
         assertEquals("live info", "Tottenham Hotspur", ((l.header as GameHeader.Teams).away.name))
     }
 
-    @Test fun `live tick asks only the scoreboard`() = runBlocking {
+    @Test fun `live tick requests only that events summary never the whole-day scoreboard`() = runBlocking {
         val h = http()
-        source(h).load(eplRef, setOf(RefreshPart.SCOREBOARD), SportsFixtures.mapping)
-        assertTrue("no summary call", h.requests.none { it.first.contains("/summary") })
+        val s = source(h)
+        s.load(eplRef, RefreshPart.ALL, SportsFixtures.mapping) // resolves the event id once
+        h.requests.clear()
+        val tick = s.load(eplRef, setOf(RefreshPart.SCOREBOARD), SportsFixtures.mapping)
+        assertEquals("exactly one request", 1, h.requests.size)
+        assertTrue("it is the per-game summary", h.requests[0].first.endsWith("/soccer/eng.1/summary?event=401878758"))
+        assertTrue("never the scoreboard", h.requests.none { it.first.contains("/scoreboard") })
+        assertEquals("score header comes from the summary", "Leeds United", ((tick.header as GameHeader.Teams).home.name))
+        assertEquals("state from the summary status", GameState.FINAL, tick.state)
+    }
+
+    @Test fun `the first ever load resolves via the scoreboard once and every later tick skips it`() = runBlocking {
+        val h = http()
+        val s = source(h)
+        s.load(eplRef, setOf(RefreshPart.SCOREBOARD), SportsFixtures.mapping)
+        assertEquals("scoreboard then summary", listOf(true, false), h.requests.map { it.first.contains("/scoreboard") })
+        h.requests.clear()
+        repeat(3) { s.load(eplRef, setOf(RefreshPart.SCOREBOARD), SportsFixtures.mapping) }
+        assertEquals("3 ticks, 3 summaries, 0 scoreboards", 3, h.requests.count { it.first.contains("/summary?event=") })
+        assertEquals("no scoreboard", 0, h.requests.count { it.first.contains("/scoreboard") })
+    }
+
+    @Test fun `a tick assembles linescore from the summary header`() = runBlocking {
+        val nbaId = SportsFixtures.espnEvent("nba").let { JsonPathReader.firstText(it, "id")!! }
+        val m = SportsFixtures.mapping.copy(eventOverrides = mapOf("100" to nbaId))
+        val h = FakeHttp { HttpResponse(200, SportsFixtures.raw("espn/nba_summary_post.json"), null) }
+        val l = EspnSource(h, clock::read).load(nbaRef("tsdb:100"), setOf(RefreshPart.SCOREBOARD), m)
+        assertEquals("one request, a summary", 1, h.requests.size)
+        assertTrue("summary url", h.requests[0].first.contains("/basketball/nba/summary?event=$nbaId"))
+        val line = l.blocks[BlockType.LINESCORE] as GameBlock.Linescore
+        assertEquals("home quarters", listOf("28", "38", "39", "34"), line.rows[0])
+        assertEquals("home score", "139", ((l.header as GameHeader.Teams).home.score))
     }
 
     @Test fun `the matched event id is cached per game so the summary tick skips the scoreboard`() = runBlocking {
@@ -96,30 +126,113 @@ class EspnSourceTest {
 }
 
 class TheSportsDbSourceTest {
-    private fun bundle(): String {
-        fun w(name: String) = SportsFixtures.raw("tsdb/$name.json")
-        return """{"event":${SportsFixtures.raw("tsdb/epl_event.json")},"stats":${w("ev_lookup_event_stats_2494097")},"timeline":${w("ev_lookup_event_timeline_2494097")},"tv":${w("ev_lookup_event_tv_2494097")},"highlights":${w("ev_lookup_event_highlights_2494097")}}"""
-    }
-    private val ref = nbaRef("tsdb:2494097").copy(sport = "Soccer", leagueId = "4328")
+    private val ref = nbaRef("tsdb:2494097").copy(sport = "Soccer", leagueId = "4328", homeName = "Leeds United", awayName = "Tottenham Hotspur")
+    private fun source(h: HttpFetcher, base: String? = "https://backend.example/functions/v1") = TheSportsDbSource(h, { base }, FakeClock()::read)
+    private fun ok() = FakeHttp { HttpResponse(200, SportsFixtures.gameDetail("game_detail_soccer_live"), null) }
 
-    @Test fun `builds blocks and header from the backend bundle`() = runBlocking {
-        val h = FakeHttp { HttpResponse(200, bundle(), null) }
-        val l = TheSportsDbSource(h, { "https://backend.example/functions/v1" }, FakeClock()::read).load(ref, setOf(RefreshPart.SCOREBOARD, RefreshPart.SUMMARY), SportsFixtures.mapping)
+    @Test fun `decodes the backends normalised game detail`() = runBlocking {
+        val l = source(ok()).load(ref, RefreshPart.ALL, SportsFixtures.mapping)
         assertEquals("hit", FetchOutcome.HIT, l.outcome)
-        assertTrue("header", l.header is GameHeader.Teams)
-        assertTrue("stats+timeline+broadcast", l.blocks.keys.containsAll(setOf(BlockType.STATS, BlockType.TIMELINE, BlockType.BROADCAST)))
-        assertTrue("event id sent", h.requests[0].first.contains("event_id=2494097"))
+        val h = l.header as GameHeader.Teams
+        assertEquals("home", "Leeds United", h.home.name)
+        assertEquals("score", "1", h.home.score)
+        assertTrue("badge", h.home.badgeUrl!!.startsWith("https://"))
+        assertEquals("state", GameState.LIVE, l.state)
+        assertEquals("live detail", "2nd half", l.live?.detail)
+        assertEquals("all known block types, unknown dropped", setOf(BlockType.STATS, BlockType.TIMELINE, BlockType.BROADCAST, BlockType.LINEUP, BlockType.RESULTS, BlockType.STANDINGS, BlockType.FORM, BlockType.HIGHLIGHTS), l.blocks.keys)
     }
+
+    @Test fun `block details survive decoding`() = runBlocking {
+        val b = source(ok()).load(ref, RefreshPart.ALL, SportsFixtures.mapping).blocks
+        val stats = b[BlockType.STATS] as GameBlock.Stats
+        assertEquals("unit kept", "%", stats.rows.first { it.label == "Possession" }.unit)
+        val card = (b[BlockType.TIMELINE] as GameBlock.Timeline).items.first { it.kind == TimelineKind.CARD }
+        assertEquals("away card", SideKey.AWAY, card.side)
+        assertEquals("time", "15'", card.time)
+        assertTrue("broadcast region", (b[BlockType.BROADCAST] as GameBlock.Broadcast).channels.any { it.region == "Iceland" })
+        val lu = b[BlockType.LINEUP] as GameBlock.Lineup
+        assertEquals("formation", "4-3-3", lu.sides[0].formation)
+        assertEquals("sub", false, lu.sides[0].players[1].starter)
+        assertEquals("form", listOf("W", "L", "D", "D", "L"), (b[BlockType.FORM] as GameBlock.Form).home)
+        assertEquals("standing", "Arsenal", (b[BlockType.STANDINGS] as GameBlock.Standings).rows[0].name)
+        assertEquals("highlights", "https://www.youtube.com/watch?v=abc", (b[BlockType.HIGHLIGHTS] as GameBlock.Highlights).url)
+    }
+
+    @Test fun `calls the game-detail constant with ids and honours the blocks hint`() = runBlocking {
+        val h = ok()
+        source(h).load(ref, RefreshPart.ALL, SportsFixtures.mapping)
+        source(h).load(ref, setOf(RefreshPart.SCOREBOARD), SportsFixtures.mapping)
+        assertEquals("full", "https://backend.example/functions/v1/${SportsDetailPaths.GAME_DETAIL}?event_id=2494097&league_id=4328", h.requests[0].first)
+        assertEquals("fast tick is header only", "https://backend.example/functions/v1/game-detail?event_id=2494097&league_id=4328&blocks=none", h.requests[1].first)
+        assertEquals("function names are the backend's", "game-detail" to "sports-mapping", SportsDetailPaths.GAME_DETAIL to SportsDetailPaths.SPORTS_MAPPING)
+    }
+
+    @Test fun `disabled true from the server is honoured`() = runBlocking {
+        val l = source(FakeHttp { HttpResponse(200, SportsFixtures.gameDetail("game_detail_disabled"), null) }).load(ref, RefreshPart.ALL, SportsFixtures.mapping)
+        assertTrue("disabled", l.disabled)
+        assertTrue("no blocks", l.blocks.isEmpty())
+    }
+
     @Test fun `no backend configured is a miss not a crash`() = runBlocking {
-        assertEquals("miss", FetchOutcome.EMPTY, TheSportsDbSource(FakeHttp { error("unused") }, { null }, FakeClock()::read).load(ref, setOf(RefreshPart.SUMMARY), SportsFixtures.mapping).outcome)
+        assertEquals("miss", FetchOutcome.EMPTY, source(FakeHttp { error("unused") }, base = null).load(ref, RefreshPart.ALL, SportsFixtures.mapping).outcome)
     }
-    @Test fun `espn-only game ids are not asked of tsdb`() = runBlocking {
+    @Test fun `espn-only game ids are not asked of the backend`() = runBlocking {
         val h = FakeHttp { error("unused") }
-        assertEquals("miss", FetchOutcome.EMPTY, TheSportsDbSource(h, { "https://b" }, FakeClock()::read).load(ref.copy(gameId = "espn:5"), setOf(RefreshPart.SUMMARY), SportsFixtures.mapping).outcome)
+        assertEquals("miss", FetchOutcome.EMPTY, source(h).load(ref.copy(gameId = "espn:5"), RefreshPart.ALL, SportsFixtures.mapping).outcome)
         assertTrue("no request", h.requests.isEmpty())
     }
-    @Test fun `server error is http_fail`() = runBlocking {
-        assertEquals("fail", FetchOutcome.HTTP_FAIL, TheSportsDbSource(FakeHttp { HttpResponse(502, null, null) }, { "https://b" }, FakeClock()::read).load(ref, setOf(RefreshPart.SUMMARY), SportsFixtures.mapping).outcome)
+    @Test fun `status codes map to outcomes`() = runBlocking {
+        fun out(code: Int, body: String? = "{}") = runBlocking { source(FakeHttp { HttpResponse(code, body, null) }).load(ref, RefreshPart.ALL, SportsFixtures.mapping).outcome }
+        assertEquals("404 unknown event", FetchOutcome.EMPTY, out(404))
+        assertEquals("502 upstream", FetchOutcome.HTTP_FAIL, out(502))
+        assertEquals("400", FetchOutcome.HTTP_FAIL, out(400))
+        assertEquals("html", FetchOutcome.PARSE_FAIL, out(200, "<html>"))
+    }
+    @Test fun `server kill switch in the mapping skips the backend call entirely`() = runBlocking {
+        val tsdb = source(FakeHttp { error("must not be called") })
+        val r = GameDetailResolver({ SportsFixtures.mapping.copy(killSwitch = KillSwitch(gameDetailAll = true)) }, mapOf(SourceId.TSDB to tsdb), clock = FakeClock()::read)
+        assertEquals("disabled", SourceStatus.DISABLED, r.resolve(ref).sourceStatus[SourceId.TSDB])
+    }
+}
+
+class SportsDetailFacadeTest {
+    private val epl = nbaRef("tsdb:2494097").copy(sport = "Soccer", leagueId = "4328", homeName = "Leeds United", awayName = "Tottenham Hotspur", startsAtMs = java.time.Instant.parse("2026-11-07T12:30:00Z").toEpochMilli())
+    private fun http() = FakeHttp { u ->
+        when {
+            u.contains("/game-detail") -> HttpResponse(200, SportsFixtures.gameDetail("game_detail_soccer_live"), null)
+            u.contains("/scoreboard") -> HttpResponse(200, SportsFixtures.raw("espn/epl_scoreboard.json"), null)
+            u.contains("/summary") -> HttpResponse(200, SportsFixtures.raw("espn/epl_summary_post.json"), null)
+            else -> HttpResponse(404, null, null)
+        }
+    }
+
+    @Test fun `tick merges espn and backend blocks with tsdb first`() = runBlocking {
+        val src = SportsDetail.create(http(), { "https://b/functions/v1" }).open(epl)
+        val d = (src.tick() as DetailLoad.Loaded).detail
+        assertEquals("stats from tsdb", SourceId.TSDB, d.sources[BlockType.STATS])
+        assertEquals("header primary tsdb", "1", (d.header as GameHeader.Teams).home.score)
+        assertEquals("espn probed and answered; tsdb already filled every soccer block", SourceStatus.OK, d.sourceStatus[SourceId.ESPN])
+    }
+
+    @Test fun `an event-only tick keeps the summary blocks from the previous tick`() = runBlocking {
+        val src = SportsDetail.create(http(), { "https://b/functions/v1" }).open(epl)
+        val first = (src.tick() as DetailLoad.Loaded).detail
+        val second = (src.tick(fetchEvent = true, fetchSummary = false) as DetailLoad.Loaded).detail
+        assertEquals("nothing lost", first.blocks.map { it.type }.toSet(), second.blocks.map { it.type }.toSet())
+    }
+
+    @Test fun `all sources down is Failed not Empty`() = runBlocking {
+        val src = SportsDetail.create(FakeHttp { HttpResponse(503, null, null) }, { "https://b/functions/v1" }).open(epl)
+        assertTrue("failed", src.tick() is DetailLoad.Failed)
+    }
+
+    @Test fun `a failed tick after a good one keeps showing the good detail`() = runBlocking {
+        var down = false
+        val inner = http()
+        val src = SportsDetail.create(FakeHttp { u -> if (down) HttpResponse(503, null, null) else runBlocking { inner.get(u, deadlineMs = 1) } }, { "https://b/functions/v1" }).open(epl)
+        assertTrue("good", src.tick() is DetailLoad.Loaded)
+        down = true
+        assertTrue("still loaded", src.tick() is DetailLoad.Loaded)
     }
 }
 
@@ -157,10 +270,11 @@ class MappingUpdaterTest {
     @Test fun `http remote sends If-None-Match and maps statuses`() = runBlocking {
         var status = 200
         val h = FakeHttp { HttpResponse(status, if (status == 200) "{}" else null, "\"e1\"") }
-        val r = HttpMappingRemote(h)
+        val r = HttpMappingRemote(h, functionsBase = { "https://b/functions/v1/" })
         assertEquals("200", RemoteMapping.Updated("{}", "\"e1\""), r.fetch("\"old\""))
         assertEquals("header", "\"old\"", h.requests[0].second["If-None-Match"])
-        assertEquals("single url constant", SportsMappingRemote.URL, h.requests[0].first)
+        assertEquals("function path constant", "https://b/functions/v1/sports-mapping", h.requests[0].first)
+        assertEquals("no backend", RemoteMapping.Failed, HttpMappingRemote(h, functionsBase = { null }).fetch(null))
         status = 304; assertEquals("304", RemoteMapping.NotModified, r.fetch("\"e1\""))
         status = 500; assertEquals("500", RemoteMapping.Failed, r.fetch(null))
     }

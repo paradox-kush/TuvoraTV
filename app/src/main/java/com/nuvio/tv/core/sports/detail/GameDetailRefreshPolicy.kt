@@ -69,3 +69,44 @@ object GameDetailRefreshPolicy {
         return Decision(fetch, delays.minOrNull())
     }
 }
+
+/** Mobile-aligned planning API (`GameDetailRefreshPolicy.plan`): what to fetch now and when to look again. */
+data class RefreshPlan(val fetchEvent: Boolean, val fetchSummary: Boolean, val nextCheckInMs: Long?) {
+    val isIdle: Boolean get() = nextCheckInMs == null
+}
+
+private const val STALE_UPCOMING_MS = 3L * 60 * 60 * 1000
+private const val MAX_BACKOFF_SHIFT = 3
+private const val PRE_KICKOFF_LEAD_MS = 30L * 60 * 1000
+
+/**
+ * Same decision as [GameDetailRefreshPolicy.decide] in the shape the Mobile lane exposes: LIVE ticks the
+ * event every liveMs and the summary every summaryMs; an UPCOMING game within 30 min of kick-off ticks the
+ * event only; everything else is idle (zero requests, no next check). Failures back off 2x/4x/8x.
+ */
+fun GameDetailRefreshPolicy.plan(
+    state: GameState,
+    startsAtMs: Long,
+    nowMs: Long,
+    lastEventFetchMs: Long?,
+    lastSummaryFetchMs: Long?,
+    consecutiveFailures: Int = 0,
+    config: GameDetailRefreshPolicy.Config = GameDetailRefreshPolicy.Config(),
+    minMs: Long = 6_000L,
+): RefreshPlan {
+    val backoff = 1L shl consecutiveFailures.coerceIn(0, MAX_BACKOFF_SHIFT)
+    val eventEvery = maxOf(config.liveMs, minMs) * backoff
+    val summaryEvery = maxOf(config.summaryMs, minMs) * backoff
+    fun remaining(last: Long?, every: Long) = if (last == null) 0L else (every - (nowMs - last)).coerceAtLeast(0L)
+    val eventWait = remaining(lastEventFetchMs, eventEvery)
+    val summaryWait = remaining(lastSummaryFetchMs, summaryEvery)
+    return when (state) {
+        GameState.FINAL, GameState.POSTPONED -> RefreshPlan(false, false, null)
+        GameState.UPCOMING -> {
+            val untilKickoff = startsAtMs - nowMs
+            if (untilKickoff > PRE_KICKOFF_LEAD_MS || -untilKickoff > STALE_UPCOMING_MS) RefreshPlan(false, false, null)
+            else RefreshPlan(eventWait == 0L, false, eventWait)
+        }
+        GameState.LIVE -> RefreshPlan(eventWait == 0L, summaryWait == 0L, minOf(eventWait, summaryWait))
+    }
+}

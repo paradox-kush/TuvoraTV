@@ -25,7 +25,7 @@ enum class BlockType(val wire: String) {
     companion object {
         /** Block types the shared core can assemble from a provider (watch/next/standings are not yet). */
         val assemblable: Set<BlockType> = setOf(
-            SITUATION, BROADCAST, LINESCORE, STATS, LEADERS, TIMELINE, LINEUP, RESULTS, FORM, HIGHLIGHTS, WIN_PROBABILITY,
+            SITUATION, BROADCAST, LINESCORE, STATS, LEADERS, TIMELINE, LINEUP, RESULTS, STANDINGS, FORM, HIGHLIGHTS, WIN_PROBABILITY,
         )
 
         fun fromWire(s: String?): BlockType? = entries.firstOrNull { it.wire == s }
@@ -74,6 +74,7 @@ data class TimelineItem(
 data class LineupPlayer(val number: String?, val name: String, val pos: String?, val starter: Boolean)
 data class LineupSide(val formation: String?, val players: List<LineupPlayer>)
 data class BroadcastEntry(val region: String?, val name: String)
+data class StandingRow(val pos: String, val name: String, val played: String, val points: String, val gd: String? = null, val form: String? = null)
 
 sealed interface GameBlock {
     val type: BlockType
@@ -103,6 +104,9 @@ sealed interface GameBlock {
     data class Results(override val source: SourceId, val columns: List<String>, val rows: List<List<String>>) : GameBlock {
         override val type get() = BlockType.RESULTS
     }
+    data class Standings(override val source: SourceId, val rows: List<StandingRow>) : GameBlock {
+        override val type get() = BlockType.STANDINGS
+    }
     data class Form(override val source: SourceId, val home: List<String>, val away: List<String>) : GameBlock {
         override val type get() = BlockType.FORM
     }
@@ -118,12 +122,13 @@ sealed interface GameBlock {
 /** What the screen was opened with: enough to show a match sheet when no source answers. */
 data class GameRef(
     val gameId: String,
-    val sport: String,
     val leagueId: String,
-    val leagueName: String,
     val homeName: String,
+    /** Empty for single-entity events (race weekend, fight card): then [eventName] holds the name. */
     val awayName: String,
     val startsAtMs: Long,
+    val sport: String = "",
+    val leagueName: String = "",
     val eventName: String? = null,
     val round: String? = null,
     val venue: String? = null,
@@ -133,6 +138,8 @@ data class GameRef(
 ) {
     /** The id in the primary source's own namespace ("tsdb:123" -> "123"). */
     val rawId: String get() = gameId.substringAfter(':')
+    val tsdbEventId: String? get() = if (gameId.startsWith("tsdb:")) rawId else null
+    val espnEventId: String? get() = if (gameId.startsWith("espn:")) rawId else null
 
     /** Header and state are only ever taken from this source, so a cross-provider mislink can't change the score. */
     val primary: SourceId get() = if (gameId.startsWith("espn:")) SourceId.ESPN else SourceId.TSDB

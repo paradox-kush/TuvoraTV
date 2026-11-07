@@ -12,7 +12,15 @@ import kotlinx.serialization.json.longOrNull
 data class RefreshConfig(val liveMs: Long = 15_000, val summaryMs: Long = 60_000, val idleMs: Long = 0, val minMs: Long = 6_000)
 
 /** Remote kill switches: the whole ESPN source, per sport profile, per TheSportsDB league id. */
-data class KillSwitch(val espn: Boolean = false, val sports: Set<String> = emptySet(), val leagues: Set<String> = emptySet())
+data class KillSwitch(
+    val espn: Boolean = false,
+    val sports: Set<String> = emptySet(),
+    val leagues: Set<String> = emptySet(),
+    /** Backend `killSwitch.gameDetail`: the TheSportsDB game-detail endpoint (the server also answers `disabled:true`). */
+    val gameDetailAll: Boolean = false,
+    val gameDetailSports: Set<String> = emptySet(),
+    val gameDetailLeagues: Set<String> = emptySet(),
+)
 
 data class LeagueMapping(
     val tsdbId: String,
@@ -82,6 +90,10 @@ data class SportsMapping(
     fun espnEnabled(profile: String?, leagueId: String?): Boolean =
         !killSwitch.espn && profile !in killSwitch.sports && leagueId !in killSwitch.leagues
 
+    fun gameDetailEnabled(sportName: String?, leagueId: String?): Boolean =
+        !killSwitch.gameDetailAll && leagueId !in killSwitch.gameDetailLeagues &&
+            killSwitch.gameDetailSports.none { it.equals(sportName, ignoreCase = true) }
+
     fun commonPath(key: String): String? = (common[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
     fun commonTeamPath(key: String): String? =
         ((common["team"] as? JsonObject)?.get(key) as? JsonPrimitive)?.takeIf { it.isString }?.content
@@ -125,6 +137,9 @@ object SportsMappingParser {
                     espn = (ks?.get("espn") as? JsonPrimitive)?.booleanOrNull ?: false,
                     sports = strings(ks?.get("sports")),
                     leagues = strings(ks?.get("leagues")),
+                    gameDetailAll = ((ks?.get("gameDetail") as? JsonObject)?.get("all") as? JsonPrimitive)?.booleanOrNull ?: false,
+                    gameDetailSports = strings((ks?.get("gameDetail") as? JsonObject)?.get("sports")),
+                    gameDetailLeagues = strings((ks?.get("gameDetail") as? JsonObject)?.get("leagues")),
                 ),
                 espnScoreboardUrl = str(espn?.get("scoreboard")) ?: DEFAULT_SCOREBOARD,
                 espnSummaryUrl = str(espn?.get("summary")) ?: DEFAULT_SUMMARY,

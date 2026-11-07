@@ -54,16 +54,19 @@ class EspnSource(
         val path = league.espnPath ?: return SourceLoad.miss()
         val profileName = mapping.profileNameFor(ref.leagueId, ref.sport) ?: return SourceLoad.miss()
         val profile = mapping.profile(profileName) ?: return SourceLoad.miss()
+        if (parts.isEmpty()) return SourceLoad.miss()
         val asm = EspnBlockAssembler(mapping)
         val deadline = mapping.deadlineMs
 
-        var eventId = (mapping.eventOverrides[ref.rawId] ?: mapping.eventOverrides[ref.gameId]) ?: matchedIds[ref.gameId]
+        var eventId = (mapping.eventOverrides[ref.rawId] ?: mapping.eventOverrides[ref.gameId]) ?: ref.espnEventId ?: matchedIds[ref.gameId]
         var event: JsonElement? = null
         var failure: FetchOutcome? = null
+        val hasSummary = league.summary && profile.specFromSummary()
 
-        if (RefreshPart.SCOREBOARD in parts || eventId == null) {
-            val found = scoreboard(ref, path, eventId, mapping, deadline)
-            when (found) {
+        // Delta rule: the whole-day scoreboard is fetched ONLY to resolve the event id (then cached per game).
+        // A leagues without a per-game summary (F1, UFC, tennis) has no cheaper endpoint, so it keeps using it.
+        if (eventId == null || !hasSummary) {
+            when (val found = scoreboard(ref, path, eventId, mapping, deadline)) {
                 is Board.Failed -> failure = found.outcome
                 is Board.Found -> { eventId = found.id; event = found.event; matchedIds[ref.gameId] = found.id }
                 Board.None -> Unit
@@ -72,13 +75,14 @@ class EspnSource(
         if (eventId == null) return SourceLoad(failure ?: FetchOutcome.EMPTY)
 
         var summary: JsonElement? = null
-        val needSummary = RefreshPart.SUMMARY in parts && league.summary && profile.specFromSummary()
-        if (needSummary) {
+        if (hasSummary) {
+            // One per-game summary serves both the live tick (header/competitions carry score + clock) and the slower blocks.
             when (val s = fetch(mapping.espnSummaryUrl.replace("{path}", path).replace("{id}", eventId), deadline)) {
                 is Fetched.Doc -> summary = s.json
                 is Fetched.Failed -> failure = failure ?: s.outcome
                 is Fetched.NotFound -> Unit
             }
+            if (event == null) event = eventFromSummary(summary)
         }
 
         val docs = EspnDocs(event, summary)
@@ -86,6 +90,22 @@ class EspnSource(
         val header = asm.header(profileName, docs)
         if (blocks.isEmpty() && header == null) return SourceLoad(failure ?: FetchOutcome.EMPTY)
         return SourceLoad.ok(blocks, header, asm.gameState(docs), asm.live(docs, profileName))
+    }
+
+    /**
+     * A scoreboard-shaped event built from the summary's `header.competitions[0]`, so the same mapping
+     * paths (competitors, status, linescores) read it. Blocks only the scoreboard carries (leaders, form,
+     * broadcast) are absent on ticks and keep their earlier value through GameDetail.mergeOver.
+     */
+    private fun eventFromSummary(summary: JsonElement?): JsonElement? {
+        val comp = JsonPathReader.first(summary, "header.competitions[0]") as? kotlinx.serialization.json.JsonObject ?: return null
+        val situation = JsonPathReader.first(summary, "situation")
+        val withSituation = if (situation != null && !comp.containsKey("situation")) kotlinx.serialization.json.JsonObject(comp + ("situation" to situation)) else comp
+        val fields = LinkedHashMap<String, JsonElement>()
+        JsonPathReader.first(summary, "header.id")?.let { fields["id"] = it }
+        comp["status"]?.let { fields["status"] = it }
+        fields["competitions"] = kotlinx.serialization.json.JsonArray(listOf(withSituation))
+        return kotlinx.serialization.json.JsonObject(fields)
     }
 
     private fun SportProfile.specFromSummary(): Boolean = blocks.any { b ->

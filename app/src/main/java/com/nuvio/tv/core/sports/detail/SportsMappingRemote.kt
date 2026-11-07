@@ -1,11 +1,9 @@
 package com.nuvio.tv.core.sports.detail
 
-object SportsMappingRemote {
-    /**
-     * The one place the hosted mapping URL lives. PLACEHOLDER until the backend wave hosts
-     * `sports-mapping.json` (Supabase Storage/edge, ETag-cached); change here only.
-     */
-    const val URL = "https://tuvora.co/sports-mapping.json"
+/** Backend function names (directories under supabase/functions), appended to the functions base. The only place they live. */
+object SportsDetailPaths {
+    const val GAME_DETAIL = "game-detail"
+    const val SPORTS_MAPPING = "sports-mapping"
 }
 
 sealed interface RemoteMapping {
@@ -18,14 +16,22 @@ interface MappingRemote {
     suspend fun fetch(etag: String?): RemoteMapping
 }
 
-class HttpMappingRemote(private val http: HttpFetcher, private val deadlineMs: Long = 8_000) : MappingRemote {
+/** GET {functionsBase}/sports-mapping with If-None-Match; a 304 costs no body. */
+class HttpMappingRemote(
+    private val http: HttpFetcher,
+    private val functionsBase: () -> String?,
+    private val deadlineMs: Long = 8_000,
+) : MappingRemote {
     override suspend fun fetch(etag: String?): RemoteMapping = try {
-        val headers = buildMap { put("Accept", "application/json"); if (etag != null) put("If-None-Match", etag) }
-        val r = http.get(SportsMappingRemote.URL, headers, deadlineMs)
-        when {
-            r.code == 304 -> RemoteMapping.NotModified
-            r.isSuccessful && r.body != null -> RemoteMapping.Updated(r.body, r.etag)
-            else -> RemoteMapping.Failed
+        val base = functionsBase()?.trimEnd('/')
+        if (base == null) RemoteMapping.Failed else {
+            val headers = buildMap { put("Accept", "application/json"); if (etag != null) put("If-None-Match", etag) }
+            val r = http.get("$base/${SportsDetailPaths.SPORTS_MAPPING}", headers, deadlineMs)
+            when {
+                r.code == 304 -> RemoteMapping.NotModified
+                r.isSuccessful && r.body != null -> RemoteMapping.Updated(r.body, r.etag)
+                else -> RemoteMapping.Failed
+            }
         }
     } catch (e: kotlin.coroutines.cancellation.CancellationException) {
         throw e
@@ -35,9 +41,9 @@ class HttpMappingRemote(private val http: HttpFetcher, private val deadlineMs: L
 }
 
 /**
- * Pulls the hosted mapping with its ETag (a 304 costs no body), offers it to the store, and
- * remembers the ETag. Call at app start and then rarely (daily). Returns the store's verdict, or
- * null when nothing was offered (not modified / network failure). Never throws.
+ * Pulls the hosted mapping with its ETag, offers it to the store, and remembers the ETag. Call at
+ * screen open (cheap: a 304) or daily. Returns the store's verdict, or null when nothing was offered
+ * (not modified / network failure). Never throws.
  */
 class SportsMappingUpdater(
     private val store: SportsMappingStore,

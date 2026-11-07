@@ -12,6 +12,8 @@ data class SourceLoad(
     val state: GameState? = null,
     val live: LiveInfo? = null,
     val blocks: Map<BlockType, GameBlock> = emptyMap(),
+    /** The source answered that it is switched off (server kill switch). */
+    val disabled: Boolean = false,
 ) {
     companion object {
         fun ok(blocks: Map<BlockType, GameBlock>, header: GameHeader? = null, state: GameState? = null, live: LiveInfo? = null) =
@@ -19,6 +21,7 @@ data class SourceLoad(
 
         fun miss() = SourceLoad(FetchOutcome.EMPTY)
         fun failed(outcome: FetchOutcome) = SourceLoad(outcome)
+        fun disabled() = SourceLoad(FetchOutcome.EMPTY, disabled = true)
     }
 }
 
@@ -88,6 +91,9 @@ class GameDetailResolver(
                 val cooling = negativeCache.cooling(ref.gameId, id)
                 if (cooling != null) { status[id] = statusOf(cooling.outcome); continue }
             }
+            if (id == SourceId.TSDB && !mapping.gameDetailEnabled(ref.sport.ifBlank { league?.sport }, ref.leagueId)) {
+                status[id] = SourceStatus.DISABLED; continue
+            }
             val started = System.nanoTime()
             val load = try {
                 withTimeout(mapping.deadlineMs) { source.load(ref, parts, mapping) }
@@ -100,7 +106,7 @@ class GameDetailResolver(
             }
             val ms = (System.nanoTime() - started) / 1_000_000
             loads[id] = load
-            status[id] = statusOf(load.outcome)
+            status[id] = if (load.disabled) SourceStatus.DISABLED else statusOf(load.outcome)
             if (id == SourceId.ESPN && (load.outcome != FetchOutcome.EMPTY || RefreshPart.SCOREBOARD in parts)) {
                 negativeCache.record(ref.gameId, id, load.outcome)
             }

@@ -18,16 +18,7 @@ object SportsFixtures {
     fun espnDocs(k: String, summary: Boolean = true) =
         EspnDocs(espnEvent(k), if (summary) runCatching { espnSummary(k) }.getOrNull() else null)
 
-    fun tsdbEvent(k: String): JsonObject = json("tsdb/${k}_event.json").jsonObject["events"]!!.jsonArray[0].jsonObject
-    fun tsdbLookup(name: String): JsonElement = json("tsdb/$name.json")
-
-    fun tsdbDocsEpl() = TsdbDocs(
-        event = tsdbEvent("epl"),
-        stats = tsdbLookup("ev_lookup_event_stats_2494097"),
-        timeline = tsdbLookup("ev_lookup_event_timeline_2494097"),
-        tv = tsdbLookup("ev_lookup_event_tv_2494097"),
-        highlights = tsdbLookup("ev_lookup_event_highlights_2494097"),
-    )
+    fun gameDetail(name: String): String = raw("tsdb/$name.json")
 
     val mapping: SportsMapping by lazy { BundledSportsMapping.load() }
 }
