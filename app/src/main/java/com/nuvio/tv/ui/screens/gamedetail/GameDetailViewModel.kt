@@ -25,7 +25,6 @@ import com.nuvio.tv.playback.core.PlaybackProfileId
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,7 +34,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
@@ -150,14 +148,17 @@ class GameDetailViewModel @Inject constructor(
         matchJob = viewModelScope.launch {
             try {
                 val league = fx.leagueId?.let { repository.uiState.value.leagueById(it) }
-                val result = withContext(Dispatchers.IO) {
+                // Bounded: a slow provider ends as "couldn't check your channels" (Retry), never an endless spinner.
+                // Partial matches found before the deadline are kept and stay playable.
+                // (match() hops to its own background dispatcher internally.)
+                val result = withTimeoutOrNull(WatchResolver.LOOKUP_DEADLINE_MS) {
                     matcher.match(
                         fx, league,
                         stationLookup = { repository.tvStations(fx.id) },
                         onPartial = { partial -> matches = partial; publishWatch() },
                     )
                 }
-                matches = result
+                if (result != null) matches = result else if (matches.isEmpty()) matchingFailed = true
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -189,6 +190,11 @@ class GameDetailViewModel @Inject constructor(
         if (lineup.none { it.contentId.value == channel.contentId }) return
         livePlaylist.set(PlaybackProfileId(profileManager.activeProfileId.value.toString()), lineup)
         onPlay(channel.contentId)
+    }
+
+    /** "Find channels" / "Retry" on the Watch block. */
+    fun retryMatching() {
+        fixture?.let(::startMatching)
     }
 
     /** Asks Sports to open the existing channel match sheet for this game (also the no-data fallback). */

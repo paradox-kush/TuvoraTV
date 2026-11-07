@@ -537,7 +537,7 @@ fun SportsHubScreen(
                         Text(
                             if (followed) "★ Following" else "+ Follow",
                             style = MaterialTheme.typography.labelLarge,
-                            color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextSecondary,
+                            color = NuvioTheme.colors.TextPrimary,
                         )
                     }
                 }
@@ -614,7 +614,7 @@ fun SportsHubScreen(
                         Text(
                             if (followed) "★ Following" else "›",
                             style = MaterialTheme.typography.labelLarge,
-                            color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextSecondary,
+                            color = NuvioTheme.colors.TextPrimary,
                         )
                     }
                 }
@@ -1310,7 +1310,7 @@ private fun LeagueFixturesPage(
                     Text(
                         if (followed) "★ Following" else "Follow",
                         style = MaterialTheme.typography.labelLarge,
-                        color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextPrimary,
+                        color = NuvioTheme.colors.TextPrimary,
                     )
                 }
             }
@@ -1667,7 +1667,7 @@ private fun SportsCentreSearchResults(
                     Text(
                         if (followed) "★ Following" else "+ Follow",
                         style = MaterialTheme.typography.labelLarge,
-                        color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextSecondary,
+                        color = NuvioTheme.colors.TextPrimary,
                     )
                 }
             }
@@ -1705,7 +1705,7 @@ private fun LeagueFollowRow(league: RadarLeague, followed: Boolean, onClick: () 
         Text(
             if (followed) "★ Following" else "+ Follow",
             style = MaterialTheme.typography.labelLarge,
-            color = if (followed) MaterialTheme.colorScheme.primary else NuvioTheme.colors.TextSecondary,
+            color = NuvioTheme.colors.TextPrimary,
         )
     }
 }

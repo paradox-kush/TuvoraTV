@@ -71,4 +71,13 @@ class GameDetailViewModelTest {
         advanceUntilIdle()
         coVerify(exactly = 1) { matcher.match(any(), any(), any(), any(), any()) }
     }
+
+    @Test fun `a slow channel lookup ends as a failure with Retry after the deadline`() = runTest(main.dispatcher) {
+        val v = vm()
+        coEvery { matcher.match(any(), any(), any(), any(), any()) } coAnswers { kotlinx.coroutines.delay(600_000); emptyList() }
+        accounts.value = listOf(mockk<XtreamAccount>(relaxed = true).also { every { it.enabled } returns true })
+        advanceUntilIdle()
+        assertEquals("failed after the deadline", com.nuvio.tv.core.sports.detail.screen.WatchStatus.FAILED, v.watch.value.status)
+        assertEquals("with Retry", com.nuvio.tv.core.sports.detail.screen.PrimaryAction.Rematch(failed = true), v.watch.value.primary)
+    }
 }

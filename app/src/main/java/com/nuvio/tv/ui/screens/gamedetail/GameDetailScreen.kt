@@ -48,6 +48,7 @@ import com.nuvio.tv.core.sports.detail.screen.FocusKey
 import com.nuvio.tv.core.sports.detail.screen.GameDetailFocus
 import com.nuvio.tv.core.sports.detail.screen.GameDetailTvModel
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiState
+import com.nuvio.tv.core.sports.detail.screen.tvName
 import com.nuvio.tv.core.sports.detail.screen.PrimaryAction
 import com.nuvio.tv.core.sports.detail.screen.WatchMode
 import com.nuvio.tv.core.sports.detail.screen.WatchStatus
@@ -118,7 +119,7 @@ fun GameDetailScreen(
     }
 
     Box(
-        Modifier.fillMaxSize().background(NuvioTheme.colors.Background).padding(horizontal = 56.dp, vertical = 40.dp),
+        Modifier.fillMaxSize().background(NuvioTheme.colors.Background).padding(start = 56.dp, end = 56.dp, top = 40.dp, bottom = 64.dp),
     ) {
         when (val s = ui) {
             is GameDetailUiState.Loading, GameDetailUiState.NoData -> CenterMessage(
@@ -131,7 +132,7 @@ fun GameDetailScreen(
                     Column(Modifier.weight(1.5f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         HeaderBlock(model, s.stale)
                         model.situation?.let { SituationLine(it) }
-                        model.homeWinPercent?.let { WinProbability(it, model.sides.getOrNull(0)?.short ?: model.sides.getOrNull(0)?.name.orEmpty(), model.sides.getOrNull(1)?.short ?: model.sides.getOrNull(1)?.name.orEmpty()) }
+                        model.homeWinPercent?.let { WinProbability(it, model.sides.getOrNull(0)?.tvName.orEmpty(), model.sides.getOrNull(1)?.tvName.orEmpty()) }
                         model.linescore?.let { Linescore(it.columns, it.rows, model.sides) }
                         Spacer(Modifier.weight(1f))
                         SourceRow(
@@ -139,8 +140,11 @@ fun GameDetailScreen(
                             requesters = requesters,
                             onFocused = onFocused,
                             onPrimary = {
-                                if (watch.primary == PrimaryAction.AddProvider) onAddProvider()
-                                else viewModel.playPrimary(onPlayChannel)
+                                when (watch.primary) {
+                                    PrimaryAction.AddProvider -> onAddProvider()
+                                    is PrimaryAction.Rematch -> viewModel.retryMatching()
+                                    else -> viewModel.playPrimary(onPlayChannel)
+                                }
                             },
                             onChannels = { viewModel.requestMatchSheet(); onOpenMatchSheet() },
                         )
@@ -207,7 +211,7 @@ private fun SideBlock(side: Side, modifier: Modifier) {
             AsyncImage(model = side.badgeUrl, contentDescription = null, modifier = Modifier.size(56.dp).clip(CircleShape))
         }
         Column(Modifier.weight(1f)) {
-            Text(side.name, style = MaterialTheme.typography.titleLarge, color = NuvioTheme.colors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(side.tvName, style = MaterialTheme.typography.titleLarge, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
             side.record?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.TextSecondary) }
         }
         side.score?.let { Text(it, style = MaterialTheme.typography.displaySmall, color = NuvioTheme.colors.TextPrimary, fontWeight = FontWeight.Bold) }
@@ -245,7 +249,7 @@ private fun WinProbability(homePercent: Int, home: String, away: String) {
 private fun Linescore(columns: List<String>, rows: List<List<String>>, sides: List<Side>) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(NuvioTheme.colors.BackgroundElevated).padding(horizontal = 16.dp, vertical = 10.dp)) {
         LineRow("", columns, header = true)
-        rows.forEachIndexed { i, r -> LineRow(sides.getOrNull(i)?.let { it.short ?: it.name }.orEmpty(), r, header = false) }
+        rows.forEachIndexed { i, r -> LineRow(sides.getOrNull(i)?.tvName.orEmpty(), r, header = false) }
     }
 }
 
@@ -273,12 +277,15 @@ private fun SourceRow(
                 is PrimaryAction.Play -> TvButton("▶  Play ${p.channel.name}", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
                 is PrimaryAction.Switch -> TvButton("⇄  Switch to ${p.channel.name}", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
                 PrimaryAction.AddProvider -> TvButton("Add IPTV provider", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
+                is PrimaryAction.Rematch -> TvButton(if (p.failed) "Retry" else "Find channels", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
                 PrimaryAction.None -> Unit
             }
-            TvButton(
-                if (watch.alternatives > 0) "Channels (${watch.alternatives + 1})" else "Channels",
-                false, requesters.getValue(FocusKey.CHANNELS), { onFocused(FocusKey.CHANNELS) }, onChannels,
-            )
+            if (watch.showChannels) {
+                TvButton(
+                    if (watch.alternatives > 0) "Channels (${watch.alternatives + 1})" else "Channels",
+                    false, requesters.getValue(FocusKey.CHANNELS), { onFocused(FocusKey.CHANNELS) }, onChannels,
+                )
+            }
         }
     }
 }
@@ -287,8 +294,8 @@ private fun watchStatusLine(w: WatchUi): String = when (w.status) {
     WatchStatus.FINDING -> if (w.mode == WatchMode.WATCHING && w.currentChannelName != null) "Watching ${w.currentChannelName} · finding channels…" else "Finding channels…"
     WatchStatus.READY -> if (w.mode == WatchMode.WATCHING) "Watching ${w.currentChannelName ?: "a channel"}" else "Found on your channels"
     WatchStatus.ALREADY_ON_IT -> "Watching this game on ${w.currentChannelName ?: "this channel"}"
-    WatchStatus.NO_CHANNELS -> "None of your channels list this game"
-    WatchStatus.FAILED -> "Couldn't load channels from your providers"
+    WatchStatus.NO_CHANNELS -> "None of your channels list this game yet"
+    WatchStatus.FAILED -> "Couldn't check your channels"
     WatchStatus.NO_PROVIDER -> "Add an IPTV playlist to watch this game"
 }
 
@@ -305,7 +312,10 @@ private fun LatestPlays(model: GameDetailTvModel, modifier: Modifier) {
         model.latestPlays.forEach { p ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(p.time, style = MaterialTheme.typography.labelLarge, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(52.dp))
-                Text(p.text, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    listOfNotNull(p.tag, p.text).joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

@@ -10,6 +10,8 @@ sealed interface PrimaryAction {
     data class Play(val channel: WatchCandidate) : PrimaryAction
     data class Switch(val channel: WatchCandidate) : PrimaryAction
     data object AddProvider : PrimaryAction
+    /** Re-run the channel lookup: "Find channels" when nothing matched, "Retry" when the lookup failed or timed out. */
+    data class Rematch(val failed: Boolean) : PrimaryAction
     data object None : PrimaryAction
 }
 
@@ -20,10 +22,16 @@ data class WatchUi(
     val status: WatchStatus,
     /** Other matching channels beyond the primary one (reachable through "Channels"). */
     val alternatives: Int,
-)
+) {
+    /** "Channels" (the full match sheet) only when it can show something; otherwise it would be a dead end. */
+    val showChannels: Boolean get() = status != WatchStatus.NO_CHANNELS && status != WatchStatus.FAILED && status != WatchStatus.NO_PROVIDER
+}
 
 /** Pure: matcher output + entry state in, the Watch block out. Entry decides Play (browsing) vs Switch (watching). */
 object WatchResolver {
+    /** The channel lookup ends within this: a slow provider becomes "Couldn't check your channels" + Retry. */
+    const val LOOKUP_DEADLINE_MS = 6_000L
+
     fun resolve(
         watchingContentId: String?,
         watchingName: String?,
@@ -42,7 +50,12 @@ object WatchResolver {
                 matchingFailed -> WatchStatus.FAILED
                 else -> WatchStatus.NO_CHANNELS
             }
-            return WatchUi(mode, watchingName, PrimaryAction.None, status, 0)
+            val action = when (status) {
+                WatchStatus.NO_CHANNELS -> PrimaryAction.Rematch(failed = false)
+                WatchStatus.FAILED -> PrimaryAction.Rematch(failed = true)
+                else -> PrimaryAction.None
+            }
+            return WatchUi(mode, watchingName, action, status, 0)
         }
         if (watchingContentId != null) {
             if (candidates.any { it.contentId == watchingContentId }) {

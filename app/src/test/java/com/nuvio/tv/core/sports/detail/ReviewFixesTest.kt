@@ -112,20 +112,90 @@ class ReviewFixesTest {
         assertEquals("richer clock", "Q2 5:12", d.live?.clock)
     }
 
-    @Test fun `espn clock is ignored when the score disagrees`() = runBlocking {
+    private fun named(h: String, a: String, hs: String?, aws: String?, hShort: String? = null, aShort: String? = null) =
+        GameHeader.Teams(Side(h, short = hShort, score = hs), Side(a, short = aShort, score = aws))
+
+    // ---- score authority: a stale primary vs a fresh ESPN that agrees by name ----
+
+    @Test fun `stale primary score is replaced by a fresh espn score and clock when the names agree`() = runBlocking {
         val d = resolver(
-            FakeSource(SourceId.TSDB) { _, _ -> load(teams("54", "50"), GameState.LIVE, LiveInfo(clock = "Q2")) },
-            FakeSource(SourceId.ESPN) { _, _ -> load(teams("60", "50"), GameState.LIVE, LiveInfo(clock = "Q3 1:00"), line) },
+            FakeSource(SourceId.TSDB) { _, _ -> load(named("Washington Capitals", "Florida Panthers", "1", "2"), GameState.LIVE, LiveInfo(detail = "Break")) },
+            FakeSource(SourceId.ESPN) { _, _ -> load(named("Washington Capitals", "Florida Panthers", "3", "2", "WSH", "FLA"), GameState.LIVE, LiveInfo(clock = "0:00", periodLabel = "2nd"), line) },
         ).resolve(nbaRef())
-        assertEquals("primary clock", "Q2", d.live?.clock)
+        val h = d.header as GameHeader.Teams
+        assertEquals("espn score", "3" to "2", h.home.score to h.away.score)
+        assertEquals("abbreviations for short display", "WSH" to "FLA", h.home.short to h.away.short)
+        assertEquals("primary names kept", "Washington Capitals", h.home.name)
+        assertEquals("espn period + clock", "2nd" to "0:00", d.live?.periodLabel to d.live?.clock)
     }
 
-    @Test fun `with no primary live info a disagreeing espn clock is still not borrowed`() = runBlocking {
+    @Test fun `badges and venue stay with the primary`() = runBlocking {
+        val prim = GameHeader.Teams(Side("A City", badgeUrl = "https://p/a.png", score = "0"), Side("B Town", badgeUrl = "https://p/b.png", score = "0"))
+        val esp = GameHeader.Teams(Side("A City", badgeUrl = "https://e/a.png", score = "1"), Side("B Town", badgeUrl = "https://e/b.png", score = "0"))
         val d = resolver(
-            FakeSource(SourceId.TSDB) { _, _ -> load(teams("54", "50"), GameState.LIVE) },
-            FakeSource(SourceId.ESPN) { _, _ -> load(teams("0", "0"), GameState.LIVE, LiveInfo(clock = "Q1 12:00"), line) },
+            FakeSource(SourceId.TSDB) { _, _ -> load(prim, GameState.LIVE) },
+            FakeSource(SourceId.ESPN) { _, _ -> load(esp, GameState.LIVE, null, line) },
         ).resolve(nbaRef())
-        assertNull("no clock", d.live)
+        assertEquals("primary badge", "https://p/a.png", (d.header as GameHeader.Teams).home.badgeUrl)
+        assertEquals("espn score", "1", d.header.home.score)
+    }
+
+    @Test fun `espn state wins when the names agree so a lagging primary does not hide that the game ended`() = runBlocking {
+        val d = resolver(
+            FakeSource(SourceId.TSDB) { _, _ -> load(named("Atlanta Hawks", "Boston Celtics", "90", "88"), GameState.LIVE) },
+            FakeSource(SourceId.ESPN) { _, _ -> load(named("Atlanta Hawks", "Boston Celtics", "100", "98"), GameState.FINAL, LiveInfo(detail = "Final"), line, sit) },
+        ).resolve(nbaRef())
+        assertEquals("final", GameState.FINAL, d.state)
+        assertNull("live-only block hidden", d.block(BlockType.SITUATION))
+    }
+
+    @Test fun `on a name mismatch the primary stays and espn's score and clock are ignored`() = runBlocking {
+        val d = resolver(
+            FakeSource(SourceId.TSDB) { _, _ -> load(named("Atlanta Hawks", "Boston Celtics", "54", "50"), GameState.LIVE, LiveInfo(clock = "Q2")) },
+            FakeSource(SourceId.ESPN) { _, _ -> load(named("Miami Heat", "Chicago Bulls", "90", "88"), GameState.FINAL, LiveInfo(clock = "Q4 0:00"), line) },
+        ).resolve(nbaRef())
+        val h = d.header as GameHeader.Teams
+        assertEquals("primary score", "54" to "50", h.home.score to h.away.score)
+        assertEquals("primary state", GameState.LIVE, d.state)
+        assertEquals("primary clock", "Q2", d.live?.clock)
+        assertNull("no espn short names borrowed", h.home.short)
+    }
+
+    @Test fun `aliases bridge provider naming when deciding agreement`() = runBlocking {
+        val d = resolver(
+            FakeSource(SourceId.TSDB) { _, _ -> load(named("Man Utd", "Spurs", "0", "0"), GameState.LIVE) },
+            FakeSource(SourceId.ESPN) { _, _ -> load(named("Manchester United", "Tottenham Hotspur", "2", "1", "MUN", "TOT"), GameState.LIVE, LiveInfo(clock = "78'"), line) },
+        ).resolve(nbaRef())
+        assertEquals("espn score via alias match", "2", (d.header as GameHeader.Teams).home.score)
+    }
+
+    @Test fun `a live tick without the primary still applies espn's fresh score over the previous primary header`() = runBlocking {
+        val first = resolver(
+            FakeSource(SourceId.TSDB) { _, _ -> load(named("Washington Capitals", "Florida Panthers", "1", "2"), GameState.LIVE) },
+            FakeSource(SourceId.ESPN) { _, _ -> load(null, null, null, line) },
+        ).resolve(nbaRef())
+        val tickResolver = resolver(
+            FakeSource(SourceId.TSDB, wantsParts = { RefreshPart.SUMMARY in it }) { _, _ -> error("not on a live tick") },
+            FakeSource(SourceId.ESPN) { _, _ -> load(named("Washington Capitals", "Florida Panthers", "3", "2", "WSH", "FLA"), GameState.LIVE, LiveInfo(clock = "5:00", periodLabel = "3rd"), line) },
+        )
+        val tick = tickResolver.resolve(nbaRef(), setOf(RefreshPart.SCOREBOARD), previous = first)
+        assertTrue("authoritative", tick.headerFromPrimary)
+        val merged = tick.mergeOver(first)
+        assertEquals("fresh score", "3", (merged.header as GameHeader.Teams).home.score)
+        assertEquals("fresh clock", "5:00", merged.live?.clock)
+    }
+
+    @Test fun `a live tick with mismatching espn keeps the previous header untouched`() = runBlocking {
+        val first = resolver(
+            FakeSource(SourceId.TSDB) { _, _ -> load(named("Atlanta Hawks", "Boston Celtics", "10", "8"), GameState.LIVE) },
+            FakeSource(SourceId.ESPN) { _, _ -> load(null, null, null, line) },
+        ).resolve(nbaRef())
+        val tick = resolver(
+            FakeSource(SourceId.TSDB, wantsParts = { RefreshPart.SUMMARY in it }) { _, _ -> error("no") },
+            FakeSource(SourceId.ESPN) { _, _ -> load(named("Miami Heat", "Chicago Bulls", "99", "98"), GameState.LIVE, LiveInfo(clock = "1:00"), line) },
+        ).resolve(nbaRef(), setOf(RefreshPart.SCOREBOARD), previous = first)
+        assertFalse(tick.headerFromPrimary)
+        assertEquals("kept", "10", (tick.mergeOver(first).header as GameHeader.Teams).home.score)
     }
 
     // ---- 8: telemetry volume ----

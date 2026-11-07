@@ -6,7 +6,7 @@ import org.junit.Test
 
 class GameDetailFocusTest {
     private val play = WatchUi(WatchMode.BROWSING, null, PrimaryAction.Play(WatchCandidate("a", "A", 0, 1)), WatchStatus.READY, 0)
-    private val none = play.copy(primary = PrimaryAction.None, status = WatchStatus.NO_CHANNELS)
+    private val none = play.copy(primary = PrimaryAction.None, status = WatchStatus.ALREADY_ON_IT)
 
     @Test fun `initial focus is the primary action`() =
         assertEquals("primary", FocusKey.PRIMARY, GameDetailFocus.initial(GameDetailUiState.NoData.let { loaded() }, play))
@@ -27,6 +27,11 @@ class GameDetailFocusTest {
     @Test fun `nothing focused yet takes the best available`() =
         assertEquals("best", FocusKey.PRIMARY, GameDetailFocus.repair(null, setOf(FocusKey.CHANNELS, FocusKey.PRIMARY)))
     @Test fun `no controls means no focus`() = assertNull("none", GameDetailFocus.repair(FocusKey.PRIMARY, emptySet()))
+    @Test fun `a hidden Channels button never holds focus`() {
+        val noChannels = play.copy(primary = PrimaryAction.Rematch(false), status = WatchStatus.NO_CHANNELS)
+        assertEquals("only the primary", setOf(FocusKey.PRIMARY), GameDetailFocus.controls(loaded(), noChannels))
+        assertEquals("focus lands on find channels", FocusKey.PRIMARY, GameDetailFocus.initial(loaded(), noChannels))
+    }
     @Test fun `controls present follow the watch action`() {
         assertEquals("with primary", setOf(FocusKey.PRIMARY, FocusKey.CHANNELS), GameDetailFocus.controls(loaded(), play))
         assertEquals("without", setOf(FocusKey.CHANNELS), GameDetailFocus.controls(loaded(), none))

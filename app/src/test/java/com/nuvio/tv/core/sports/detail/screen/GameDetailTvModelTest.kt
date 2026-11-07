@@ -83,4 +83,34 @@ class GameDetailTvModelTest {
         val m = GameDetailTvModel.from(base.copy(blocks = listOf(GameBlock.WinProbability(SourceId.ESPN, 140.0))), 0)
         assertEquals("clamped", 100, m.homeWinPercent)
     }
+
+    @Test fun `period and clock read as 2nd dot 0 colon 00`() =
+        assertEquals("line", "2nd · 0:00", GameDetailTvModel.liveLine(LiveInfo(clock = "0:00", periodLabel = "2nd")))
+    @Test fun `a pause shows its name`() {
+        assertEquals("intermission", "Intermission", GameDetailTvModel.liveLine(LiveInfo(clock = "0:00", periodLabel = "2nd", detail = "Intermission")))
+        assertEquals("halftime", "Halftime", GameDetailTvModel.liveLine(LiveInfo(detail = "Halftime")))
+        assertEquals("end of period", "End of 2nd", GameDetailTvModel.liveLine(LiveInfo(detail = "End of 2nd")))
+    }
+    @Test fun `bare clock or detail still render`() {
+        assertEquals("clock", "78'", GameDetailTvModel.liveLine(LiveInfo(clock = "78'")))
+        assertEquals("detail", "Final", GameDetailTvModel.liveLine(LiveInfo(detail = "Final")))
+        assertNull("nothing", GameDetailTvModel.liveLine(null))
+    }
+    @Test fun `team names display as abbreviations when known`() {
+        val d = base.copy(header = GameHeader.Teams(Side("Washington Capitals", short = "WSH", score = "3"), Side("Florida Panthers", score = "2")))
+        val m = GameDetailTvModel.from(d, 0)
+        assertEquals("short", "WSH", m.sides[0].tvName)
+        assertEquals("full when no short", "Florida Panthers", m.sides[1].tvName)
+    }
+    @Test fun `plays carry the team tag of the side that made them`() {
+        val d = base.copy(
+            header = GameHeader.Teams(Side("Hawks", short = "ATL"), Side("Celtics", short = "BOS")),
+            blocks = listOf(GameBlock.Timeline(SourceId.ESPN, listOf(
+                TimelineItem("1'", null, SideKey.AWAY, "goal", TimelineKind.GOAL), TimelineItem("2'", null, null, "note", null),
+            ))),
+        )
+        val p = GameDetailTvModel.from(d, 0).latestPlays
+        assertEquals("untagged note first (newest)", null, p[0].tag)
+        assertEquals("away tag", "BOS", p[1].tag)
+    }
 }

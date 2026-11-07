@@ -92,7 +92,7 @@ class GameDetailResolver(
 
     private class Timed(val load: SourceLoad, val ms: Long)
 
-    suspend fun resolve(ref: GameRef, parts: Set<RefreshPart> = RefreshPart.ALL): GameDetail = coroutineScope {
+    suspend fun resolve(ref: GameRef, parts: Set<RefreshPart> = RefreshPart.ALL, previous: GameDetail? = null): GameDetail = coroutineScope {
         val mapping = mappingProvider()
         val profileName = mapping.profileNameFor(ref.leagueId, ref.sport)
         val profile = mapping.profile(profileName)
@@ -159,11 +159,25 @@ class GameDetailResolver(
         val primary = hit(primaryId)
         // Primary switched off (server kill switch): ESPN becomes the authority for header and state.
         val authority = primary ?: espn.takeIf { status[primaryId] == SourceStatus.DISABLED }
-        val state = authority?.state ?: espn?.state ?: ref.seedState
+        // The primary (TheSportsDB via our backend) can lag a whole period behind. When ESPN resolved the event AND
+        // both sides agree by name with the primary header, score + live clock/period/state come from ESPN while
+        // names, badges and venue stay the primary's. On a name mismatch (a mislink) ESPN's score is ignored.
+        val baseHeader = authority?.header ?: previous?.takeIf { it.headerFromPrimary }?.header
+        val agree = primaryId == SourceId.TSDB && authority !== espn && espn?.header != null &&
+            baseHeader != null && namesAgree(baseHeader, espn.header, mapping.teamAliases)
+        val state = when {
+            agree && espn?.state != null -> espn.state
+            else -> authority?.state ?: espn?.state ?: ref.seedState
+        }
         val live = when {
             authority != null && authority === espn -> espn.live
-            primaryId == SourceId.TSDB && espn?.live != null && sameScore(authority?.header, espn.header) -> espn.live
+            agree -> espn?.live ?: authority?.live
             else -> authority?.live
+        }
+        val header = when {
+            authority != null && authority === espn -> espn.header
+            agree -> overlayScores(baseHeader!!, espn!!.header!!)
+            else -> authority?.header
         }
         val blocks = resolved.values
             .filter { BlockVisibility.visible(it.type, state) }
@@ -178,23 +192,34 @@ class GameDetailResolver(
             gameId = ref.gameId, sport = ref.sport, leagueId = ref.leagueId, leagueName = ref.leagueName,
             profile = profileName, round = ref.round, venue = ref.venue, startsAtMs = ref.startsAtMs,
             state = state,
-            header = authority?.header ?: ref.seedHeader(),
+            header = header ?: ref.seedHeader(),
             live = live,
             blocks = blocks,
             sources = blocks.associate { it.type to it.source },
             sourceStatus = status,
             availability = availability,
             asOf = loads.filterValues { it.outcome == FetchOutcome.HIT }.mapValues { now },
-            headerFromPrimary = authority?.header != null,
+            headerFromPrimary = header != null,
         )
     }
 
-    /** ESPN's richer live clock is only used when it agrees with the primary on the score; never across a mislink. */
-    private fun sameScore(a: GameHeader?, b: GameHeader?): Boolean = when (a) {
-        is GameHeader.Teams -> (b as? GameHeader.Teams)?.let { a.home.score != null && a.home.score == it.home.score && a.away.score == it.away.score } == true
-        is GameHeader.Versus -> (b as? GameHeader.Versus)?.let { a.a.score != null && a.a.score == it.a.score && a.b.score == it.b.score } == true
-        is GameHeader.Event -> true
-        null -> false
+    private fun namesAgree(primary: GameHeader, espn: GameHeader, aliases: Map<String, String>): Boolean {
+        fun same(x: Side, y: Side) = EventMatcher.sameTeam(x.name, y.name, aliases)
+        return when {
+            primary is GameHeader.Teams && espn is GameHeader.Teams -> same(primary.home, espn.home) && same(primary.away, espn.away)
+            primary is GameHeader.Versus && espn is GameHeader.Versus -> same(primary.a, espn.a) && same(primary.b, espn.b)
+            else -> false
+        }
+    }
+
+    private fun overlay(p: Side, e: Side) = p.copy(
+        score = e.score ?: p.score, short = e.short ?: p.short, record = e.record ?: p.record, badgeUrl = p.badgeUrl ?: e.badgeUrl,
+    )
+
+    private fun overlayScores(primary: GameHeader, espn: GameHeader): GameHeader = when {
+        primary is GameHeader.Teams && espn is GameHeader.Teams -> GameHeader.Teams(overlay(primary.home, espn.home), overlay(primary.away, espn.away))
+        primary is GameHeader.Versus && espn is GameHeader.Versus -> GameHeader.Versus(overlay(primary.a, espn.a), overlay(primary.b, espn.b))
+        else -> primary
     }
 
     private fun statusOf(o: FetchOutcome) = when (o) {

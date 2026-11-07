@@ -56,6 +56,10 @@ object EventMatcher {
         return ta.all { it in tb } || tb.all { it in ta }
     }
 
+    /** Same club/athlete across providers: normalised (accents, suffixes, aliases) equal or one name contained in the other. */
+    fun sameTeam(a: String, b: String, aliases: Map<String, String>): Boolean =
+        teamsMatch(normalize(a, aliases), normalize(b, aliases))
+
     fun match(q: MatchQuery, candidates: List<EspnCandidate>, mapping: SportsMapping): String? {
         (mapping.eventOverrides[q.rawId] ?: mapping.eventOverrides[q.gameId])?.let { return it }
         if (q.homeName.isNotBlank() && q.awayName.isNotBlank()) {

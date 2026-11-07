@@ -72,9 +72,15 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
         val isLive = gameState(docs) == GameState.LIVE
         val clock = if (isLive) mapping.commonPath("clock")?.let { r.firstText(ev, it) }?.takeIf { it.isNotBlank() } else null
         val period = if (isLive) mapping.commonPath("period")?.let { r.firstText(ev, it) }?.toIntOrNull() else null
-        val label = period?.let { p -> mapping.profile(profile)?.periodLabel?.takeIf { it.isNotBlank() }?.let { "$it$p" } }
+        val label = period?.let { p -> mapping.profile(profile)?.periodLabel?.takeIf { it == "Q" || it == "P" }?.let { ordinal(p) } }
         val detail = mapping.commonPath("detail")?.let { r.firstText(ev, it) }?.takeIf { it.isNotBlank() }
         return if (clock == null && label == null && detail == null) null else LiveInfo(clock, label, detail)
+    }
+
+    private fun ordinal(n: Int): String = when {
+        n in 11..13 -> "${n}th"
+        n % 10 == 1 -> "${n}st"; n % 10 == 2 -> "${n}nd"; n % 10 == 3 -> "${n}rd"
+        else -> "${n}th"
     }
 
     // ---- blocks ---------------------------------------------------------------------------

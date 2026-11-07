@@ -4,8 +4,10 @@ import kotlinx.coroutines.delay
 
 class FakeSource(
     override val id: SourceId,
+    private val wantsParts: (Set<RefreshPart>) -> Boolean = { true },
     private val onLoad: suspend (GameRef, Set<RefreshPart>) -> SourceLoad,
 ) : BlockSource {
+    override fun wants(parts: Set<RefreshPart>) = wantsParts(parts)
     var calls = 0
     var lastParts: Set<RefreshPart> = emptySet()
     override suspend fun load(ref: GameRef, parts: Set<RefreshPart>, mapping: SportsMapping): SourceLoad {

@@ -147,4 +147,15 @@ class EspnBlockAssemblerTest {
             assertNull("$p header", asm.header(p, junk))
         }
     }
+
+    @Test fun `live period reads as an ordinal and the clock stays raw`() {
+        val ev = Json.parseToJsonElement("""{"status":{"displayClock":"0:00","period":2,"type":{"state":"in","shortDetail":"End of 2nd"}},"competitions":[{}]}""")
+        val l = asm.live(EspnDocs(ev, null), "hockey")!!
+        assertEquals("2nd", l.periodLabel)
+        assertEquals("0:00", l.clock)
+        val q = asm.live(EspnDocs(Json.parseToJsonElement("""{"status":{"displayClock":"5:12","period":3,"type":{"state":"in"}}}"""), null), "basketball")!!
+        assertEquals("3rd", q.periodLabel)
+        val soccer = asm.live(EspnDocs(Json.parseToJsonElement("""{"status":{"displayClock":"78'","period":2,"type":{"state":"in"}}}"""), null), "soccer")!!
+        assertNull("no period for soccer", soccer.periodLabel)
+    }
 }

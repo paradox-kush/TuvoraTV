@@ -9,7 +9,7 @@ object GameDetailFocus {
     fun controls(state: GameDetailUiState, watch: WatchUi): Set<FocusKey> = when (state) {
         is GameDetailUiState.Loaded -> buildSet {
             if (watch.primary != PrimaryAction.None) add(FocusKey.PRIMARY)
-            add(FocusKey.CHANNELS)
+            if (watch.showChannels) add(FocusKey.CHANNELS)
         }
         is GameDetailUiState.Failed -> setOf(FocusKey.RETRY)
         else -> emptySet()

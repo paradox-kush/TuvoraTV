@@ -81,8 +81,8 @@ internal class ResolvingGameDetailSource(private val resolver: GameDetailResolve
             if (fetchEvent || last == null) add(RefreshPart.SCOREBOARD)
             if (fetchSummary || last == null) add(RefreshPart.SUMMARY)
         }
-        val fresh = resolver.resolve(ref, parts)
         val prev = last
+        val fresh = resolver.resolve(ref, parts, prev)
         val merged = if (prev == null) fresh else fresh.mergeOver(prev)
         if (merged.availability == Availability.FAILED) return@withLock DetailLoad.Failed()
         last = merged

@@ -49,4 +49,22 @@ class WatchResolverTest {
         assertEquals("ready", WatchStatus.READY, w.status)
     }
     @Test fun `alternatives count excludes the primary`() = assertEquals("n", 2, resolve(cands = listOf(c("a"), c("b"), c("c"))).alternatives)
+
+    @Test fun `nothing matched offers Find channels and hides the dead-end Channels button`() {
+        val w = resolve()
+        assertEquals("action", PrimaryAction.Rematch(failed = false), w.primary)
+        assertEquals("channels hidden", false, w.showChannels)
+    }
+    @Test fun `a failed or timed out lookup offers Retry`() {
+        val w = resolve(failed = true)
+        assertEquals("retry", PrimaryAction.Rematch(failed = true), w.primary)
+        assertEquals("channels hidden", false, w.showChannels)
+    }
+    @Test fun `channels is shown while finding and when there are matches`() {
+        assertTrue("finding", resolve(matching = true).showChannels)
+        assertTrue("ready", resolve(cands = listOf(c("a"))).showChannels)
+        assertTrue("already on it", resolve(watching = "a", cands = listOf(c("a"))).showChannels)
+        assertEquals("no provider hides it", false, resolve(playlists = false).showChannels)
+    }
+    @Test fun `deadline constant is about six seconds`() = assertEquals("ms", 6_000L, WatchResolver.LOOKUP_DEADLINE_MS)
 }
