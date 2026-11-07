@@ -26,6 +26,9 @@ interface SportsDetailService {
     suspend fun syncMapping(): OfferResult?
 
     fun refreshConfig(): GameDetailRefreshPolicy.Config
+
+    /** The active mapping (bundled, or the last good remote one). */
+    fun currentMapping(): SportsMapping
 }
 
 object SportsDetail {
@@ -52,6 +55,7 @@ object SportsDetail {
             override fun open(ref: GameRef): GameDetailSource = ResolvingGameDetailSource(resolver, ref)
             override suspend fun syncMapping() = updater.refresh()
             override fun refreshConfig() = GameDetailRefreshPolicy.Config.from(store.current.refresh)
+            override fun currentMapping() = store.current
         }
     }
 }

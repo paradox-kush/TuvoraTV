@@ -43,9 +43,10 @@ class ArchitectureTest {
     // Fork side = upstream-absent paths, not a directory-naming convention.
     private val forkPaths = listOf(
         "/core/iptv/", "/core/epg/", "/core/radar/", "/core/rec/", "/core/memory/", "/core/recordings/",
+        "/core/sports/", // game-detail core + screen state: upstream-absent sports feature (2026-11)
         "/core/livepause/", // live pause / rewind: upstream-absent, reached from the player only via core/contracts/LivePauseControl
         "/core/analytics/", // cross-cutting fork telemetry — its files may reference fork features
-        "/ui/screens/iptv/", "/ui/screens/radar/", "/ui/screens/livetv/",
+        "/ui/screens/iptv/", "/ui/screens/radar/", "/ui/screens/livetv/", "/ui/screens/gamedetail/",
     )
     private fun isForkFile(path: String) = forkPaths.any { path.contains(it) }
 
@@ -56,8 +57,8 @@ class ArchitectureTest {
     // Fork-feature references. core.analytics is fork-only but DELIBERATELY EXEMPT (cross-cutting
     // telemetry), so it is not part of this pattern.
     private val forkRef = Regex(
-        """\bcom\.nuvio\.tv\.core\.(iptv|epg|radar|rec|recordings|memory|livepause)\.""" +
-            """|\bcom\.nuvio\.tv\.ui\.screens\.(iptv|radar|livetv)\.""",
+        """\bcom\.nuvio\.tv\.core\.(iptv|epg|radar|rec|recordings|memory|livepause|sports)\.""" +
+            """|\bcom\.nuvio\.tv\.ui\.screens\.(iptv|radar|livetv|gamedetail)\.""",
     )
 
     // Strip block + WHOLE-LINE // comments only. A naive //.* eats the // in "https://…" literals and
