@@ -1542,6 +1542,7 @@ private fun PlaybackNavHost(
                     )
                 },
                 onAddProvider = { navController.navigate(Screen.IptvSettings.route + "?add=true") },
+                onOpenGameDetail = { gameId -> navController.navigate(Screen.GameDetail.createRoute(gameId)) },
                 // Recordings are registry-registered VOD ids — native detail pipeline.
                 onOpenDetail = { contentId, type ->
                     navController.navigate(Screen.Detail.createRoute(contentId, type))
@@ -1561,6 +1562,34 @@ private fun PlaybackNavHost(
                             catchUpEndMs = endMs,
                         )
                     )
+                },
+            )
+        }
+
+        composable(
+            route = Screen.GameDetail.route,
+            arguments = listOf(
+                navArgument("gameId") { type = NavType.StringType },
+                navArgument("watching") { type = NavType.StringType; nullable = true; defaultValue = null },
+            ),
+        ) { backStackEntry ->
+            com.nuvio.tv.ui.screens.gamedetail.GameDetailScreen(
+                onBack = { navController.popBackStack() },
+                onPlayChannel = { contentId ->
+                    dispatchLiveOrElse(
+                        owner = backStackEntry,
+                        contentId = contentId,
+                        origin = CleanLiveLaunchOrigin.SPORTS,
+                        onNonLive = {},
+                    )
+                },
+                onAddProvider = { navController.navigate(Screen.IptvSettings.route + "?add=true") },
+                // No data (or the viewer wants the full channel list): the existing channel match sheet
+                // lives in Sports and opens for the pending game id the screen just published.
+                onOpenMatchSheet = {
+                    if (!navController.popBackStack(Screen.SportsHub.route, inclusive = false)) {
+                        navController.navigate(Screen.SportsHub.route) { launchSingleTop = true }
+                    }
                 },
             )
         }

@@ -110,6 +110,8 @@ private const val SPORTS_FULL_REFRESH_INTERVAL_MS = 15 * 60 * 1000L
 fun SportsHubScreen(
     onPlayChannel: (contentId: String) -> Unit,
     onAddProvider: () -> Unit,
+    /** A game the mapping can serve opens the game-detail screen; the id is the calendar game id. */
+    onOpenGameDetail: (gameId: String) -> Unit = {},
     onOpenDetail: (contentId: String, type: String) -> Unit = { _, _ -> },
     /** A catch-up replay launch — the guide's route shape, so the player gets the flag + bounds. */
     onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit =
@@ -117,6 +119,9 @@ fun SportsHubScreen(
     viewModel: SportsHubViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val openGame: (RadarFixture) -> Unit = { fx ->
+        viewModel.detailGameIdFor(fx)?.let(onOpenGameDetail) ?: viewModel.openMatch(fx)
+    }
     val sheet by viewModel.sheet.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(Unit) { viewModel.ensureLoaded() }
@@ -191,7 +196,7 @@ fun SportsHubScreen(
             state = state,
             page = page,
             isLive = state.isLiveCheck(nowMs),
-            onMatch = { viewModel.openMatch(it) },
+            onMatch = openGame,
             onBack = { fixturesPage = null },
         )
         sheet?.let { s ->
@@ -218,7 +223,7 @@ fun SportsHubScreen(
             league = league,
             isLive = state.isLiveCheck(nowMs),
             ensureLoaded = { viewModel.repository.ensureLeagueLoaded(it) },
-            onMatch = { viewModel.openMatch(it) },
+            onMatch = openGame,
             onToggleFollow = { viewModel.repository.toggleFollow(league) },
             onBack = { leaguePage = null },
         )
@@ -319,7 +324,7 @@ fun SportsHubScreen(
                         upcoming,
                         state.isLiveCheck(nowMs),
                         liveScoreFor = { fx -> fx.id?.let { state.liveScores[it] } },
-                        onMatch = { viewModel.openMatch(it) },
+                        onMatch = openGame,
                         // The featured rail owns first focus when it exists; otherwise the
                         // top match card does — a follows-only profile used to land nowhere.
                         firstItemFocusRequester = if (featured.isEmpty()) firstFocus else null,
@@ -348,7 +353,7 @@ fun SportsHubScreen(
                             fixtures,
                             state.isLiveCheck(nowMs),
                             liveScoreFor = { fx -> fx.id?.let { state.liveScores[it] } },
-                            onMatch = { viewModel.openMatch(it) },
+                            onMatch = openGame,
                         )
                     }
                 }
@@ -367,7 +372,7 @@ fun SportsHubScreen(
                             fixtures,
                             state.isLiveCheck(nowMs),
                             liveScoreFor = { fx -> fx.id?.let { state.liveScores[it] } },
-                            onMatch = { viewModel.openMatch(it) },
+                            onMatch = openGame,
                         )
                     }
                 }

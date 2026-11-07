@@ -117,7 +117,15 @@ class SportsHubViewModel @Inject constructor(
     private val profileManager: ProfileManager,
     accountStore: XtreamAccountStore,
     private val pendingMatch: com.nuvio.tv.core.radar.RadarPendingMatch,
+    private val sportsDetail: com.nuvio.tv.core.sports.detail.SportsDetailService,
 ) : ViewModel() {
+
+    /** The calendar game id when this fixture opens the game-detail screen, else null (match sheet as before). */
+    fun detailGameIdFor(fixture: RadarFixture): String? =
+        if (com.nuvio.tv.core.sports.detail.screen.GameDetailEntry.shouldOpenDetail(fixture, sportsDetail.currentMapping())) {
+            com.nuvio.tv.core.radar.RadarCalendarGames.gameId(fixture)
+        } else null
+
 
     /** A game the Calendar's "Watch now" asked for; opened here once its fixture is in the held state. */
     val pendingMatchId: StateFlow<String?> = pendingMatch.pending
