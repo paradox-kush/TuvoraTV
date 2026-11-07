@@ -316,13 +316,13 @@ private fun TeamRow(side: Side, dim: Boolean, showScore: Boolean = true) {
             // Long names shrink to fit (never "Wa…"); the record sits under in a legible size.
             AutoResizeText(
                 text = side.name, color = NuvioTheme.colors.TextPrimary,
-                style = androidx.compose.ui.text.TextStyle(fontSize = 26.sp, fontWeight = FontWeight.SemiBold), minFontSize = 16.sp,
+                style = androidx.compose.ui.text.TextStyle(fontSize = 23.sp, fontWeight = FontWeight.SemiBold), minFontSize = 15.sp,
             )
             side.record?.let { Text(it, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary) }
         }
         side.score?.takeIf { showScore }?.let {
             Text(
-                it, fontSize = 52.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End,
+                it, fontSize = 47.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End,
                 color = if (dim) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
                 modifier = Modifier.width(110.dp),
             )
@@ -374,12 +374,12 @@ private fun ByPeriodCard(t: TvLinescore, modifier: Modifier) {
                     Row(Modifier.width(150.dp), verticalAlignment = Alignment.CenterVertically) {
                         Badge(r.badgeUrl, r.label, 30.dp)
                         Spacer(Modifier.width(10.dp))
-                        Text(r.label, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 1)
+                        Text(r.label, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 1)
                     }
                     r.cells.forEachIndexed { i, c -> PeriodCell(c, header = false, current = i == t.currentIndex, strong = false) }
                     r.total?.let {
                         Text(
-                            it, fontSize = if (r.leading) 34.sp else 30.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                            it, fontSize = if (r.leading) 28.sp else 25.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                             color = if (r.leading) NuvioTheme.colors.Secondary else NuvioTheme.colors.TextPrimary, modifier = Modifier.width(64.dp),
                         )
                     }
@@ -393,11 +393,11 @@ private fun ByPeriodCard(t: TvLinescore, modifier: Modifier) {
 private fun androidx.compose.foundation.layout.RowScope.PeriodCell(text: String, header: Boolean, current: Boolean, strong: Boolean) {
     Box(
         Modifier.weight(1f).padding(horizontal = 3.dp).clip(RoundedCornerShape(6.dp))
-            .background(if (current) NuvioTheme.colors.Secondary.copy(alpha = 0.18f) else Color.Transparent).padding(vertical = 3.dp),
+            .background(if (current) NuvioTheme.colors.Secondary.copy(alpha = 0.18f) else Color.Transparent).padding(vertical = 1.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text, fontSize = if (header) 16.sp else 24.sp, fontWeight = if (header || current || strong) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center,
+            text, fontSize = if (header) 14.sp else 20.sp, fontWeight = if (header || current || strong) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center,
             color = when { current -> NuvioTheme.colors.Secondary; header -> NuvioTheme.colors.TextSecondary; else -> NuvioTheme.colors.TextPrimary },
         )
     }
@@ -547,10 +547,10 @@ private fun PlayRow(p: TvPlay, onDown: () -> Boolean, onUp: () -> Boolean) {
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Text(p.time, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(64.dp))
+        Text(p.time, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(60.dp))
         Box(Modifier.padding(top = 8.dp, end = 8.dp).size(10.dp).clip(CircleShape).background(if (p.scoring) NuvioTheme.colors.Secondary else Color.Transparent))
         p.tag?.let { Box(Modifier.padding(end = 8.dp)) { TagChip(it, p.side) } }
-        Text(p.text, fontSize = 16.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 3, modifier = Modifier.weight(1f))
+        Text(p.text, fontSize = 15.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
     }
 }
 

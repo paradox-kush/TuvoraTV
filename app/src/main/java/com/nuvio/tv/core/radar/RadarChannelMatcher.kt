@@ -108,6 +108,8 @@ class RadarChannelMatcher @Inject constructor(
     // Live lists once per account per session (26k channels on real panels).
     private val channelCache = ConcurrentHashMap<String, List<XtreamChannel>>()
     private val cacheMutex = Mutex()
+    private val loadScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private val lineupLoads = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<List<XtreamChannel>>>()
     private val categoryNameCache = ConcurrentHashMap<String, List<IptvHiddenItemsPolicy.NamedCategory>>()
     private val categoryNameMutex = Mutex()
     private val matcherGeneration = java.util.concurrent.atomic.AtomicInteger(0)
@@ -467,7 +469,19 @@ class RadarChannelMatcher @Inject constructor(
         matcherGeneration.incrementAndGet()
         channelCache.clear()
         categoryNameCache.clear()
+        // Profile switch / sign-out: an in-flight download belongs to the old profile's playlists.
+        lineupLoads.values.forEach { it.cancel() }
+        lineupLoads.clear()
     }
+
+    /** Downloads still running (tests and diagnostics). */
+    internal fun inFlightLineupLoads(): Int = lineupLoads.size
+
+    /** Overall budget for one playlist download: a hung panel ends as a surfaced failure, never an endless background job. */
+    internal var lineupDeadlineMs: Long = 120_000L
+
+    /** How long a lookup waits for ONE playlist's lineup before moving on without it. */
+    internal var accountWaitMs: Long = 4_000L
 
     // --- source assembly ------------------------------------------------------
 
@@ -488,18 +502,42 @@ class RadarChannelMatcher @Inject constructor(
                 // A panel can return hundreds of thousands of rows. Keep transport and portal
                 // work off the computation pool; conversion below resumes on Default with match().
                 val catalogKey = account.id + ":" + account.hashCode() + ":" + contentDb.builtAt(account.id) + ":" + refreshStore.lastCheckedMs(account.id) + ":" + matcherGeneration.get()
+                // A playlist edit changes the catalog key: its older in-flight download is now stale.
+                lineupLoads.keys.filter { it.startsWith(account.id + ":") && it != catalogKey }
+                    .forEach { stale -> lineupLoads.remove(stale)?.cancel() }
                 val channels = withContext(Dispatchers.IO) {
-                    channelCache[catalogKey] ?: cacheMutex.withLock {
-                        channelCache[catalogKey] ?: clientFactory.clientFor(account).liveChannels(account)
-                            .getOrDefault(emptyList())
-                            // Only cache success — this is an app-lifetime singleton, and caching a
-                            // transient panel failure would leave matching dead until restart.
-                             .also { channels ->
-                                if (channels.isNotEmpty()) {
-                                    channelCache.keys.removeAll { it.startsWith(account.id + ":") && it != catalogKey }
-                                    channelCache[catalogKey] = channels
+                    channelCache[catalogKey] ?: lineupLoads.computeIfAbsent(catalogKey) {
+                        // The load runs in the matcher's OWN scope: a caller that gives up (the game screen's bounded
+                        // lookup) cancels only its wait, never the load, so the next attempt finds it finished or
+                        // still running instead of restarting a multi-second panel download from zero.
+                        loadScope.async {
+                            try {
+                                run {
+                                  // A hung panel ends as a failure the caller sees (the game screen shows "couldn't check", with Retry).
+                                  kotlinx.coroutines.withTimeoutOrNull(lineupDeadlineMs) {
+                                val t0 = android.os.SystemClock.elapsedRealtime()
+                                clientFactory.clientFor(account).liveChannels(account)
+                                    .getOrDefault(emptyList())
+                                    .also { android.util.Log.i("RadarChannelMatcher", "lineup download ${it.size} rows in ${android.os.SystemClock.elapsedRealtime() - t0} ms") }
+                                    // Only cache success — this is an app-lifetime singleton, and caching a
+                                    // transient panel failure would leave matching dead until restart.
+                                    .also { channels ->
+                                        if (channels.isNotEmpty()) {
+                                            channelCache.keys.removeAll { it.startsWith(account.id + ":") && it != catalogKey }
+                                            channelCache[catalogKey] = channels
+                                        }
+                                    }
+                                  } ?: throw IllegalStateException("playlist lineup download timed out")
                                 }
+                            } finally {
+                                lineupLoads.remove(catalogKey)
                             }
+                        }
+                    }.let { load ->
+                        // One slow playlist must not hold the others hostage: wait for it only this long, then
+                        // match with the lineups that are ready. Its download keeps running in the background and
+                        // its channels join the next lookup (Retry / next open).
+                        withTimeoutOrNull(accountWaitMs) { load.await() } ?: emptyList()
                     }
                 }
                 val categoryNames = if (SportsChannelVisibilityPolicy.needsCategoryNames(account, overlay)) {

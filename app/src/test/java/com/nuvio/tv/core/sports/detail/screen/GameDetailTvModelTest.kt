@@ -201,4 +201,31 @@ class GameDetailTvModelTest {
         assertEquals("goal marked", true, p[1].scoring)
         assertEquals("tag", "NSH", p[1].tag)
     }
+
+    // ---- size tuning: condensed plays, merged performers ----
+
+    @Test fun `a play keeps the scorer and only the first assist`() {
+        assertEquals(
+            "Pavel Dorofeyev Goal (6) Backhand · assist Mika Zibanejad",
+            GameDetailTvModel.condensePlay("Pavel Dorofeyev Goal (6) Backhand, assists: Mika Zibanejad (12), Alexis Lafreniere (11)"),
+        )
+        assertEquals("one assist", "Nick Perbix Goal (2) Wrist Shot · assist Steven Stamkos", GameDetailTvModel.condensePlay("Nick Perbix Goal (2) Wrist Shot, assists: Steven Stamkos (9)"))
+        assertEquals("unassisted untouched", "Ross Colton Goal (5) Snap Shot, unassisted", GameDetailTvModel.condensePlay("Ross Colton Goal (5) Snap Shot, unassisted"))
+        assertEquals("dangling assists", "Goal (1)", GameDetailTvModel.condensePlay("Goal (1), assists:"))
+    }
+    @Test fun `plays in the model are condensed`() {
+        val tl = GameBlock.Timeline(SourceId.ESPN, listOf(TimelineItem("1:00", null, null, "A Goal (1), assists: B C (2), D E (3)", TimelineKind.GOAL)))
+        assertEquals("A Goal (1) · assist B C", GameDetailTvModel.from(base.copy(blocks = listOf(tl)), 0).latestPlays[0].text)
+    }
+    @Test fun `one player leading several categories is shown once`() {
+        val items = listOf(
+            LeaderItem("goals", "Mika Zibanejad", "0", SideKey.HOME), LeaderItem("assists", "Mika Zibanejad", "2", SideKey.HOME),
+            LeaderItem("points", "Mika Zibanejad", "2", SideKey.HOME), LeaderItem("rebounds", "Other Guy", "9", SideKey.AWAY),
+        )
+        val m = GameDetailTvModel.from(base.copy(header = teams, blocks = listOf(GameBlock.Leaders(SourceId.ESPN, items))), 0)
+        assertEquals("two rows, not four", 2, m.leaders.size)
+        assertEquals("merged line", "0 G, 2 A, 2 P", m.leaders[0].value)
+        assertEquals("name once", "Mika Zibanejad", m.leaders[0].athlete)
+        assertEquals("single stays", "Other Guy", m.leaders[1].athlete)
+    }
 }

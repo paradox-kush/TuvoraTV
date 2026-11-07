@@ -20,6 +20,7 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.flowOf
@@ -64,6 +65,66 @@ class RadarChannelMatcherSourcesTest {
         coVerify(exactly = 1) { client.liveChannels(any(), any()) }
         assertEquals(1, matcher.match(FIXTURE, null).size)
         coVerify(exactly = 1) { client.liveChannels(any(), any()) }
+    }
+
+    @Test
+    fun `a lookup that gives up does not restart the provider load - the next attempt reuses it`() = runTest {
+        val account = xtreamAccount()
+        val client = clientWith(channel(1, "Spain vs Austria", XTREAM_URL))
+        coEvery { client.liveChannels(any(), any()) } coAnswers {
+            kotlinx.coroutines.delay(400) // real time: runs in the matcher's own IO scope
+            Result.success(listOf(channel(1, "Spain vs Austria", XTREAM_URL)))
+        }
+        val matcher = matcher(account to client)
+        // The caller's bounded lookup gives up long before the slow panel answers (virtual timeout).
+        assertEquals(null, kotlinx.coroutines.withTimeoutOrNull(50) { matcher.match(FIXTURE, null) })
+        // The second attempt waits on the SAME load and gets the result.
+        assertEquals(1, matcher.match(FIXTURE, null).size)
+        coVerify(exactly = 1) { client.liveChannels(any(), any()) }
+    }
+
+    @Test
+    fun `a hung panel download ends as a surfaced failure and leaves nothing running`() = runTest {
+        val account = xtreamAccount()
+        val client = clientWith(channel(1, "Spain vs Austria", XTREAM_URL))
+        coEvery { client.liveChannels(any(), any()) } coAnswers { kotlinx.coroutines.delay(5_000); Result.success(emptyList()) }
+        val matcher = matcher(account to client).also { it.lineupDeadlineMs = 150 }
+        val error = runCatching { matcher.match(FIXTURE, null) }.exceptionOrNull()
+        assertTrue("surfaced: $error", error is IllegalStateException)
+        assertEquals("no leaked job", 0, matcher.inFlightLineupLoads())
+    }
+
+    @Test
+    fun `a profile switch cancels an in-flight download`() = runTest {
+        val account = xtreamAccount()
+        val client = clientWith(channel(1, "Spain vs Austria", XTREAM_URL))
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { client.liveChannels(any(), any()) } coAnswers { started.complete(Unit); kotlinx.coroutines.delay(5_000); Result.success(emptyList()) }
+        val matcher = matcher(account to client)
+        val caller = launch { matcher.match(FIXTURE, null) }
+        withContext(kotlinx.coroutines.Dispatchers.Default) { kotlinx.coroutines.withTimeout(5_000) { started.await() } }
+        caller.cancel() // the caller gives up mid-download
+        assertEquals("download still running after the caller gave up", 1, matcher.inFlightLineupLoads())
+        matcher.resetForProfile()
+        assertEquals("cancelled by the reset", 0, matcher.inFlightLineupLoads())
+    }
+
+    @Test
+    fun `one slow playlist does not block matching on the fast ones and joins the next lookup`() = runTest {
+        val fast = xtreamAccount()
+        val slow = xtreamAccount().copy(id = "slow", name = "Slow panel", baseUrl = "http://slow.example")
+        val fastClient = clientWith(channel(1, "Spain vs Austria", XTREAM_URL))
+        val slowClient = clientWith(channel(2, "Spain vs Austria HD", XTREAM_URL))
+        coEvery { slowClient.liveChannels(any(), any()) } coAnswers {
+            kotlinx.coroutines.delay(600) // real time, in the matcher's own scope
+            Result.success(listOf(channel(2, "Spain vs Austria HD", XTREAM_URL)))
+        }
+        val matcher = matcher(slow to slowClient, fast to fastClient).also { it.accountWaitMs = 150 }
+        val first = matcher.match(FIXTURE, null)
+        assertEquals("fast playlist answers at once", listOf("Spain vs Austria"), first.map { it.channel.name })
+        assertEquals("slow download still running", 1, matcher.inFlightLineupLoads())
+        withContext(kotlinx.coroutines.Dispatchers.Default) { kotlinx.coroutines.delay(900) }
+        assertEquals("slow playlist joined the next lookup", 2, matcher.match(FIXTURE, null).size)
     }
 
     @Test

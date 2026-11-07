@@ -95,7 +95,7 @@ data class GameDetailTvModel(
             val form = (d.block(BlockType.FORM) as? GameBlock.Form)?.let { TvForm(it.home.takeLast(5), it.away.takeLast(5)) }
             val plays = (d.block(BlockType.TIMELINE) as? GameBlock.Timeline)?.items?.takeLast(PLAYS)?.reversed().orEmpty().map {
                 TvPlay(
-                    time = it.time, text = it.text,
+                    time = it.time, text = condensePlay(it.text),
                     tag = when (it.side) { SideKey.HOME -> sides.getOrNull(0)?.tvName; SideKey.AWAY -> sides.getOrNull(1)?.tvName; null -> null },
                     side = it.side,
                     scoring = it.kind == TimelineKind.GOAL || it.kind == TimelineKind.SCORE,
@@ -151,15 +151,38 @@ data class GameDetailTvModel(
             return TvLinescore(b.columns, rows, if (ownTotals) null else "T", current)
         }
 
+        private val abbreviations = mapOf(
+            "goals" to "G", "assists" to "A", "points" to "P", "rebounds" to "REB", "steals" to "STL", "blocks" to "BLK",
+            "saves" to "SV", "shots" to "SOG",
+        )
+
         private fun leaders(d: GameDetail, sides: List<Side>): List<TvLeader> {
-            val items = (d.block(BlockType.LEADERS) as? GameBlock.Leaders)?.items.orEmpty()
-            return items.distinctBy { it.category }.take(LEADERS).map {
-                TvLeader(
-                    category = pretty(it.category), athlete = it.athlete, value = it.value,
-                    tag = when (it.side) { SideKey.HOME -> sides.getOrNull(0)?.tvName; SideKey.AWAY -> sides.getOrNull(1)?.tvName; null -> null },
-                    side = it.side,
+            val items = (d.block(BlockType.LEADERS) as? GameBlock.Leaders)?.items.orEmpty().distinctBy { it.category }
+            fun tag(s: SideKey?) = when (s) { SideKey.HOME -> sides.getOrNull(0)?.tvName; SideKey.AWAY -> sides.getOrNull(1)?.tvName; null -> null }
+            // One player leading several categories is shown once ("Mika Zibanejad · 2 A, 2 P"), not once per category.
+            val rows = ArrayList<TvLeader>()
+            items.groupBy { it.athlete }.forEach { (athlete, own) ->
+                val first = own.first()
+                rows += if (own.size == 1) TvLeader(pretty(first.category), athlete, first.value, tag(first.side), first.side)
+                else TvLeader(
+                    category = "Leader", athlete = athlete,
+                    value = own.joinToString(", ") { "${it.value} ${abbreviations[it.category.lowercase()] ?: pretty(it.category)}" },
+                    tag = tag(first.side), side = first.side,
                 )
             }
+            return rows.take(LEADERS)
+        }
+
+        /**
+         * Keeps a play line to two lines on TV: the scorer and the first assist, dropping the rest of the assist list
+         * ("Pavel Dorofeyev Goal (6) Backhand, assists: Mika Zibanejad (12), Alexis Lafreniere (11)" ->
+         * "Pavel Dorofeyev Goal (6) Backhand · assist Mika Zibanejad").
+         */
+        fun condensePlay(text: String): String {
+            val i = text.indexOf("assists:", ignoreCase = true).takeIf { it >= 0 } ?: return text
+            val head = text.substring(0, i).trim().trimEnd(',', ' ')
+            val first = text.substring(i + "assists:".length).trim().split(Regex("\\s*\\(\\d+\\)\\s*,?|,")).firstOrNull { it.isNotBlank() }?.trim()
+            return if (first == null) head else "$head · assist $first"
         }
 
         private fun pretty(k: String): String =
