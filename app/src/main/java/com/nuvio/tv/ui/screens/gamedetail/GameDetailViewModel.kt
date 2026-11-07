@@ -154,13 +154,21 @@ class GameDetailViewModel @Inject constructor(
                 // Bounded: a slow provider ends as "couldn't check your channels" (Retry), never an endless spinner.
                 // Partial matches found before the deadline are kept and stay playable.
                 // (match() hops to its own background dispatcher internally.)
-                val result = withTimeoutOrNull(if (finished) WatchResolver.FINISHED_LOOKUP_DEADLINE_MS else WatchResolver.LOOKUP_DEADLINE_MS) {
+                val deadline = if (finished) WatchResolver.FINISHED_LOOKUP_DEADLINE_MS else WatchResolver.LOOKUP_DEADLINE_MS
+                suspend fun lookup() = withTimeoutOrNull(deadline) {
                     matcher.match(
                         fx, league,
                         stationLookup = { repository.tvStations(fx.id) },
                         onPartial = { partial -> matches = partial; publishWatch() },
                     )
                 }
+                // The first lookup after a cold start can outlast the deadline while the channel index warms; one
+                // quiet second attempt (warm) before the screen is allowed to say it could not check.
+                val started = android.os.SystemClock.elapsedRealtime()
+                var result = lookup()
+                val first = android.os.SystemClock.elapsedRealtime() - started
+                if (result == null && matches.isEmpty()) result = lookup()
+                android.util.Log.i("GameDetailVM", "channel lookup first=${first}ms ok=${result != null} matches=${matches.size}")
                 if (result != null) matches = result else if (matches.isEmpty()) matchingFailed = true
                 if (finished && result != null) {
                     // Which of the matched channels can replay this game from kick-off (the guide's own rule).

@@ -155,6 +155,8 @@ class SportsHubViewModel @Inject constructor(
     init {
         // Kill switches and mapping fixes reach TV through the remote mapping (ETag: a 304 when unchanged).
         viewModelScope.launch { runCatching { sportsDetail.syncMapping() } }
+        // Pay the one-time channel-lineup load now (not inside the first game's bounded channel lookup).
+        viewModelScope.launch(Dispatchers.IO) { runCatching { matcher.warm() } }
         // The match sheet reads the mirror; refresh it (12h TTL, no-op when fresh) so the
         // EPG tier is warm by the time a fixture is opened.
         //

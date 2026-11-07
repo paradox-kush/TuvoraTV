@@ -56,6 +56,26 @@ class RadarChannelMatcherSourcesTest {
     }
 
     @Test
+    fun `warming the lineup moves the one-time provider load out of the first match`() = runTest {
+        val account = xtreamAccount()
+        val client = clientWith(channel(1, "Spain vs Austria", XTREAM_URL))
+        val matcher = matcher(account to client)
+        matcher.warm()
+        coVerify(exactly = 1) { client.liveChannels(any(), any()) }
+        assertEquals(1, matcher.match(FIXTURE, null).size)
+        coVerify(exactly = 1) { client.liveChannels(any(), any()) }
+    }
+
+    @Test
+    fun `a warm racing the first match still fetches the lineup once`() = runTest {
+        val account = xtreamAccount()
+        val client = clientWith(channel(1, "Spain vs Austria", XTREAM_URL))
+        val matcher = matcher(account to client)
+        coroutineScope { listOf(async { matcher.warm() }, async { matcher.match(FIXTURE, null) }, async { matcher.warm() }).awaitAll() }
+        coVerify(exactly = 1) { client.liveChannels(any(), any()) }
+    }
+
+    @Test
     fun `hide and unhide reread the profile overlay without refetching the cached lineup`() = runTest {
         val account = xtreamAccount()
         val row = channel(1, "Spain vs Austria", XTREAM_URL)

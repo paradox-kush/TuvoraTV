@@ -200,7 +200,7 @@ private suspend fun withFrame() { androidx.compose.runtime.withFrameNanos { } }
 private fun Card(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(NuvioTheme.radii.md)
     Column(
-        modifier.fillMaxWidth().clip(shape).background(NuvioTheme.colors.BackgroundCard).border(1.dp, NuvioTheme.colors.Border, shape).padding(horizontal = 18.dp, vertical = 12.dp),
+        modifier.fillMaxWidth().clip(shape).background(NuvioTheme.colors.BackgroundCard).border(1.dp, NuvioTheme.colors.Border, shape).padding(horizontal = 18.dp, vertical = 10.dp),
         content = content,
     )
 }
@@ -309,20 +309,20 @@ private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean) {
 
 @Composable
 private fun TeamRow(side: Side, dim: Boolean, showScore: Boolean = true) {
-    Row(Modifier.fillMaxWidth().height(72.dp), verticalAlignment = Alignment.CenterVertically) {
-        Badge(side.badgeUrl, side.name, 56.dp)
+    Row(Modifier.fillMaxWidth().height(58.dp), verticalAlignment = Alignment.CenterVertically) {
+        Badge(side.badgeUrl, side.name, 48.dp)
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
             // Long names shrink to fit (never "Wa…"); the record sits under in a legible size.
             AutoResizeText(
                 text = side.name, color = NuvioTheme.colors.TextPrimary,
-                style = androidx.compose.ui.text.TextStyle(fontSize = 28.sp, fontWeight = FontWeight.SemiBold), minFontSize = 16.sp,
+                style = androidx.compose.ui.text.TextStyle(fontSize = 26.sp, fontWeight = FontWeight.SemiBold), minFontSize = 16.sp,
             )
             side.record?.let { Text(it, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary) }
         }
         side.score?.takeIf { showScore }?.let {
             Text(
-                it, fontSize = 64.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End,
+                it, fontSize = 52.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End,
                 color = if (dim) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
                 modifier = Modifier.width(110.dp),
             )
@@ -334,7 +334,7 @@ private fun TeamRow(side: Side, dim: Boolean, showScore: Boolean = true) {
 private fun SituationCard(model: GameDetailTvModel) {
     Card {
         model.situation?.let {
-            Text(it, fontSize = 24.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
+            Text(it, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
             if (model.homeWinPercent != null) Spacer(Modifier.height(10.dp))
         }
         model.homeWinPercent?.let { pct ->
@@ -584,7 +584,7 @@ private fun SourceRow(
         }
         // A long status (the empty-channels explanation) gets the card's full width under the buttons instead of a squeezed column.
         if (longStatus) {
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
             StatusText(status, Modifier.fillMaxWidth())
         }
     }
@@ -592,7 +592,7 @@ private fun SourceRow(
 
 @Composable
 private fun StatusText(text: String, modifier: Modifier) {
-    Text(text, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = modifier)
+    Text(text, fontSize = 14.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = modifier)
 }
 
 private fun watchStatusLine(w: WatchUi): String = when (w.status) {
@@ -625,7 +625,7 @@ private fun TvButton(label: String, primary: Boolean, requester: FocusRequester,
             .border(if (focused) NuvioTheme.focusRing.border(3.dp) else androidx.compose.foundation.BorderStroke(1.dp, NuvioTheme.colors.Border), shape)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }
             .clickable(onClick = onClick)
-            .padding(horizontal = 26.dp, vertical = 14.dp),
+            .padding(horizontal = 24.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(

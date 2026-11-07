@@ -112,6 +112,16 @@ class RadarChannelMatcher @Inject constructor(
     private val categoryNameMutex = Mutex()
     private val matcherGeneration = java.util.concurrent.atomic.AtomicInteger(0)
 
+    /**
+     * Loads and caches every playlist's live lineup (up to ~26k channels per panel, once per process). The first
+     * [match] after a cold start pays this whole cost, which is what made the game screen's bounded channel lookup
+     * time out on the first open after an install/restart. Calling this early (Sports hub open) moves that cost out of
+     * the lookup; it is idempotent and shares the cache and its mutex with [match], so concurrent calls fetch once.
+     */
+    suspend fun warm() {
+        assembleCandidates()
+    }
+
     suspend fun match(
         fixture: RadarFixture,
         league: RadarLeague?,
