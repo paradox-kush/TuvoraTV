@@ -139,7 +139,7 @@ class TheSportsDbSourceTest {
         assertTrue("badge", h.home.badgeUrl!!.startsWith("https://"))
         assertEquals("state", GameState.LIVE, l.state)
         assertEquals("live detail", "2nd half", l.live?.detail)
-        assertEquals("all known block types, unknown dropped", setOf(BlockType.STATS, BlockType.TIMELINE, BlockType.BROADCAST, BlockType.LINEUP, BlockType.RESULTS, BlockType.STANDINGS, BlockType.FORM, BlockType.HIGHLIGHTS), l.blocks.keys)
+        assertEquals("all known block types, unknown dropped", setOf(BlockType.STATS, BlockType.TIMELINE, BlockType.LINEUP, BlockType.RESULTS, BlockType.STANDINGS, BlockType.FORM, BlockType.HIGHLIGHTS), l.blocks.keys)
     }
 
     @Test fun `block details survive decoding`() = runBlocking {
@@ -149,7 +149,7 @@ class TheSportsDbSourceTest {
         val card = (b[BlockType.TIMELINE] as GameBlock.Timeline).items.first { it.kind == TimelineKind.CARD }
         assertEquals("away card", SideKey.AWAY, card.side)
         assertEquals("time", "15'", card.time)
-        assertTrue("broadcast region", (b[BlockType.BROADCAST] as GameBlock.Broadcast).channels.any { it.region == "Iceland" })
+        assertTrue("an old payload that still carries broadcast is ignored", b.keys.none { it.wire == "broadcast" })
         val lu = b[BlockType.LINEUP] as GameBlock.Lineup
         assertEquals("formation", "4-3-3", lu.sides[0].formation)
         assertEquals("sub", false, lu.sides[0].players[1].starter)
@@ -161,7 +161,7 @@ class TheSportsDbSourceTest {
     @Test fun `calls the game-detail constant with ids on a summary cadence load`() = runBlocking {
         val h = ok()
         source(h).load(ref, RefreshPart.ALL, SportsFixtures.mapping)
-        assertEquals("full", "https://backend.example/functions/v1/${SportsDetailPaths.GAME_DETAIL}?event_id=2494097&league_id=4328", h.requests[0].first)
+        assertEquals("full, never asking for broadcast", "https://backend.example/functions/v1/${SportsDetailPaths.GAME_DETAIL}?event_id=2494097&league_id=4328&blocks=stats,timeline,lineup,results,highlights,standings,form", h.requests[0].first)
         assertEquals("function names are the backend's", "game-detail" to "sports-mapping", SportsDetailPaths.GAME_DETAIL to SportsDetailPaths.SPORTS_MAPPING)
     }
 

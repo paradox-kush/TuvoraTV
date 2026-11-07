@@ -44,12 +44,11 @@
     "home": "competitions[0].competitors[homeAway=home]",
     "away": "competitions[0].competitors[homeAway=away]",
     "team": { "name": "team.displayName", "short": "team.abbreviation", "badge": "team.logo", "score": "score", "record": "records[0].summary", "form": "form" },
-    "broadcast": "competitions[0].broadcasts[*].names[*]",
     "venue": "competitions[0].venue.fullName"
   },
   "profiles": {
     "soccer": {
-      "blocks": ["header", "watch", "broadcast", "stats", "timeline", "lineup", "form", "standings", "highlights", "next"],
+      "blocks": ["header", "watch", "stats", "timeline", "lineup", "form", "standings", "highlights", "next"],
       "linescore": null,
       "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
         "allow": ["Possession", "SHOTS", "ON GOAL", "Corner Kicks", "Fouls", "Yellow Cards", "Red Cards", "Offsides", "Saves"] },
@@ -57,7 +56,7 @@
       "form": { "from": "scoreboard", "path": "competitions[0].competitors[*].form" }
     },
     "basketball": {
-      "blocks": ["header", "situation", "watch", "broadcast", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
+      "blocks": ["header", "situation", "watch", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
       "periodLabel": "Q",
       "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" },
       "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
@@ -67,7 +66,7 @@
       "winProbability": { "from": "summary", "path": "winprobability[-1].homeWinPercentage" }
     },
     "football": {
-      "blocks": ["header", "situation", "watch", "broadcast", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
+      "blocks": ["header", "situation", "watch", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
       "periodLabel": "Q",
       "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" },
       "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
@@ -78,7 +77,7 @@
       "situation": { "from": "scoreboard", "path": "competitions[0].situation.downDistanceText" }
     },
     "baseball": {
-      "blocks": ["header", "situation", "watch", "broadcast", "linescore", "leaders", "timeline", "highlights", "next"],
+      "blocks": ["header", "situation", "watch", "linescore", "leaders", "timeline", "highlights", "next"],
       "periodLabel": "",
       "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue", "extra": ["hits", "errors"] },
       "leaders": { "from": "scoreboard", "path": "competitions[0].leaders[*]", "category": "name", "athlete": "leaders[0].athlete.displayName", "value": "leaders[0].displayValue" },
@@ -87,7 +86,7 @@
       "situation": { "from": "scoreboard", "path": "competitions[0].situation" }
     },
     "hockey": {
-      "blocks": ["header", "situation", "watch", "broadcast", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
+      "blocks": ["header", "situation", "watch", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
       "periodLabel": "P",
       "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" },
       "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
@@ -96,11 +95,11 @@
       "timeline": { "from": "summary", "path": "plays[scoringPlay=true]", "time": "clock.displayValue", "period": "period.displayValue", "text": "text", "last": 5 }
     },
     "motorsport": {
-      "blocks": ["header", "watch", "broadcast", "results", "highlights", "next"],
+      "blocks": ["header", "watch", "results", "highlights", "next"],
       "results": { "from": "scoreboard", "path": "competitions[*]", "session": "type.abbreviation", "state": "status.type.state" }
     },
-    "fighting": { "blocks": ["header", "watch", "broadcast", "results", "highlights", "next"], "results": { "from": "scoreboard", "path": "competitions[*]" } },
-    "tennis": { "blocks": ["header", "situation", "watch", "broadcast", "linescore", "next"], "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" } },
-    "cricket": { "blocks": ["header", "situation", "watch", "broadcast", "linescore", "leaders", "next"], "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*]" }, "situation": { "from": "summary", "path": "situation" } }
+    "fighting": { "blocks": ["header", "watch", "results", "highlights", "next"], "results": { "from": "scoreboard", "path": "competitions[*]" } },
+    "tennis": { "blocks": ["header", "situation", "watch", "linescore", "next"], "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" } },
+    "cricket": { "blocks": ["header", "situation", "watch", "linescore", "leaders", "next"], "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*]" }, "situation": { "from": "summary", "path": "situation" } }
   }
 }

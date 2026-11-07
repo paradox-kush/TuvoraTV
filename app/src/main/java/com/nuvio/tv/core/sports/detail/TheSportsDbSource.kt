@@ -35,6 +35,8 @@ class TheSportsDbSource(
         val url = buildString {
             append(base).append('/').append(SportsDetailPaths.GAME_DETAIL).append("?event_id=").append(URLEncoder.encode(eventId, "UTF-8"))
             if (ref.leagueId.isNotBlank()) append("&league_id=").append(URLEncoder.encode(ref.leagueId, "UTF-8"))
+            // Explicit list (no broadcast): the server only does the work for the blocks the screen shows.
+            append("&blocks=").append(REQUESTED_BLOCKS)
         }
         val resp = try {
             http.get(url, mapOf("Accept" to "application/json"), mapping.deadlineMs)
@@ -54,8 +56,10 @@ class TheSportsDbSource(
     }
 }
 
+private const val REQUESTED_BLOCKS = "stats,timeline,lineup,results,highlights,standings,form"
+
 private val askedBlocks = setOf(
-    BlockType.STATS, BlockType.TIMELINE, BlockType.LINEUP, BlockType.RESULTS, BlockType.BROADCAST,
+    BlockType.STATS, BlockType.TIMELINE, BlockType.LINEUP, BlockType.RESULTS,
     BlockType.HIGHLIGHTS, BlockType.STANDINGS, BlockType.FORM,
 )
 
@@ -116,10 +120,6 @@ object GameDetailWire {
                 val rows = r.read(b, "rows[*]").map { row -> (row as? kotlinx.serialization.json.JsonArray)?.map { r.text(it).orEmpty() }.orEmpty() }
                 if (rows.isEmpty()) null else GameBlock.Results(src, cols, rows)
             }
-            "broadcast" -> r.read(b, "regions[*]").flatMap { reg ->
-                val country = r.firstText(reg, "country")
-                r.read(reg, "channels[*]").mapNotNull { r.text(it) }.map { BroadcastEntry(country, it) }
-            }.takeIf { it.isNotEmpty() }?.let { GameBlock.Broadcast(src, it) }
             "highlights" -> r.firstText(b, "url")?.takeIf { it.isNotBlank() }?.let { GameBlock.Highlights(src, it, r.firstText(b, "thumbnail")) }
             "standings" -> r.read(b, "rows[*]").mapNotNull { n ->
                 r.firstText(n, "name")?.let { StandingRow(r.firstText(n, "pos").orEmpty(), it, r.firstText(n, "played").orEmpty(), r.firstText(n, "points").orEmpty(), r.firstText(n, "gd"), r.firstText(n, "form")) }

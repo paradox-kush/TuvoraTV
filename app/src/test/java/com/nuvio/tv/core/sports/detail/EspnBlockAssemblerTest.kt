@@ -97,9 +97,15 @@ class EspnBlockAssemblerTest {
         assertEquals("home form chars", listOf("W", "L", "D", "D", "L"), f.home)
         assertEquals("away form 5", 5, f.away.size)
     }
-    @Test fun `epl broadcast lists channel names`() {
-        val b = block<GameBlock.Broadcast>(BlockType.BROADCAST, "soccer", "epl")!!
-        assertTrue("USA Net", b.channels.any { it.name == "USA Net" })
+    @Test fun `broadcast is dropped and an old mapping that still lists it assembles nothing for it`() {
+        val text = SportsFixtures::class.java.classLoader!!.getResourceAsStream("sports/sports-mapping.v1.json")!!.bufferedReader().readText()
+            .replace(""""blocks": ["header", "watch",""", """"blocks": ["header", "broadcast", "watch",""")
+        assertTrue("old listing present", text.contains("\"broadcast\""))
+        val old = (SportsMappingParser.parse(text) as MappingParseResult.Parsed).mapping
+        val all = EspnBlockAssembler(old).all("soccer", SportsFixtures.espnDocs("epl"))
+        assertTrue("no broadcast block", all.keys.none { it.wire == "broadcast" })
+        assertTrue("other blocks intact", BlockType.STATS in all.keys)
+        assertNull("bundled mapping no longer lists it", SportsFixtures.mapping.profile("soccer")!!.blocks.firstOrNull { it == "broadcast" })
     }
     @Test fun `f1 and ufc results rows`() {
         val f1 = asm.block(BlockType.RESULTS, "motorsport", SportsFixtures.espnDocs("f1", false)) as GameBlock.Results

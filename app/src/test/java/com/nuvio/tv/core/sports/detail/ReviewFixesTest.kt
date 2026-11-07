@@ -79,9 +79,9 @@ class ReviewFixesTest {
         assertFalse(BlockVisibility.visible(BlockType.SITUATION, GameState.FINAL))
         assertFalse(BlockVisibility.visible(BlockType.WIN_PROBABILITY, GameState.FINAL))
         assertTrue(BlockVisibility.visible(BlockType.LINESCORE, GameState.FINAL))
-        assertTrue(BlockVisibility.visible(BlockType.BROADCAST, GameState.UPCOMING))
+        assertTrue(BlockVisibility.visible(BlockType.FORM, GameState.UPCOMING))
         assertFalse(BlockVisibility.visible(BlockType.STATS, GameState.UPCOMING))
-        assertTrue(BlockVisibility.visible(BlockType.BROADCAST, GameState.POSTPONED))
+        assertFalse(BlockVisibility.visible(BlockType.STANDINGS, GameState.POSTPONED))
         assertFalse(BlockVisibility.visible(BlockType.LINESCORE, GameState.POSTPONED))
     }
 

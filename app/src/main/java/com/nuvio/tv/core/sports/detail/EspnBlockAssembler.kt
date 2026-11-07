@@ -90,8 +90,7 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
 
     fun block(type: BlockType, profile: String, docs: EspnDocs): GameBlock? {
         val p = mapping.profile(profile) ?: return null
-        if (type !in p.blockTypes && type != BlockType.BROADCAST) return null
-        if (type == BlockType.BROADCAST && type.wire !in p.blocks) return null
+        if (type !in p.blockTypes) return null
         return try {
             when (type) {
                 BlockType.LINESCORE -> linescore(p, docs)
@@ -101,7 +100,6 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
                 BlockType.WIN_PROBABILITY -> winProbability(p, docs)
                 BlockType.SITUATION -> situation(p, docs)
                 BlockType.FORM -> form(p, docs)
-                BlockType.BROADCAST -> broadcast(docs)
                 BlockType.RESULTS -> results(profile, p, docs)
                 else -> null
             }
@@ -288,12 +286,6 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
         fun chars(side: String) = ms.firstOrNull { it.homeAway == side }?.let { r.text(it.value) }?.map { it.toString() }.orEmpty()
         val home = chars("home"); val away = chars("away")
         return if (home.isEmpty() && away.isEmpty()) null else GameBlock.Form(SourceId.ESPN, home, away)
-    }
-
-    private fun broadcast(docs: EspnDocs): GameBlock.Broadcast? {
-        val path = mapping.commonPath("broadcast") ?: return null
-        val names = r.read(docs.event, path).mapNotNull { r.text(it) }.filter { it.isNotBlank() }.distinct()
-        return names.takeIf { it.isNotEmpty() }?.let { n -> GameBlock.Broadcast(SourceId.ESPN, n.map { BroadcastEntry(null, it) }) }
     }
 
     private fun results(profile: String, p: SportProfile, docs: EspnDocs): GameBlock.Results? {

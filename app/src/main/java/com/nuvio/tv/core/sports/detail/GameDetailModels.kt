@@ -18,14 +18,14 @@ enum class SourceId(val wire: String) {
 }
 
 enum class BlockType(val wire: String) {
-    SITUATION("situation"), WATCH("watch"), BROADCAST("broadcast"), LINESCORE("linescore"), STATS("stats"),
+    SITUATION("situation"), WATCH("watch"), LINESCORE("linescore"), STATS("stats"),
     LEADERS("leaders"), TIMELINE("timeline"), LINEUP("lineup"), RESULTS("results"), STANDINGS("standings"),
     FORM("form"), HIGHLIGHTS("highlights"), NEXT("next"), WIN_PROBABILITY("winProbability");
 
     companion object {
         /** Block types the shared core can assemble from a provider (watch/next/standings are not yet). */
         val assemblable: Set<BlockType> = setOf(
-            SITUATION, BROADCAST, LINESCORE, STATS, LEADERS, TIMELINE, LINEUP, RESULTS, STANDINGS, FORM, HIGHLIGHTS, WIN_PROBABILITY,
+            SITUATION, LINESCORE, STATS, LEADERS, TIMELINE, LINEUP, RESULTS, STANDINGS, FORM, HIGHLIGHTS, WIN_PROBABILITY,
         )
 
         fun fromWire(s: String?): BlockType? = entries.firstOrNull { it.wire == s }
@@ -73,7 +73,6 @@ data class TimelineItem(
 )
 data class LineupPlayer(val number: String?, val name: String, val pos: String?, val starter: Boolean)
 data class LineupSide(val formation: String?, val players: List<LineupPlayer>)
-data class BroadcastEntry(val region: String?, val name: String)
 data class StandingRow(val pos: String, val name: String, val played: String, val points: String, val gd: String? = null, val form: String? = null)
 
 sealed interface GameBlock {
@@ -82,9 +81,6 @@ sealed interface GameBlock {
 
     data class Situation(override val source: SourceId, val text: String, val parts: Map<String, String> = emptyMap()) : GameBlock {
         override val type get() = BlockType.SITUATION
-    }
-    data class Broadcast(override val source: SourceId, val channels: List<BroadcastEntry>) : GameBlock {
-        override val type get() = BlockType.BROADCAST
     }
     data class Linescore(override val source: SourceId, val columns: List<String>, val rows: List<List<String>>) : GameBlock {
         override val type get() = BlockType.LINESCORE
@@ -152,7 +148,7 @@ data class GameRef(
 /** What belongs on screen in each state: live-only blocks vanish after the whistle, score blocks wait for it. */
 object BlockVisibility {
     private val upcoming = setOf(
-        BlockType.BROADCAST, BlockType.FORM, BlockType.LINEUP, BlockType.RESULTS, BlockType.NEXT,
+        BlockType.FORM, BlockType.LINEUP, BlockType.RESULTS, BlockType.NEXT,
         BlockType.STANDINGS, BlockType.HIGHLIGHTS,
     )
 
@@ -160,7 +156,7 @@ object BlockVisibility {
         GameState.LIVE -> true
         GameState.FINAL -> type != BlockType.SITUATION && type != BlockType.WIN_PROBABILITY
         GameState.UPCOMING -> type in upcoming
-        GameState.POSTPONED -> type == BlockType.BROADCAST
+        GameState.POSTPONED -> false
     }
 }
 
