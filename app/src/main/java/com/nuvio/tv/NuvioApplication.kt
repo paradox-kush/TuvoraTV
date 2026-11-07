@@ -228,9 +228,17 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             }
         )
         PostHog.register(PostHogPrivacy.GEOIP_DISABLE_PROPERTY, true)
+        val supportCode = com.nuvio.tv.core.telemetry.SupportCodeStore.get(this)
+        PostHog.register("support_code", supportCode)
+        com.nuvio.tv.core.telemetry.DeviceProfile.properties(this).forEach { (k, v) -> PostHog.register(k, v) }
+        // Outermost handler: writes the crash file before PostHog's best-effort capture runs.
+        com.nuvio.tv.core.telemetry.CrashRecorder.install(this, BuildConfig.VERSION_NAME)
         if (crashReportsEnabled) {
             PostHog.optIn()
             AppExitReporter.reportPendingExits(this)
+            Thread({
+                runCatching { com.nuvio.tv.core.telemetry.CrashRecorder.sendPending(this, supportCode) }
+            }, "pending-crash-send").start()
         } else {
             PostHog.optOut()
         }
