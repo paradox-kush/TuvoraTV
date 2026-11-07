@@ -65,7 +65,7 @@ data class GameDetailTvModel(
 ) {
     companion object {
         const val PLAYS = 12
-        const val STATS = 4
+        const val STATS = 3
         const val LEADERS = 3
         const val STALE_AFTER_MS = 20_000L
 

@@ -3,6 +3,7 @@ package com.nuvio.tv.core.sports.detail.screen
 import com.nuvio.tv.core.sports.detail.Availability
 import com.nuvio.tv.core.sports.detail.DetailLoad
 import com.nuvio.tv.core.sports.detail.GameDetail
+import com.nuvio.tv.core.sports.detail.GameState
 
 /**
  * What the game screen shows. Every load ends: Loaded, NoData (fall back to the existing match sheet)
@@ -28,7 +29,10 @@ object GameDetailUiReducer {
         val shown = prev as? GameDetailUiState.Loaded
         return when (load) {
             is DetailLoad.Loaded ->
-                if (load.detail.blocks.isEmpty() && load.detail.availability != Availability.FULL) shown ?: GameDetailUiState.NoData
+                if (load.detail.blocks.isEmpty() && load.detail.availability != Availability.FULL &&
+                    load.detail.state != GameState.UPCOMING
+                ) shown ?: GameDetailUiState.NoData
+                // An upcoming game has no blocks yet but still has kickoff, venue and a source row worth showing.
                 else GameDetailUiState.Loaded(load.detail)
             DetailLoad.Empty -> shown ?: GameDetailUiState.NoData
             is DetailLoad.Failed -> shown?.copy(stale = true) ?: GameDetailUiState.Failed(load.timedOut)

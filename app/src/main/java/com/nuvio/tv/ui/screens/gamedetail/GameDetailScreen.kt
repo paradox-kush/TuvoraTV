@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -66,6 +69,8 @@ import com.nuvio.tv.core.sports.detail.screen.TvLinescore
 import com.nuvio.tv.core.sports.detail.screen.TvPlay
 import com.nuvio.tv.core.sports.detail.screen.TvStat
 import com.nuvio.tv.ui.components.AutoResizeText
+import com.nuvio.tv.ui.components.LoadingIndicator
+import com.nuvio.tv.ui.components.shimmer
 import com.nuvio.tv.ui.theme.NuvioPrimitives
 import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.delay
@@ -84,6 +89,7 @@ fun GameDetailScreen(
     onPlayChannel: (contentId: String) -> Unit,
     onAddProvider: () -> Unit,
     onOpenMatchSheet: () -> Unit,
+    onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit = { _, _, _, _, _ -> },
     viewModel: GameDetailViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -125,9 +131,13 @@ fun GameDetailScreen(
         val target = GameDetailFocus.target(focusedKey, userMoved, controls)
         if (target != null && target != focusedKey) {
             autoFocusing = true
-            withFrame()
-            runCatching { requesters.getValue(target).requestFocus() }
-            withFrame()
+            // The control may not be attached on the first frame after it appears: retry briefly until focus lands.
+            repeat(6) { attempt ->
+                withFrame()
+                runCatching { requesters.getValue(target).requestFocus() }
+                kotlinx.coroutines.delay(80L * (attempt + 1))
+                if (focusedKey == target) return@repeat
+            }
             autoFocusing = false
         }
     }
@@ -136,14 +146,13 @@ fun GameDetailScreen(
         Modifier.fillMaxSize().background(NuvioTheme.colors.Background).padding(start = 48.dp, end = 40.dp, top = 28.dp, bottom = 40.dp),
     ) {
         when (val s = ui) {
-            is GameDetailUiState.Loading, GameDetailUiState.NoData -> CenterMessage(
-                if (s is GameDetailUiState.NoData) "Opening channels…" else "Loading game…",
-            )
+            is GameDetailUiState.Loading -> LoadingSkeleton()
+            GameDetailUiState.NoData -> CenterMessage("Opening channels…")
             is GameDetailUiState.Failed -> FailedPane(s.timedOut, requesters.getValue(FocusKey.RETRY), { onFocused(FocusKey.RETRY) }, viewModel::retry)
             is GameDetailUiState.Loaded -> {
                 val model = GameDetailTvModel.from(s.detail, RadarTime.nowMs())
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Column(Modifier.weight(1.12f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING && model.form == null) 1f else 1.12f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ScoreboardCard(model, s.stale)
                         if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
                             KickoffCard(model, Modifier.weight(1f))
@@ -151,11 +160,12 @@ fun GameDetailScreen(
                             if (model.situation != null || model.homeWinPercent != null) SituationCard(model)
                             model.linescore?.let { ByPeriodCard(it, Modifier.weight(1f)) } ?: Spacer(Modifier.weight(1f))
                         }
-                        SourceRow(
+                        if (watch.visible) SourceRow(
                             watch = watch, requesters = requesters, onFocused = onFocused,
                             onPrimary = {
                                 when (watch.primary) {
                                     PrimaryAction.AddProvider -> onAddProvider()
+                                    is PrimaryAction.Replay -> viewModel.playReplay(onPlayCatchUp)
                                     is PrimaryAction.Rematch -> viewModel.retryMatching()
                                     else -> viewModel.playPrimary(onPlayChannel)
                                 }
@@ -163,14 +173,15 @@ fun GameDetailScreen(
                             onChannels = { viewModel.requestMatchSheet(); onOpenMatchSheet() },
                         )
                     }
-                    Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
-                            model.form?.let { FormCard(it, model) }
-                            MatchInfoCard(model, Modifier.weight(1f))
+                    val upcoming = model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING
+                    // An upcoming game with no form yet has nothing for a second pane: the left column carries it all.
+                    if (!upcoming || model.form != null) Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (upcoming) {
+                            model.form?.let { FormCard(it, model, Modifier.weight(1f)) }
                         } else {
                             if (model.leaders.isNotEmpty()) PerformersCard(model.leaders)
                             if (model.stats.isNotEmpty()) StatsCard(model)
-                            PlaysCard(model, Modifier.weight(1f))
+                            PlaysCard(model, Modifier.weight(1f).heightIn(min = 160.dp))
                         }
                     }
                 }
@@ -189,7 +200,7 @@ private suspend fun withFrame() { androidx.compose.runtime.withFrameNanos { } }
 private fun Card(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(NuvioTheme.radii.md)
     Column(
-        modifier.fillMaxWidth().clip(shape).background(NuvioTheme.colors.BackgroundCard).border(1.dp, NuvioTheme.colors.Border, shape).padding(horizontal = 18.dp, vertical = 14.dp),
+        modifier.fillMaxWidth().clip(shape).background(NuvioTheme.colors.BackgroundCard).border(1.dp, NuvioTheme.colors.Border, shape).padding(horizontal = 18.dp, vertical = 12.dp),
         content = content,
     )
 }
@@ -198,6 +209,32 @@ private fun Card(modifier: Modifier = Modifier, content: @Composable androidx.co
 private fun CardTitle(text: String) {
     Text(text.uppercase(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp, color = NuvioTheme.colors.TextSecondary)
     Spacer(Modifier.height(8.dp))
+}
+
+/** The standard TV loading indicator over a shimmering scoreboard skeleton, so the layout is already in place. */
+@Composable
+private fun LoadingSkeleton() {
+    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(Modifier.weight(1.12f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Card {
+                Box(Modifier.width(160.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(NuvioTheme.colors.BackgroundElevated).shimmer())
+                Spacer(Modifier.height(14.dp))
+                repeat(2) {
+                    Row(Modifier.fillMaxWidth().height(72.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(56.dp).clip(CircleShape).background(NuvioTheme.colors.BackgroundElevated).shimmer())
+                        Spacer(Modifier.width(16.dp))
+                        Box(Modifier.weight(1f).height(26.dp).clip(RoundedCornerShape(6.dp)).background(NuvioTheme.colors.BackgroundElevated).shimmer())
+                        Spacer(Modifier.width(24.dp))
+                        Box(Modifier.width(70.dp).height(48.dp).clip(RoundedCornerShape(6.dp)).background(NuvioTheme.colors.BackgroundElevated).shimmer())
+                    }
+                }
+            }
+            Card(Modifier.weight(1f)) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator() } }
+        }
+        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Card(Modifier.weight(1f)) { Box(Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)).background(NuvioTheme.colors.BackgroundElevated).shimmer()) }
+        }
+    }
 }
 
 @Composable
@@ -238,7 +275,7 @@ private fun StatePill(model: GameDetailTvModel) {
         pill, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp,
         color = if (live) Color.White else NuvioTheme.colors.TextPrimary,
         modifier = Modifier.clip(RoundedCornerShape(6.dp))
-            .background(if (live) LiveRed else NuvioTheme.colors.BackgroundElevated)
+            .background(if (live) LiveRed else NuvioTheme.colors.TextPrimary.copy(alpha = 0.14f))
             .padding(horizontal = 12.dp, vertical = 5.dp),
     )
 }
@@ -259,9 +296,10 @@ private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean) {
         if (model.sides.size == 2) {
             val final = model.state == com.nuvio.tv.core.sports.detail.GameState.FINAL
             val a = model.sides[0].score?.toIntOrNull(); val b = model.sides[1].score?.toIntOrNull()
-            TeamRow(model.sides[0], dim = final && a != null && b != null && a < b)
+            val showScore = model.state != com.nuvio.tv.core.sports.detail.GameState.UPCOMING
+            TeamRow(model.sides[0], dim = final && a != null && b != null && a < b, showScore = showScore)
             Spacer(Modifier.height(8.dp))
-            TeamRow(model.sides[1], dim = final && a != null && b != null && b < a)
+            TeamRow(model.sides[1], dim = final && a != null && b != null && b < a, showScore = showScore)
         } else {
             Text(model.title, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
             model.liveLine?.let { Text(it, fontSize = 20.sp, color = NuvioTheme.colors.TextSecondary) }
@@ -270,7 +308,7 @@ private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean) {
 }
 
 @Composable
-private fun TeamRow(side: Side, dim: Boolean) {
+private fun TeamRow(side: Side, dim: Boolean, showScore: Boolean = true) {
     Row(Modifier.fillMaxWidth().height(72.dp), verticalAlignment = Alignment.CenterVertically) {
         Badge(side.badgeUrl, side.name, 56.dp)
         Spacer(Modifier.width(16.dp))
@@ -282,7 +320,7 @@ private fun TeamRow(side: Side, dim: Boolean) {
             )
             side.record?.let { Text(it, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary) }
         }
-        side.score?.let {
+        side.score?.takeIf { showScore }?.let {
             Text(
                 it, fontSize = 64.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End,
                 color = if (dim) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
@@ -368,7 +406,7 @@ private fun androidx.compose.foundation.layout.RowScope.PeriodCell(text: String,
 @Composable
 private fun KickoffCard(model: GameDetailTvModel, modifier: Modifier) {
     Card(modifier) {
-        CardTitle("Kickoff")
+        CardTitle("Starts")
         Spacer(Modifier.weight(1f))
         Text(model.kickoffLabel ?: "Time to be confirmed", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary)
         model.venue?.let { Spacer(Modifier.height(8.dp)); Text(it, fontSize = 22.sp, color = NuvioTheme.colors.TextSecondary) }
@@ -377,19 +415,8 @@ private fun KickoffCard(model: GameDetailTvModel, modifier: Modifier) {
 }
 
 @Composable
-private fun MatchInfoCard(model: GameDetailTvModel, modifier: Modifier) {
+private fun FormCard(form: TvForm, model: GameDetailTvModel, modifier: Modifier = Modifier) {
     Card(modifier) {
-        CardTitle("Match info")
-        listOfNotNull(model.subtitle, model.venue).forEach {
-            Text(it, fontSize = 20.sp, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.padding(bottom = 8.dp))
-        }
-        if (model.form == null) Text("Form and lineups appear closer to kickoff.", fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary)
-    }
-}
-
-@Composable
-private fun FormCard(form: TvForm, model: GameDetailTvModel) {
-    Card {
         CardTitle("Form · last 5")
         listOf(form.home to model.sides.getOrNull(0), form.away to model.sides.getOrNull(1)).forEach { (results, side) ->
             Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -411,9 +438,9 @@ private fun PerformersCard(items: List<TvLeader>) {
     Card {
         CardTitle("Top performers")
         items.forEach { l ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(l.category, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(112.dp), maxLines = 1)
-                Text(l.athlete, fontSize = 19.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.weight(1f), maxLines = 2)
+                Text(l.athlete, fontSize = 18.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.weight(1f), maxLines = 2)
                 l.tag?.let { TagChip(it, l.side); Spacer(Modifier.width(10.dp)) }
                 Text(l.value, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary)
             }
@@ -431,14 +458,14 @@ private fun StatsCard(model: GameDetailTvModel) {
 
 @Composable
 private fun StatRowView(st: TvStat) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(st.home, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.width(72.dp))
+            Text(st.home, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.width(72.dp))
             Text(st.label, fontSize = 15.sp, color = NuvioTheme.colors.TextSecondary, textAlign = TextAlign.Center, modifier = Modifier.weight(1f), maxLines = 1)
-            Text(st.away, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, textAlign = TextAlign.End, modifier = Modifier.width(72.dp))
+            Text(st.away, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, textAlign = TextAlign.End, modifier = Modifier.width(72.dp))
         }
-        Spacer(Modifier.height(4.dp))
-        Row(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(NuvioTheme.colors.Border)) {
+        Spacer(Modifier.height(2.dp))
+        Row(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)).background(NuvioTheme.colors.Border)) {
             val f = st.homeFraction.coerceIn(0.02f, 0.98f)
             Box(Modifier.weight(f).fillMaxHeight().background(NuvioTheme.colors.Secondary))
             Box(Modifier.weight(1f - f).fillMaxHeight().background(NuvioTheme.colors.Info))
@@ -462,30 +489,68 @@ private fun PlaysCard(model: GameDetailTvModel, modifier: Modifier) {
         if (model.latestPlays.isEmpty()) {
             Text("No plays yet", fontSize = 18.sp, color = NuvioTheme.colors.TextSecondary)
         } else {
-            // Focusable rows: D-pad up/down walks (and scrolls) the list when it is longer than the card.
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(model.latestPlays, key = { "${it.time}|${it.text}" }) { PlayRow(it) }
-            }
+            // Whole rows only: a row that does not fit is never drawn half-cut. D-pad down/up on the last/first row pages the list.
+            WholeRowsList(model.latestPlays, Modifier.weight(1f).fillMaxWidth())
         }
     }
 }
 
 @Composable
-private fun PlayRow(p: TvPlay) {
+private fun WholeRowsList(plays: List<TvPlay>, modifier: Modifier) {
+    var first by remember(plays.firstOrNull()?.text) { mutableStateOf(0) }
+    val fitted = remember { IntArray(1) { 1 } }
+    androidx.compose.ui.layout.SubcomposeLayout(modifier.clipToBounds()) { constraints ->
+        val gap = 4.dp.roundToPx()
+        var used = 0
+        val placed = ArrayList<androidx.compose.ui.layout.Placeable>()
+        var i = first.coerceIn(0, (plays.size - 1).coerceAtLeast(0))
+        while (i < plays.size) {
+            val idx = i
+            val p = subcompose("${plays[idx].time}|${plays[idx].text}") {
+                PlayRow(
+                    plays[idx],
+                    onDown = { if (idx == first + fitted[0] - 1 && first + fitted[0] < plays.size) { first += 1; true } else false },
+                    onUp = { if (idx == first && first > 0) { first -= 1; true } else false },
+                )
+            }.first().measure(constraints.copy(minHeight = 0, maxHeight = androidx.compose.ui.unit.Constraints.Infinity))
+            if (placed.isNotEmpty() && used + gap + p.height > constraints.maxHeight) break
+            used += (if (placed.isEmpty()) 0 else gap) + p.height
+            placed += p
+            i++
+        }
+        fitted[0] = placed.size.coerceAtLeast(1)
+        layout(constraints.maxWidth, used.coerceAtMost(constraints.maxHeight)) {
+            var y = 0
+            placed.forEach { it.placeRelative(0, y); y += it.height + gap }
+        }
+    }
+}
+
+@Composable
+private fun PlayRow(p: TvPlay, onDown: () -> Boolean, onUp: () -> Boolean) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(8.dp)
     Row(
         Modifier.fillMaxWidth().clip(shape)
             .background(if (focused) NuvioTheme.colors.FocusBackground else Color.Transparent)
             .border(if (focused) 2.dp else 0.dp, if (focused) NuvioTheme.colors.FocusRing else Color.Transparent, shape)
-            .onFocusChanged { focused = it.isFocused }.focusable()
+            .onFocusChanged { focused = it.isFocused }
+            .onPreviewKeyEvent { e ->
+                if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) false
+                else when (e.key) {
+                    androidx.compose.ui.input.key.Key.DirectionDown -> onDown()
+                    androidx.compose.ui.input.key.Key.DirectionUp -> onUp()
+                    else -> false
+                }
+            }
+            .focusable()
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Text(p.time, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(64.dp))
+        Text(p.time, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(64.dp))
         Box(Modifier.padding(top = 8.dp, end = 8.dp).size(10.dp).clip(CircleShape).background(if (p.scoring) NuvioTheme.colors.Secondary else Color.Transparent))
         p.tag?.let { Box(Modifier.padding(end = 8.dp)) { TagChip(it, p.side) } }
-        Text(p.text, fontSize = 18.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 3, modifier = Modifier.weight(1f))
+        Text(p.text, fontSize = 16.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 3, modifier = Modifier.weight(1f))
     }
 }
 
@@ -497,12 +562,15 @@ private fun SourceRow(
     onPrimary: () -> Unit,
     onChannels: () -> Unit,
 ) {
+    val status = watchStatusLine(watch)
+    val longStatus = status.length > 38
     Card {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             when (val p = watch.primary) {
                 is PrimaryAction.Play -> TvButton("▶  Play ${p.channel.name}", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
                 is PrimaryAction.Switch -> TvButton("⇄  Switch to ${p.channel.name}", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
                 PrimaryAction.AddProvider -> TvButton("Add IPTV provider", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
+                is PrimaryAction.Replay -> TvButton("↩  Watch replay", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
                 is PrimaryAction.Rematch -> TvButton(if (p.failed) "Retry" else "Find channels", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary)
                 PrimaryAction.None -> Unit
             }
@@ -512,19 +580,27 @@ private fun SourceRow(
                     false, requesters.getValue(FocusKey.CHANNELS), { onFocused(FocusKey.CHANNELS) }, onChannels,
                 )
             }
-            Text(
-                watchStatusLine(watch), fontSize = 17.sp, color = NuvioTheme.colors.TextSecondary,
-                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-            )
+            if (!longStatus) StatusText(status, Modifier.weight(1f))
+        }
+        // A long status (the empty-channels explanation) gets the card's full width under the buttons instead of a squeezed column.
+        if (longStatus) {
+            Spacer(Modifier.height(8.dp))
+            StatusText(status, Modifier.fillMaxWidth())
         }
     }
 }
 
+@Composable
+private fun StatusText(text: String, modifier: Modifier) {
+    Text(text, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = modifier)
+}
+
 private fun watchStatusLine(w: WatchUi): String = when (w.status) {
     WatchStatus.FINDING -> if (w.mode == WatchMode.WATCHING && w.currentChannelName != null) "Watching ${w.currentChannelName} · finding channels…" else "Finding channels…"
-    WatchStatus.READY -> if (w.mode == WatchMode.WATCHING) "Watching ${w.currentChannelName ?: "a channel"}" else "Found on your channels"
+    WatchStatus.READY -> if (w.primary is PrimaryAction.Replay) "Replay from kick-off on ${(w.primary as PrimaryAction.Replay).channel.name}" else if (w.mode == WatchMode.WATCHING) "Watching ${w.currentChannelName ?: "a channel"}" else "Found on your channels"
     WatchStatus.ALREADY_ON_IT -> "Watching this game on ${w.currentChannelName ?: "this channel"}"
-    WatchStatus.NO_CHANNELS -> "None of your channels list this game yet"
+    WatchStatus.NO_CHANNELS -> "None of your channels list this game yet. Find channels searches your playlists."
+    WatchStatus.HIDDEN -> ""
     WatchStatus.FAILED -> "Couldn't check your channels"
     WatchStatus.NO_PROVIDER -> "Add an IPTV playlist to watch this game"
 }
@@ -543,14 +619,9 @@ private fun TvButton(label: String, primary: Boolean, requester: FocusRequester,
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .focusRequester(requester)
             .clip(shape)
-            .background(
-                when {
-                    primary && focused -> NuvioTheme.colors.SecondaryVariant
-                    primary -> NuvioTheme.colors.Secondary
-                    focused -> NuvioTheme.colors.FocusBackground
-                    else -> NuvioTheme.colors.BackgroundElevated
-                },
-            )
+            // ONE focus treatment (the app's ring + scale): the fill never changes with focus, so the first open
+            // and every later D-pad move look the same.
+            .background(if (primary) NuvioTheme.colors.Secondary else NuvioTheme.colors.BackgroundElevated)
             .border(if (focused) NuvioTheme.focusRing.border(3.dp) else androidx.compose.foundation.BorderStroke(1.dp, NuvioTheme.colors.Border), shape)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }
             .clickable(onClick = onClick)

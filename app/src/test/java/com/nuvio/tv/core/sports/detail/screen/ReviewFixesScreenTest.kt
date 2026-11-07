@@ -66,3 +66,28 @@ class ReviewFixesScreenTest {
         assertEquals("none", null, GameDetailFocus.target(FocusKey.PRIMARY, userMoved = false, available = emptySet()))
     }
 }
+
+class FocusRestoreAndBadgeTest {
+    @Test fun `back restores focus to the card that opened the game exactly once`() {
+        GameFocusRestore.arm("g1", 1_000)
+        assertEquals("other card", false, GameFocusRestore.take("g2", 1_100))
+        assertEquals("opened card", true, GameFocusRestore.take("g1", 1_200))
+        assertEquals("only once", false, GameFocusRestore.take("g1", 1_300))
+    }
+    @Test fun `a stale restore never steals focus`() {
+        GameFocusRestore.arm("g1", 0)
+        assertEquals("expired", false, GameFocusRestore.take("g1", GameFocusRestore.TTL_MS + 1))
+    }
+    @Test fun `null ids never match`() { GameFocusRestore.arm("g1", 0); assertEquals(false, GameFocusRestore.take(null, 1)) }
+
+    @Test fun `period sports drop the bare minute that contradicts the detail clock`() {
+        assertEquals(null, LiveBadgeProgress.of("Ice Hockey", "9"))
+        assertEquals(null, LiveBadgeProgress.of("Basketball", " 12 "))
+        assertEquals("Q3 5:00", LiveBadgeProgress.of("Basketball", "Q3 5:00"))
+    }
+    @Test fun `running time sports keep their minute`() {
+        assertEquals("78", LiveBadgeProgress.of("Soccer", "78"))
+        assertEquals(null, LiveBadgeProgress.of("Soccer", null))
+        assertEquals(null, LiveBadgeProgress.of("Soccer", " "))
+    }
+}

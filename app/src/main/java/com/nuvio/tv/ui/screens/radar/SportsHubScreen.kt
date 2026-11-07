@@ -69,6 +69,7 @@ import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.nuvio.tv.core.radar.MatchConfidence
+import com.nuvio.tv.core.radar.RadarCalendarGames
 import com.nuvio.tv.core.radar.RadarCatalog
 import com.nuvio.tv.core.radar.RadarCategory
 import com.nuvio.tv.core.radar.RadarTeam
@@ -120,7 +121,11 @@ fun SportsHubScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val openGame: (RadarFixture) -> Unit = { fx ->
-        viewModel.detailGameIdFor(fx)?.let(onOpenGameDetail) ?: viewModel.openMatch(fx)
+        val gameId = viewModel.detailGameIdFor(fx)
+        if (gameId != null) {
+            com.nuvio.tv.core.sports.detail.screen.GameFocusRestore.arm(gameId, RadarTime.nowMs())
+            onOpenGameDetail(gameId)
+        } else viewModel.openMatch(fx)
     }
     val sheet by viewModel.sheet.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -957,11 +962,22 @@ private fun MatchCard(
     liveScore: RadarLiveScore? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
+    // Back from the game screen returns focus to the card that opened it (not the first card).
+    val restoreRequester = remember { FocusRequester() }
+    val gameId = fixture.id?.let { RadarCalendarGames.gameId(fixture) }
+    val restoreHere = remember(gameId) { com.nuvio.tv.core.sports.detail.screen.GameFocusRestore.peek(gameId, RadarTime.nowMs()) }
+    LaunchedEffect(gameId) {
+        if (restoreHere) {
+            kotlinx.coroutines.delay(150)
+            if (com.nuvio.tv.core.sports.detail.screen.GameFocusRestore.take(gameId, RadarTime.nowMs())) runCatching { restoreRequester.requestFocus() }
+        }
+    }
     val cardShape = RoundedCornerShape(NuvioTheme.radii.md)
     // Focus = FocusBackground fill + 2dp FocusRing border — unmistakable, and never the
     // grey `Primary`. onFocusChanged BEFORE clickable, per the guide-row gotcha.
     Column(
         modifier = modifier
+            .then(if (restoreHere) Modifier.focusRequester(restoreRequester) else Modifier)
             .clip(cardShape)
             .background(
                 if (focused) NuvioTheme.colors.FocusBackground
@@ -1164,7 +1180,7 @@ private fun scoreTrails(own: String?, other: String?): Boolean {
 @Composable
 private fun MatchStatusPill(fixture: RadarFixture, live: Boolean, liveScore: RadarLiveScore?) {
     when {
-        live -> LiveBadge(progress = liveScore?.progress)
+        live -> LiveBadge(progress = com.nuvio.tv.core.sports.detail.screen.LiveBadgeProgress.of(fixture.sport, liveScore?.progress))
         fixture.postponed == "yes" -> StatusPill("POSTPONED", NuvioTheme.colors.TextTertiary)
         fixture.scoreLabel != null -> StatusPill("FT", NuvioTheme.colors.TextTertiary)
         else -> {
@@ -1532,7 +1548,10 @@ private fun FocusableRow(onClick: () -> Unit, content: @Composable androidx.comp
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(if (focused) NuvioTheme.colors.Primary else Color.Transparent)
+            // Same focus vocabulary as the match cards: FocusBackground fill + FocusRing border, so a focused
+            // row (Follow, league rows) is unmistakable instead of a mid-grey fill.
+            .background(if (focused) NuvioTheme.colors.FocusBackground else Color.Transparent)
+            .border(if (focused) 2.dp else 0.dp, if (focused) NuvioTheme.colors.FocusRing else Color.Transparent, RoundedCornerShape(8.dp))
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm),

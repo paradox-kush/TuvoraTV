@@ -1591,6 +1591,15 @@ private fun PlaybackNavHost(
                         navController.navigate(Screen.SportsHub.route) { launchSingleTop = true }
                     }
                 },
+                // A finished game's replay takes the same catch-up route the guide and Sports replays take.
+                onPlayCatchUp = { url, title, contentId, startMs, endMs ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            streamUrl = url, title = title, contentType = "live", contentId = contentId,
+                            isCatchUp = true, catchUpStartMs = startMs, catchUpEndMs = endMs,
+                        )
+                    )
+                },
             )
         }
 

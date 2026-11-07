@@ -7,6 +7,7 @@ import com.nuvio.tv.core.sports.detail.GameBlock
 import com.nuvio.tv.core.sports.detail.GameDetail
 import com.nuvio.tv.core.sports.detail.GameRef
 import com.nuvio.tv.core.sports.detail.SourceId
+import com.nuvio.tv.core.sports.detail.GameState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -17,7 +18,7 @@ class GameDetailUiReducerTest {
     private val full = GameDetail.skeleton(ref).copy(
         blocks = listOf(GameBlock.WinProbability(SourceId.ESPN, 60.0)), availability = Availability.FULL,
     )
-    private val sheetOnly = GameDetail.skeleton(ref)
+    private val sheetOnly = GameDetail.skeleton(ref).copy(state = GameState.LIVE)
     private val loading = GameDetailUiReducer.initial(1_000)
 
     @Test fun `starts loading with a deadline`() {
@@ -64,5 +65,10 @@ class GameDetailUiReducerTest {
         val fin = sheetOnly.copy(state = com.nuvio.tv.core.sports.detail.GameState.FINAL)
         assertEquals("no data", GameDetailUiState.NoData, GameDetailUiReducer.onLoad(loading, DetailLoad.Loaded(fin), 1))
         assertTrue("type guard", BlockType.WIN_PROBABILITY in full.blocks.map { it.type })
+    }
+
+    @Test fun `an upcoming game with no blocks still shows kickoff instead of falling back to the match sheet`() {
+        val upcoming = GameDetail.skeleton(ref).copy(state = GameState.UPCOMING)
+        assertEquals("loaded", GameDetailUiState.Loaded(upcoming), GameDetailUiReducer.onLoad(loading, DetailLoad.Loaded(upcoming), 1))
     }
 }

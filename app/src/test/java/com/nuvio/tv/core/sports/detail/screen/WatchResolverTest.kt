@@ -67,4 +67,28 @@ class WatchResolverTest {
         assertEquals("no provider hides it", false, resolve(playlists = false).showChannels)
     }
     @Test fun `deadline constant is about six seconds`() = assertEquals("ms", 6_000L, WatchResolver.LOOKUP_DEADLINE_MS)
+
+    // ---- finished games: replay or nothing, never a failure ----
+
+    private fun finished(cands: List<WatchCandidate> = emptyList(), replays: Set<String> = emptySet(), failed: Boolean = false, matching: Boolean = false, playlists: Boolean = true) =
+        WatchResolver.resolve(null, null, cands, matching, failed, playlists, finished = true, replayIds = replays)
+
+    @Test fun `a finished game with a channel replay offers Watch replay`() {
+        val w = finished(cands = listOf(c("a", 0, 5), c("b", 0, 9)), replays = setOf("a"))
+        assertEquals("replay of the archived channel", PrimaryAction.Replay(c("a", 0, 5)), w.primary)
+        assertEquals("channels hidden", false, w.showChannels)
+        assertTrue("row visible", w.visible)
+    }
+    @Test fun `a finished game with no replay hides the whole row`() {
+        assertEquals("no channels", false, finished().visible)
+        assertEquals("matches but no archive", false, finished(cands = listOf(c("a"))).visible)
+    }
+    @Test fun `a finished game never shows a failure or a spinner`() {
+        assertEquals("failed lookup", WatchStatus.HIDDEN, finished(failed = true).status)
+        assertEquals("still matching", WatchStatus.HIDDEN, finished(matching = true).status)
+        assertEquals("no provider", WatchStatus.HIDDEN, finished(playlists = false).status)
+        assertEquals("no retry action", PrimaryAction.None, finished(failed = true).primary)
+    }
+    @Test fun `the finished lookup may run longer than the live one`() =
+        assertTrue("deadline", WatchResolver.FINISHED_LOOKUP_DEADLINE_MS > WatchResolver.LOOKUP_DEADLINE_MS)
 }

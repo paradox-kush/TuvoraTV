@@ -155,13 +155,13 @@ class GameDetailTvModelTest {
         assertNull("no T", m.linescore!!.totalLabel)
         assertEquals("no totals", listOf<String?>(null, null), m.linescore!!.rows.map { it.total })
     }
-    @Test fun `compact stats are numeric only, capped at four, with bar fractions`() {
+    @Test fun `compact stats are numeric only, capped at three, with bar fractions`() {
         val rows = listOf(
             StatRow("Shots", "30", "10"), StatRow("Hits", "5", "5"), StatRow("FG", "46-91", "40-88"), StatRow("Possession", "60", "40", "%"),
             StatRow("PP", "2", "0"), StatRow("Fouls", "9", "11"),
         )
         val m = GameDetailTvModel.from(base.copy(blocks = listOf(GameBlock.Stats(SourceId.ESPN, rows))), 0)
-        assertEquals("four numeric rows", listOf("Shots", "Hits", "Possession", "PP"), m.stats.map { it.label })
+        assertEquals("three numeric rows", listOf("Shots", "Hits", "Possession"), m.stats.map { it.label })
         assertEquals("share", 0.75f, m.stats[0].homeFraction, 0.001f)
         assertEquals("even", 0.5f, m.stats[1].homeFraction, 0.001f)
         assertEquals("unit kept", "60%", m.stats[2].home)

@@ -68,6 +68,8 @@ class GameDetailViewModel @Inject constructor(
     @Volatile private var matching = true
     @Volatile private var matchingFailed = false
     @Volatile private var hasPlaylists = true
+    @Volatile private var finished = false
+    @Volatile private var replays: Map<String, RadarChannelMatcher.SportsReplay> = emptyMap()
     private var matchJob: Job? = null
 
     init {
@@ -104,6 +106,7 @@ class GameDetailViewModel @Inject constructor(
             return
         }
         fixture = found
+        finished = found.isFinishedOrOff
         val ref = GameDetailEntry.refFor(found, live = repository.uiState.value.isLive(found, RadarTime.nowMs()))
         pollerReady.complete(
             GameDetailPoller(
@@ -143,7 +146,7 @@ class GameDetailViewModel @Inject constructor(
 
     private fun startMatching(fx: RadarFixture) {
         matchJob?.cancel()
-        matches = emptyList(); matching = true; matchingFailed = false; publishWatch()
+        matches = emptyList(); replays = emptyMap(); matching = true; matchingFailed = false; publishWatch()
         if (!hasPlaylists) { matching = false; publishWatch(); return }
         matchJob = viewModelScope.launch {
             try {
@@ -151,7 +154,7 @@ class GameDetailViewModel @Inject constructor(
                 // Bounded: a slow provider ends as "couldn't check your channels" (Retry), never an endless spinner.
                 // Partial matches found before the deadline are kept and stay playable.
                 // (match() hops to its own background dispatcher internally.)
-                val result = withTimeoutOrNull(WatchResolver.LOOKUP_DEADLINE_MS) {
+                val result = withTimeoutOrNull(if (finished) WatchResolver.FINISHED_LOOKUP_DEADLINE_MS else WatchResolver.LOOKUP_DEADLINE_MS) {
                     matcher.match(
                         fx, league,
                         stationLookup = { repository.tvStations(fx.id) },
@@ -159,6 +162,15 @@ class GameDetailViewModel @Inject constructor(
                     )
                 }
                 if (result != null) matches = result else if (matches.isEmpty()) matchingFailed = true
+                if (finished && result != null) {
+                    // Which of the matched channels can replay this game from kick-off (the guide's own rule).
+                    replays = buildMap {
+                        result.forEach { m ->
+                            val r = try { matcher.replayFor(m, fx) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+                            if (r != null) put(m.channel.contentId, r)
+                        }
+                    }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -174,7 +186,7 @@ class GameDetailViewModel @Inject constructor(
         val candidates = matches.map {
             WatchCandidate(it.channel.contentId, it.channel.name, it.confidence.ordinal, it.score)
         }
-        _watch.value = WatchResolver.resolve(watchingContentId, watchingName(), candidates, matching, matchingFailed, hasPlaylists)
+        _watch.value = WatchResolver.resolve(watchingContentId, watchingName(), candidates, matching, matchingFailed, hasPlaylists, finished, replays.keys)
     }
 
     /** Publishes the matched lineup (so channel up/down works) and hands the chosen channel to the player route. */
@@ -190,6 +202,16 @@ class GameDetailViewModel @Inject constructor(
         if (lineup.none { it.contentId.value == channel.contentId }) return
         livePlaylist.set(PlaybackProfileId(profileManager.activeProfileId.value.toString()), lineup)
         onPlay(channel.contentId)
+    }
+
+    /** Starts the catch-up session for the replay shown on a finished game and hands the launch to the screen. */
+    fun playReplay(onPlay: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit) {
+        val channel = (_watch.value.primary as? PrimaryAction.Replay)?.channel ?: return
+        val replay = replays[channel.contentId] ?: return
+        viewModelScope.launch {
+            val session = runCatching { matcher.beginReplay(replay) }.getOrNull() ?: return@launch
+            onPlay(session.url, replay.title, session.contentId, replay.programmeStartMs, replay.programmeEndMs)
+        }
     }
 
     /** "Find channels" / "Retry" on the Watch block. */
