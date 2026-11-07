@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "version": "2026-11-07.1",
+  "killSwitch": { "espn": false, "sports": [], "leagues": [] },
+  "sources": {
+    "espn": {
+      "scoreboard": "https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={yyyymmdd}",
+      "summary": "https://site.api.espn.com/apis/site/v2/sports/{path}/summary?event={id}",
+      "refresh": { "liveMs": 15000, "summaryMs": 60000, "idleMs": 0, "minMs": 6000 },
+      "deadlineMs": 8000
+    }
+  },
+  "pathSyntax": "a.b[0].c[*].d | [key=value] filter | [-1] last | missing -> null, never throws",
+  "states": { "pre": "upcoming", "in": "live", "post": "final" },
+  "leagues": [
+    { "tsdb": "4328", "name": "English Premier League", "sport": "Soccer", "espn": "soccer/eng.1", "profile": "soccer" },
+    { "tsdb": "4480", "name": "UEFA Champions League", "sport": "Soccer", "espn": "soccer/uefa.champions", "profile": "soccer" },
+    { "tsdb": "4335", "name": "Spanish La Liga", "sport": "Soccer", "espn": "soccer/esp.1", "profile": "soccer" },
+    { "tsdb": "4481", "name": "UEFA Europa League", "sport": "Soccer", "espn": "soccer/uefa.europa", "profile": "soccer" },
+    { "tsdb": "4332", "name": "Italian Serie A", "sport": "Soccer", "espn": "soccer/ita.1", "profile": "soccer" },
+    { "tsdb": "4331", "name": "German Bundesliga", "sport": "Soccer", "espn": "soccer/ger.1", "profile": "soccer" },
+    { "tsdb": "4334", "name": "French Ligue 1", "sport": "Soccer", "espn": "soccer/fra.1", "profile": "soccer" },
+    { "tsdb": "4429", "name": "FIFA World Cup", "sport": "Soccer", "espn": "soccer/fifa.world", "profile": "soccer" },
+    { "tsdb": "4387", "name": "NBA", "sport": "Basketball", "espn": "basketball/nba", "profile": "basketball" },
+    { "tsdb": "4391", "name": "NFL", "sport": "American Football", "espn": "football/nfl", "profile": "football" },
+    { "tsdb": "4424", "name": "MLB", "sport": "Baseball", "espn": "baseball/mlb", "profile": "baseball" },
+    { "tsdb": "4380", "name": "NHL", "sport": "Ice Hockey", "espn": "hockey/nhl", "profile": "hockey" },
+    { "tsdb": "4370", "name": "Formula 1", "sport": "Motorsport", "espn": "racing/f1", "profile": "motorsport", "summary": false },
+    { "tsdb": "4443", "name": "UFC", "sport": "Fighting", "espn": "mma/ufc", "profile": "fighting", "summary": false },
+    { "tsdb": "4464", "name": "ATP", "sport": "Tennis", "espn": "tennis/atp", "profile": "tennis", "summary": false },
+    { "tsdb": "4460", "name": "Indian Premier League", "sport": "Cricket", "espn": null, "profile": "cricket", "note": "ESPN uses numeric ids for cricket (cricket/8039 seen); discover per league and fill in" },
+    { "tsdb": "4801", "name": "One Day International Series", "sport": "Cricket", "espn": null, "profile": "cricket" }
+  ],
+  "aliases": { "teams": { "man utd": "manchester united", "man city": "manchester city", "spurs": "tottenham hotspur", "psg": "paris saint-germain" } },
+  "eventOverrides": {},
+  "match": { "dateWindowHours": 6, "normalize": ["lowercase", "strip-accents", "drop-fc-cf-afc", "alias"], "minTeamsMatching": 2 },
+  "common": {
+    "event": "events[*]",
+    "id": "id",
+    "state": "status.type.state",
+    "detail": "status.type.shortDetail",
+    "clock": "status.displayClock",
+    "period": "status.period",
+    "home": "competitions[0].competitors[homeAway=home]",
+    "away": "competitions[0].competitors[homeAway=away]",
+    "team": { "name": "team.displayName", "short": "team.abbreviation", "badge": "team.logo", "score": "score", "record": "records[0].summary", "form": "form" },
+    "broadcast": "competitions[0].broadcasts[*].names[*]",
+    "venue": "competitions[0].venue.fullName"
+  },
+  "profiles": {
+    "soccer": {
+      "blocks": ["header", "watch", "broadcast", "stats", "timeline", "lineup", "form", "standings", "highlights", "next"],
+      "linescore": null,
+      "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
+        "allow": ["Possession", "SHOTS", "ON GOAL", "Corner Kicks", "Fouls", "Yellow Cards", "Red Cards", "Offsides", "Saves"] },
+      "timeline": { "from": "summary", "path": "keyEvents[*]", "time": "clock.displayValue", "text": "text", "type": "type.text" },
+      "form": { "from": "scoreboard", "path": "competitions[0].competitors[*].form" }
+    },
+    "basketball": {
+      "blocks": ["header", "situation", "watch", "broadcast", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
+      "periodLabel": "Q",
+      "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" },
+      "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
+        "allow": ["Field Goal %", "Three Point %", "Free Throw %", "Rebounds", "Assists", "Steals", "Blocks", "Turnovers"] },
+      "leaders": { "from": "scoreboard", "path": "competitions[0].competitors[*].leaders[*]", "category": "name", "athlete": "leaders[0].athlete.displayName", "value": "leaders[0].displayValue" },
+      "timeline": { "from": "summary", "path": "plays[scoringPlay=true]", "time": "clock.displayValue", "period": "period.displayValue", "text": "text", "last": 5 },
+      "winProbability": { "from": "summary", "path": "winprobability[-1].homeWinPercentage" }
+    },
+    "football": {
+      "blocks": ["header", "situation", "watch", "broadcast", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
+      "periodLabel": "Q",
+      "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" },
+      "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
+        "allow": ["Total Yards", "Passing", "Rushing", "1st Downs", "3rd down efficiency", "Turnovers", "Possession"] },
+      "leaders": { "from": "scoreboard", "path": "competitions[0].leaders[*]", "category": "name", "athlete": "leaders[0].athlete.displayName", "value": "leaders[0].displayValue" },
+      "timeline": { "from": "summary", "path": "scoringPlays[*]", "time": "clock.displayValue", "period": "period.displayValue", "text": "text", "last": 5 },
+      "winProbability": { "from": "summary", "path": "winprobability[-1].homeWinPercentage" },
+      "situation": { "from": "scoreboard", "path": "competitions[0].situation.downDistanceText" }
+    },
+    "baseball": {
+      "blocks": ["header", "situation", "watch", "broadcast", "linescore", "leaders", "timeline", "highlights", "next"],
+      "periodLabel": "",
+      "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue", "extra": ["hits", "errors"] },
+      "leaders": { "from": "scoreboard", "path": "competitions[0].leaders[*]", "category": "name", "athlete": "leaders[0].athlete.displayName", "value": "leaders[0].displayValue" },
+      "timeline": { "from": "summary", "path": "plays[scoringPlay=true]", "time": "period.displayValue", "text": "text", "last": 5 },
+      "winProbability": { "from": "summary", "path": "winprobability[-1].homeWinPercentage" },
+      "situation": { "from": "scoreboard", "path": "competitions[0].situation" }
+    },
+    "hockey": {
+      "blocks": ["header", "situation", "watch", "broadcast", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
+      "periodLabel": "P",
+      "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" },
+      "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
+        "allow": ["Shots", "Hits", "Blocked Shots", "Takeaways", "Power Play Goals", "Power Play Percentage", "Faceoffs Won"] },
+      "leaders": { "from": "scoreboard", "path": "competitions[0].competitors[*].leaders[*]", "category": "name", "athlete": "leaders[0].athlete.displayName", "value": "leaders[0].displayValue" },
+      "timeline": { "from": "summary", "path": "plays[scoringPlay=true]", "time": "clock.displayValue", "period": "period.displayValue", "text": "text", "last": 5 }
+    },
+    "motorsport": {
+      "blocks": ["header", "watch", "broadcast", "results", "highlights", "next"],
+      "results": { "from": "scoreboard", "path": "competitions[*]", "session": "type.abbreviation", "state": "status.type.state" }
+    },
+    "fighting": { "blocks": ["header", "watch", "broadcast", "results", "highlights", "next"], "results": { "from": "scoreboard", "path": "competitions[*]" } },
+    "tennis": { "blocks": ["header", "situation", "watch", "broadcast", "linescore", "next"], "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" } },
+    "cricket": { "blocks": ["header", "situation", "watch", "broadcast", "linescore", "leaders", "next"], "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*]" }, "situation": { "from": "summary", "path": "situation" } }
+  }
+}
