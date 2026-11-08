@@ -22,6 +22,8 @@ object DiagTrailPolicy {
         "duration_ms", "item_count", "count", "attempt", "generation", "position_ms",
         "heap_used_mb", "heap_max_mb", "native_mb", "pss_mb", "free_storage_mb",
         "sdk_int", "width", "height", "fps", "bitrate_kbps",
+        // Why graph selection found nothing playable (NO_ELIGIBLE_GRAPH) and the stream's short codes.
+        "rejected_by", "candidate_graphs", "stream_codec", "stream_container", "stream_height", "stream_hdr",
     )
 
     private val identifier = Regex("^[A-Za-z0-9_:-]{1,$MAX_STRING}$")

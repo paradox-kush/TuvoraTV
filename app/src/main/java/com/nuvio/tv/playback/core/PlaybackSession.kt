@@ -609,11 +609,12 @@ class PlaybackSession(
                     val candidates = safeResult(FailurePhase.GRAPH_SELECTION) {
                         graphProvider.candidates(PlaybackGraphInput(requirementResult.value, evidence))
                     }
-                    SelectionResult(requirementResult.value, candidates)
+                    SelectionResult(requirementResult.value, candidates, evidence)
                 }
                 is PlaybackResult.Failure -> SelectionResult(
                     requirements = null,
                     candidates = PlaybackResult.Failure(requirementResult.failure),
+                    evidence = evidence,
                 )
             }
             lane.send(
@@ -673,9 +674,11 @@ class PlaybackSession(
         }
         candidates as PlaybackResult.Success
         val selection = if (message.failedGraph == null) {
-            policy.selectPrimary(PlaybackPolicy.SelectionInput(effective, candidates.value))
+            policy.selectPrimary(
+                PlaybackPolicy.SelectionInput(effective, candidates.value, evidence = message.result.evidence),
+            )
         } else {
-            policy.selectHandoff(effective, candidates.value, message.failedGraph)
+            policy.selectHandoff(effective, candidates.value, message.failedGraph, message.result.evidence)
         }
         when (selection) {
             is PlaybackPolicy.Selection.Selected -> {
@@ -2132,6 +2135,8 @@ class PlaybackSession(
     private data class SelectionResult(
         val requirements: PlaybackRequirements?,
         val candidates: PlaybackResult<List<PlaybackGraph>>,
+        /** Recorded on a rejection as allow-listed stream codes only; never alters selection. */
+        val evidence: StreamEvidence? = null,
     )
 
     private data class StageArm(

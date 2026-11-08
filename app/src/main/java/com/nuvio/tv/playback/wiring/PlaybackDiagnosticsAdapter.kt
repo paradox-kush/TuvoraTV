@@ -38,6 +38,18 @@ object PlaybackDiagnosticFormatter {
             properties["failure_phase"] = failure.phase.name
             properties["retryability"] = failure.retryability.name
             properties["deterministic"] = failure.deterministic
+            failure.graphRejection?.let { rejection ->
+                // Closed enums, wire codes and counts only (never a mime type, URL or host).
+                properties["rejected_by"] = rejection.rejectedBy.name
+                rejection.candidateGraphs?.let { properties["candidate_graphs"] = it }
+                rejection.stream.codec?.let { properties["stream_codec"] = it.wire }
+                rejection.stream.container?.let { properties["stream_container"] = it.wire }
+                rejection.stream.height?.let { properties["stream_height"] = it.wire }
+                rejection.stream.hdr?.let { properties["stream_hdr"] = it.wire }
+                rejection.removedBy.forEach { (reason, count) ->
+                    if (count > 0) properties["rejected_${reason.name.lowercase()}"] = count
+                }
+            }
         }
         return FormattedPlaybackDiagnostic(
             "clean_playback_diagnostic",

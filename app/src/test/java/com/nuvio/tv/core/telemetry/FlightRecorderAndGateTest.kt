@@ -127,4 +127,43 @@ class FlightRecorderAndGateTest {
         assertTrue(g.process("audio_output_profile", emptyMap()) is TelemetryGate.Result.Pass)
         assertNull((g.process("audio_output_profile", emptyMap()) as? TelemetryGate.Result.Pass))
     }
+
+    @Test
+    fun noEligibleGraphReasonsAndStreamFactsReachTheOnDeviceTrail() {
+        val recorder = FlightRecorder()
+        val formatted = com.nuvio.tv.playback.wiring.PlaybackDiagnosticFormatter.format(
+            com.nuvio.tv.playback.core.PlaybackDiagnosticEvent(
+                generation = 4,
+                code = com.nuvio.tv.playback.core.PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                failure = com.nuvio.tv.playback.core.PlaybackFailure(
+                    code = com.nuvio.tv.playback.core.FailureCode.NO_ELIGIBLE_GRAPH,
+                    domain = com.nuvio.tv.playback.core.FailureDomain.UNKNOWN,
+                    phase = com.nuvio.tv.playback.core.FailurePhase.GRAPH_SELECTION,
+                    retryability = com.nuvio.tv.playback.core.Retryability.FATAL,
+                    deterministic = true,
+                    graphRejection = com.nuvio.tv.playback.core.GraphRejection(
+                        rejectedBy = com.nuvio.tv.playback.core.GraphRejectionReason.AUDIO_OUTPUT_PREFERENCE,
+                        candidateGraphs = 2,
+                        removedBy = mapOf(com.nuvio.tv.playback.core.GraphRejectionReason.AUDIO_OUTPUT_PREFERENCE to 2),
+                        stream = com.nuvio.tv.playback.core.StreamFactCodes(
+                            codec = com.nuvio.tv.playback.core.StreamCodecCode.H264,
+                            container = com.nuvio.tv.playback.core.StreamContainerCode.HLS,
+                            height = com.nuvio.tv.playback.core.StreamHeightCode.FHD,
+                            hdr = com.nuvio.tv.playback.core.StreamHdrCode.DV,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        gate(recorder = recorder).process(formatted.eventName, formatted.properties)
+
+        val fields = recorder.snapshot().last().fields
+        assertEquals("AUDIO_OUTPUT_PREFERENCE", fields["rejected_by"])
+        assertEquals(2, fields["candidate_graphs"])
+        assertEquals("h264", fields["stream_codec"])
+        assertEquals("hls", fields["stream_container"])
+        assertEquals("fhd", fields["stream_height"])
+        assertEquals("dv", fields["stream_hdr"])
+        assertEquals("NO_ELIGIBLE_GRAPH", fields["failure_code"])
+    }
 }

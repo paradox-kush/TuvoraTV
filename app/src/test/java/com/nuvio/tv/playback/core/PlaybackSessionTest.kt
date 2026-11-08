@@ -416,6 +416,38 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `graph selection rejection records why and the stream facts on the failure diagnostic`() = runTest {
+        val evidence = StreamEvidence(
+            delivery = EvidenceFact(DeliveryType.RAW_TRANSPORT_STREAM, EvidenceProvenance.PROVIDER_DECLARED),
+            videoCodec = EvidenceFact(VideoCodec.MPEG2, EvidenceProvenance.PROVIDER_DECLARED),
+        )
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine()
+        val session = session(
+            engine,
+            requestResolver = PlaybackRequestResolver {
+                PlaybackResult.Success(ResolvedPlaybackRequest(it, it.summary(), evidence))
+            },
+            // The only candidate is Media3; requirements admit only libmpv.
+            requirementsResolver = PlaybackRequirementsResolver {
+                PlaybackResult.Success(requirements(eligibleEngines = setOf(EngineType.LIBMPV)))
+            },
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        val failure = diagnostics.mapNotNull { it.failure }.single { it.code == FailureCode.NO_ELIGIBLE_GRAPH }
+        val rejection = requireNotNull(failure.graphRejection) { "NO_ELIGIBLE_GRAPH must say why" }
+        assertEquals(GraphRejectionReason.ENGINE_OR_SURFACE, rejection.rejectedBy)
+        assertEquals(1, rejection.candidateGraphs)
+        assertEquals(StreamFactCodes(codec = StreamCodecCode.MPEG2, container = StreamContainerCode.TS), rejection.stream)
+        assertEquals(0, engine.startCalls)
+        close(session)
+    }
+
+    @Test
     fun `engine start receives the resolved stream evidence and exact network intent`() = runTest {
         val evidence = StreamEvidence(
             delivery = EvidenceFact(
