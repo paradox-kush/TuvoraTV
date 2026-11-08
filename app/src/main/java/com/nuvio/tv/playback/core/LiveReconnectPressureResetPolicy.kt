@@ -32,7 +32,7 @@ object LiveReconnectPressureResetPolicy {
     }
 
     /** Stream identity, never the minted URL of a provider link. */
-    private fun streamIdentity(launch: PlaybackLaunch): String = when (launch) {
+    fun streamIdentity(launch: PlaybackLaunch): String = when (launch) {
         is PlaybackLaunch.DeferredProvider ->
             "provider|${launch.selection.accountId.value}|${launch.selection.contentKey.value}"
         // A concrete request is a fixed URL (it is never re-minted), so the URL is its identity

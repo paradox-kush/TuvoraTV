@@ -2414,6 +2414,9 @@ class PlaybackSessionTest {
     private fun TestScope.freezeRig(
         fallbackAudioMoving: Boolean = true,
         fallbackVideoMoving: Boolean = false,
+        withFallback: Boolean = true,
+        policy: PlaybackPolicy = PlaybackPolicy(),
+        clock: PlaybackClock = TestClock,
     ): FreezeRig {
         val surface = FakeSurface()
         val history = FakeCompatibilityHistory()
@@ -2440,17 +2443,22 @@ class PlaybackSessionTest {
         val scope = CompatibilityScopeKey("freezing-channel")
         val session = session(
             engine = preferred,
-            otherEngine = fallback,
+            otherEngine = fallback.takeIf { withFallback },
             requestResolver = PlaybackRequestResolver { request ->
                 resolves++
                 PlaybackResult.Success(request.resolved(scope))
             },
             requirementsResolver = PlaybackRequirementsResolver {
-                PlaybackResult.Success(requirements(setOf(EngineType.MEDIA3, EngineType.LIBMPV)))
+                PlaybackResult.Success(
+                    requirements(
+                        if (withFallback) setOf(EngineType.MEDIA3, EngineType.LIBMPV) else setOf(EngineType.MEDIA3),
+                    ),
+                )
             },
-            policy = PlaybackPolicy(),
+            policy = policy,
             diagnostics = PlaybackDiagnostics(diagnostics::add),
             compatibilityRecording = compatibilityRecording(history),
+            clock = clock,
         )
         return FreezeRig(preferred, fallback, session, diagnostics, history) { resolves }
     }
@@ -2462,6 +2470,11 @@ class PlaybackSessionTest {
         rig.preferred.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
         rig.preferred.emit(PlaybackEvent.FirstVideoFrame(1))
         runCurrent()
+    }
+
+    private fun TestScope.virtualClock() = object : PlaybackClock {
+        override fun nowEpochMs(): Long = testScheduler.currentTime
+        override suspend fun delayMs(durationMs: Long) = delay(durationMs)
     }
 
     private suspend fun TestScope.runUntil(maxMs: Long = 60_000, condition: () -> Boolean) {
@@ -2504,11 +2517,35 @@ class PlaybackSessionTest {
         startFrozenChannel(rig)
         val resolvesBefore = rig.resolveCount()
 
+        runUntil { rig.preferred.startCalls >= 2 }
+        runCurrent()
+
+        assertEquals("the first source freeze reconnects", 2, rig.preferred.startCalls)
+        assertEquals(0, rig.fallback.startCalls)
+        assertTrue("the reconnect asks the resolver again", rig.resolveCount() - resolvesBefore >= 1)
+        close(rig.session)
+    }
+
+    @Test
+    fun `a second source freeze on media3 means a wedged pipeline and hands off`() = runTest {
+        val rig = freezeRig()
+        startFrozenChannel(rig)
+
+        runUntil { rig.fallback.startCalls >= 1 }
+
+        assertEquals("one reconnect did not cure it", 2, rig.preferred.startCalls)
+        assertEquals(1, rig.fallback.startCalls)
+        close(rig.session)
+    }
+
+    @Test
+    fun `without libmpv a repeated source freeze keeps reconnecting`() = runTest {
+        val rig = freezeRig(withFallback = false)
+        startFrozenChannel(rig)
+
         runUntil { rig.preferred.startCalls >= 3 }
 
-        assertEquals("both source freezes reconnect", 3, rig.preferred.startCalls)
-        assertEquals("a source freeze never hands off", 0, rig.fallback.startCalls)
-        assertTrue("each reconnect asks the resolver again", rig.resolveCount() - resolvesBefore >= 2)
+        assertEquals(3, rig.preferred.startCalls)
         close(rig.session)
     }
 
@@ -2532,23 +2569,111 @@ class PlaybackSessionTest {
 
     @Test
     fun `probation passing clears the incident and pressure`() = runTest {
-        val rig = freezeRig()
+        // Budget of two reconnects per window: a third source freeze is only allowed because each
+        // passed probation handed the budget back (and ended the incident, so none hands off).
+        val tight = PlaybackPolicy(
+            liveReconnectConfiguration = PlaybackPolicy.LiveReconnectConfiguration(
+                maxAttemptsPerIncident = 2,
+                maxAttemptsPerRollingWindow = 2,
+            ),
+        )
+        val rig = freezeRig(policy = tight)
         startFrozenChannel(rig)
 
-        // Eight source freezes inside one virtual instant would exhaust the six per window budget
-        // unless every passed probation hands the budget back.
-        repeat(8) { cycle ->
+        repeat(3) { cycle ->
             rig.preferred.videoMoving = false
             rig.preferred.audioMoving = false
-            runUntil { rig.preferred.startCalls >= cycle + 2 }
+            runUntil { rig.preferred.startCalls >= cycle + 2 || rig.session.snapshot.value.state == PlaybackState.FAILED }
+            rig.preferred.videoMoving = true
+            rig.preferred.audioMoving = true
+            runFor(35_000) // probation passes
+        }
+
+        assertEquals(4, rig.preferred.startCalls)
+        assertEquals(PlaybackState.PLAYING, rig.session.snapshot.value.state)
+        assertEquals("each freeze was a fresh incident", 0, rig.fallback.startCalls)
+        close(rig.session)
+    }
+
+    @Test
+    fun `reconnect pressure is not cleared by wall time while probation is still open`() = runTest {
+        val tight = PlaybackPolicy(
+            liveReconnectConfiguration = PlaybackPolicy.LiveReconnectConfiguration(
+                maxAttemptsPerIncident = 2,
+                maxAttemptsPerRollingWindow = 2,
+            ),
+        )
+        val rig = freezeRig(withFallback = false, policy = tight, clock = virtualClock())
+        startFrozenChannel(rig)
+        runUntil { rig.preferred.startCalls >= 2 } // first freeze, first reconnect
+
+        repeat(2) { round ->
+            rig.preferred.videoMoving = true
+            rig.preferred.audioMoving = true
+            runFor(29_000) // five healthy windows and most of the sixth: probation is not done
+            rig.preferred.videoMoving = false // the sixth window freezes, 30 s after the first frame
+            runUntil { rig.preferred.startCalls >= round + 3 || rig.session.snapshot.value.state == PlaybackState.FAILED }
+        }
+
+        assertEquals(
+            "three freezes inside one unfinished probation exhaust a budget of two",
+            PlaybackState.FAILED,
+            rig.session.snapshot.value.state,
+        )
+        close(rig.session)
+    }
+
+    @Test
+    fun `six freezes of one channel in ten minutes end in failed even when every probation passes`() = runTest {
+        val rig = freezeRig(withFallback = false)
+        startFrozenChannel(rig)
+
+        repeat(8) { cycle ->
+            if (rig.session.snapshot.value.state == PlaybackState.FAILED) return@repeat
+            rig.preferred.videoMoving = false
+            rig.preferred.audioMoving = false
+            runUntil { rig.preferred.startCalls >= cycle + 2 || rig.session.snapshot.value.state == PlaybackState.FAILED }
             rig.preferred.videoMoving = true
             rig.preferred.audioMoving = true
             runFor(35_000)
         }
 
-        assertEquals(9, rig.preferred.startCalls)
-        assertEquals(PlaybackState.PLAYING, rig.session.snapshot.value.state)
-        assertEquals(0, rig.fallback.startCalls)
+        assertEquals(PlaybackState.FAILED, rig.session.snapshot.value.state)
+        assertEquals("initial start plus five reconnects", 6, rig.preferred.startCalls)
+        close(rig.session)
+    }
+
+    @Test
+    fun `a low frame rate live stream plays without any freeze or reconnect`() = runTest {
+        listOf(5L, 1L).forEach { perWindow -> // 1 fps and 0.2 fps
+            val rig = freezeRig(withFallback = false)
+            rig.preferred.videoMoving = true
+            rig.preferred.videoPerRead = perWindow
+            rig.preferred.audioMoving = true
+            startFrozenChannel(rig)
+
+            runFor(60_000)
+
+            assertEquals("$perWindow frames per window", 1, rig.preferred.startCalls)
+            assertEquals(PlaybackState.PLAYING, rig.session.snapshot.value.state)
+            assertTrue(rig.diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+            close(rig.session)
+        }
+    }
+
+    @Test
+    fun `a known 25 fps stream rendering one frame in five seconds is frozen`() = runTest {
+        val rig = freezeRig(withFallback = false)
+        rig.preferred.videoMoving = true
+        rig.preferred.videoPerRead = 1
+        rig.preferred.audioMoving = true
+        startFrozenChannel(rig)
+        rig.preferred.emit(PlaybackEvent.VideoFrameRateChanged(1, 25f))
+        runCurrent()
+
+        runUntil { rig.preferred.startCalls >= 2 }
+
+        assertEquals(2, rig.preferred.startCalls)
         close(rig.session)
     }
 
@@ -2572,13 +2697,26 @@ class PlaybackSessionTest {
     @Test
     fun `runtime instability strike is counted per freeze not per generation`() = runTest {
         val rig = freezeRig()
+        rig.preferred.audioMoving = true
         startFrozenChannel(rig)
 
-        runUntil { rig.preferred.startCalls >= 3 } // two source freezes in the same generation
+        runUntil { rig.fallback.startCalls >= 1 } // two video only freezes in the same generation
         runCurrent()
 
         val strikes = rig.history.values.filter { it.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE }
         assertEquals(2, strikes.size)
+        close(rig.session)
+    }
+
+    @Test
+    fun `a source freeze is a provider stall and records no strike`() = runTest {
+        val rig = freezeRig(withFallback = false)
+        startFrozenChannel(rig)
+
+        runUntil { rig.preferred.startCalls >= 3 }
+        runCurrent()
+
+        assertTrue(rig.history.values.none { it.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE })
         close(rig.session)
     }
 
@@ -2701,6 +2839,7 @@ class PlaybackSessionTest {
         diagnostics: PlaybackDiagnostics = PlaybackDiagnostics { },
         outputController: PlaybackOutputController = FakeOutputController,
         audioFocus: AudioFocusPort = NoopAudioFocusPort,
+        clock: PlaybackClock = TestClock,
     ) = PlaybackSession(
         parentScope = this,
         requestResolver = requestResolver,
@@ -2719,7 +2858,7 @@ class PlaybackSessionTest {
             }
         },
         outputController = outputController,
-        clock = TestClock,
+        clock = clock,
         diagnostics = diagnostics,
         lifecycle = lifecycle,
         audioFocus = audioFocus,
@@ -2766,8 +2905,9 @@ class PlaybackSessionTest {
         var videoFramesRendered: Long? = null
         var audioBuffersRendered: Long? = null
 
-        /** While true every metrics read finds 125 more frames (25 fps over the 5 s window). */
+        /** While true every metrics read finds [videoPerRead] more frames (default 25 fps over the 5 s window). */
         var videoMoving = false
+        var videoPerRead = 125L
 
         /** While true every metrics read finds 100 more audio buffers. */
         var audioMoving = false
@@ -2833,7 +2973,7 @@ class PlaybackSessionTest {
             generation: Long,
         ): PlaybackResult<PlaybackEngineMetricsSnapshot> {
             snapshotMetricsCalls++
-            if (videoMoving) videoFramesRendered = (videoFramesRendered ?: 0L) + 125L
+            if (videoMoving) videoFramesRendered = (videoFramesRendered ?: 0L) + videoPerRead
             if (audioMoving) audioBuffersRendered = (audioBuffersRendered ?: 0L) + 100L
             return PlaybackResult.Success(
                 PlaybackEngineMetricsSnapshot(

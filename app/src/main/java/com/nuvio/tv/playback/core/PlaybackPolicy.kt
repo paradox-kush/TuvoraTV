@@ -200,11 +200,17 @@ class PlaybackPolicy(
         before: PlaybackEngineMetricsSnapshot,
         after: PlaybackEngineMetricsSnapshot,
         live: Boolean = false,
+        frameRate: Float? = null,
     ): Boolean? {
-        // Live: "moving" is a real frame rate, not one more frame than before (a decoder that
-        // trickles a frame every few seconds is frozen for the viewer).
+        // Live: "moving" is relative to the content's frame rate when it is known (a 25 fps stream
+        // that renders one frame in five seconds is frozen for the viewer).
         if (live) {
-            return LiveFreezePolicy.videoAdvanced(before, after, watchdogConfiguration.runtimeVideoProgressWindowMs)
+            return LiveFreezePolicy.videoAdvanced(
+                before,
+                after,
+                watchdogConfiguration.runtimeVideoProgressWindowMs,
+                frameRate,
+            )
         }
         if (before.generation != after.generation) return null
         val beforeFrames = before.videoFramesRendered ?: return null

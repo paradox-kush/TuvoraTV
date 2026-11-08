@@ -31,20 +31,34 @@ object LiveFreezePolicy {
         KEEP_PLAYING,
     }
 
-    /** "Video is moving" means at least this many rendered frames per second of window. */
-    const val MIN_VIDEO_FRAMES_PER_SECOND = 1L
+    /** Below this content frame rate (or when unknown) any new frame counts as moving, as before. */
+    const val MIN_RELATIVE_RATE_FPS = 5f
 
-    /** Null when the engine cannot report the rendered-frame fact for this window. */
+    /** At or above it, moving means this share of the frames the content rate promises. */
+    const val MIN_EXPECTED_FRAME_SHARE = 0.2f
+
+    /**
+     * Null when the engine cannot report the rendered-frame fact for this window.
+     *
+     * The bar is relative to the content: a 25 fps stream must render a fifth of its frames
+     * (25 in a 5 s window) while a slideshow, or radio with a still image, only needs one new
+     * frame. A fixed frames-per-second bar would call those streams frozen.
+     */
     fun videoAdvanced(
         before: PlaybackEngineMetricsSnapshot,
         after: PlaybackEngineMetricsSnapshot,
         windowMs: Long,
+        frameRate: Float? = null,
     ): Boolean? {
         if (before.generation != after.generation) return null
         val beforeFrames = before.videoFramesRendered ?: return null
         val afterFrames = after.videoFramesRendered ?: return null
-        val required = (windowMs / 1_000L * MIN_VIDEO_FRAMES_PER_SECOND).coerceAtLeast(1L)
-        return afterFrames - beforeFrames >= required
+        return afterFrames - beforeFrames >= requiredFrames(windowMs, frameRate)
+    }
+
+    fun requiredFrames(windowMs: Long, frameRate: Float?): Long {
+        if (frameRate == null || !frameRate.isFinite() || frameRate < MIN_RELATIVE_RATE_FPS) return 1L
+        return kotlin.math.ceil(frameRate * (windowMs / 1_000f) * MIN_EXPECTED_FRAME_SHARE).toLong().coerceAtLeast(1L)
     }
 
     /** Null when audio progress is not reported; the caller treats that as "not advancing". */
@@ -62,13 +76,14 @@ object LiveFreezePolicy {
         before: PlaybackEngineMetricsSnapshot,
         after: PlaybackEngineMetricsSnapshot,
         windowMs: Long,
+        frameRate: Float? = null,
     ): FreezeKind? {
-        if (videoAdvanced(before, after, windowMs) != false) return null
+        if (videoAdvanced(before, after, windowMs, frameRate) != false) return null
         return if (audioAdvanced(before, after) == true) FreezeKind.VIDEO_ONLY else FreezeKind.SOURCE
     }
 
     /**
-     * @param priorVideoOnlyFreezes video-only freezes already seen in this incident
+     * @param priorFreezes freezes (of any kind) already answered in this incident
      * @param inProbation a reconnect showed its first frame and the incident is not yet over
      * @param handoffAvailable libmpv is eligible for this stream and we are not on it already
      */
@@ -76,14 +91,19 @@ object LiveFreezePolicy {
         kind: FreezeKind,
         engine: EngineType,
         handoffAvailable: Boolean,
-        priorVideoOnlyFreezes: Int,
+        priorFreezes: Int,
         inProbation: Boolean,
     ): Action = when (kind) {
-        FreezeKind.SOURCE -> Action.RECONNECT
+        // Media3 that froze with everything flat while READY is more often a wedged pipeline than a
+        // source stall (a real stall goes to buffering). The first one still gets the cheap
+        // reconnect with a fresh link (owner decision 2026-10-02); if that did not cure it, libmpv.
+        FreezeKind.SOURCE ->
+            if (engine == EngineType.MEDIA3 && handoffAvailable && priorFreezes >= 1) Action.HANDOFF
+            else Action.RECONNECT
         FreezeKind.VIDEO_ONLY -> when {
             // There is nowhere left to hand off, and reconnecting would only cut the audio that works.
             engine == EngineType.LIBMPV -> Action.KEEP_PLAYING
-            handoffAvailable && (priorVideoOnlyFreezes >= 1 || inProbation) -> Action.HANDOFF
+            handoffAvailable && (priorFreezes >= 1 || inProbation) -> Action.HANDOFF
             else -> Action.RECONNECT
         }
     }

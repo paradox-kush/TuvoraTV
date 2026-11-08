@@ -99,8 +99,14 @@ class PlaybackSession(
     /** Opaque id of this session, so two NO_PROGRESS reports can be told apart (guide preview vs fullscreen). */
     private val instanceId = Integer.toHexString(System.identityHashCode(this))
 
-    /** Video-only freezes seen in the open incident; reset when the incident ends. */
-    private var incidentVideoOnlyFreezes = 0
+    /** Freezes answered in the open incident; reset when the incident ends. */
+    private var incidentFreezes = 0
+
+    /** Freeze times per channel identity, for the per-channel freeze budget (bounded). */
+    private val channelFreezes = LinkedHashMap<String, ArrayDeque<Long>>()
+
+    /** Kind of the latest runtime freeze; a SOURCE freeze is a provider stall, not a graph strike. */
+    private var lastFreezeKind: LiveFreezePolicy.FreezeKind? = null
 
     /** Consecutive healthy runtime windows since the reconnect's first frame. */
     private var probationPassingWindows = 0
@@ -296,6 +302,7 @@ class PlaybackSession(
             reconnectPlaybackStableSinceEpochMs = clock.nowEpochMs()
             probationPassingWindows = 0
         }
+        if (event is PlaybackEvent.FirstVideoFrame) lastFreezeKind = null
         observeCompatibilityFact(before, input)
         val resetsReconnectPressure = input is PlaybackReducerInput.Command &&
             LiveReconnectPressureResetPolicy.resetsOn(input.value, before.launch)
@@ -307,6 +314,8 @@ class PlaybackSession(
             // previous stream's reconnect pressure must not decide this one's first blip.
             liveReconnectAttempts.clear()
             reconnectPlaybackStableSinceEpochMs = null
+            // A viewer Retry starts the channel over; a zap only moves to another channel's own budget.
+            if ((input as PlaybackReducerInput.Command).value == PlaybackCommand.Retry) channelFreezes.clear()
         }
         if (engineStartAccepted) {
             check(engineAttempt < Long.MAX_VALUE) { "Playback engine attempt exhausted" }
@@ -316,7 +325,7 @@ class PlaybackSession(
         }
         machine = transition.state
         if (transition.state.incident == null) {
-            incidentVideoOnlyFreezes = 0
+            incidentFreezes = 0
             probationPassingWindows = 0
         }
         if (before.snapshot.generation != transition.state.snapshot.generation) {
@@ -447,6 +456,8 @@ class PlaybackSession(
         // repeated freezes and a proven libmpv success since.
         return CompatibilityOutcome.RUNTIME_UNSTABLE.takeIf {
             acceptedFailure && !failure.deterministic &&
+                // A SOURCE freeze (video and audio both flat) is a provider stall, not the graph's fault.
+                lastFreezeKind != LiveFreezePolicy.FreezeKind.SOURCE &&
                 before.request?.contentType == ContentType.LIVE &&
                 isRuntimeInstabilityFailure(failure.domain, failure.code)
         }
@@ -1331,7 +1342,9 @@ class PlaybackSession(
                     continue
                 }
                 val now = clock.nowEpochMs()
-                reconnectPlaybackStableSinceEpochMs?.let { stableSince ->
+                // While a freeze incident is open only a passed probation hands the budget back; the
+                // wall clock must not (a reconnect that shows frames for 30 s but never proves itself).
+                if (machine.incident?.probation != true) reconnectPlaybackStableSinceEpochMs?.let { stableSince ->
                     if (policy.stablePlaybackResetsReconnectPressure((now - stableSince).coerceAtLeast(0L))) {
                         liveReconnectAttempts.clear()
                         reconnectPlaybackStableSinceEpochMs = null
@@ -1766,7 +1779,12 @@ class PlaybackSession(
         val advanced = if (message.before == null || message.after == null) {
             null
         } else {
-            policy.renderedVideoAdvanced(message.before, message.after, live)
+            policy.renderedVideoAdvanced(
+                message.before,
+                message.after,
+                live,
+                machine.snapshot.videoOutputFacts.frameRate,
+            )
         }
         when {
             advanced == null -> {
@@ -1802,7 +1820,8 @@ class PlaybackSession(
         val generation = message.generation
         val before = message.before ?: return
         val after = message.after ?: return
-        val kind = LiveFreezePolicy.classify(before, after, policy.runtimeVideoWindowMs())
+        val frameRate = machine.snapshot.videoOutputFacts.frameRate
+        val kind = LiveFreezePolicy.classify(before, after, policy.runtimeVideoWindowMs(), frameRate)
             ?: LiveFreezePolicy.FreezeKind.SOURCE
         val engine = activeGraph?.engine ?: EngineType.MEDIA3
         val handoffAvailable = engine == EngineType.MEDIA3 &&
@@ -1812,7 +1831,7 @@ class PlaybackSession(
             kind = kind,
             engine = engine,
             handoffAvailable = handoffAvailable,
-            priorVideoOnlyFreezes = incidentVideoOnlyFreezes,
+            priorFreezes = incidentFreezes,
             inProbation = machine.incident?.probation == true,
         )
         probationPassingWindows = 0
@@ -1834,12 +1853,26 @@ class PlaybackSession(
             return
         }
         freezeOrdinal++
-        if (kind == LiveFreezePolicy.FreezeKind.VIDEO_ONLY) incidentVideoOnlyFreezes++
+        incidentFreezes++
+        lastFreezeKind = kind
         emitWatchdogFailure(
             generation,
             PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS,
             FreezeDecision(kind, action),
+            terminal = channelFreezeBudgetExhausted(),
         )
+    }
+
+    /** Records this freeze against its channel and reports whether the channel used its budget up. */
+    private fun channelFreezeBudgetExhausted(): Boolean {
+        val identity = machine.launch?.let(LiveReconnectPressureResetPolicy::streamIdentity) ?: return false
+        val now = clock.nowEpochMs()
+        val freezes = channelFreezes.remove(identity) ?: ArrayDeque()
+        LiveFreezeBudgetPolicy.prune(freezes, now)
+        freezes.addLast(now)
+        channelFreezes[identity] = freezes // most recently frozen last
+        while (channelFreezes.size > MAX_TRACKED_CHANNELS) channelFreezes.remove(channelFreezes.keys.first())
+        return LiveFreezeBudgetPolicy.exhausted(freezes, now)
     }
 
     private fun freezeTelemetry(
@@ -1857,6 +1890,7 @@ class PlaybackSession(
         generation: Long,
         phase: PlaybackPolicy.WatchdogPhase,
         freeze: FreezeDecision? = null,
+        terminal: Boolean = false,
     ) {
         val evidence = machine.evidence ?: return
         val classified = policy.watchdogFailure(
@@ -1870,6 +1904,9 @@ class PlaybackSession(
                 code = FailureCode.NO_PROGRESS,
                 phase = FailurePhase.RECOVERY,
             )
+        } else if (terminal) {
+            // The channel keeps freezing however the reconnects were timed: stop with Retry.
+            policy.liveReconnectExhaustedFailure()
         } else if (freeze != null) {
             // The ladder decided: a second video-only freeze (or one inside probation) is
             // handoff-eligible and reaches libmpv through the reducer's handoff path.
@@ -2347,6 +2384,7 @@ class PlaybackSession(
     private companion object {
         const val DEFAULT_RELEASE_TIMEOUT_MS = 5_000L
         const val SURFACE_RECHECK_MS = 500L
+        const val MAX_TRACKED_CHANNELS = 16
         val NONFATAL_OUTPUT_STATUSES = setOf(
             PlaybackOutputStatus.UNSUPPORTED,
             PlaybackOutputStatus.NO_COMPATIBLE_MODE,
