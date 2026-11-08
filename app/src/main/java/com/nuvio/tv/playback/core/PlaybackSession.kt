@@ -95,6 +95,21 @@ class PlaybackSession(
     private val recordedCompatibilityOutcomes = mutableSetOf<CompatibilityRecordingKey>()
     private val liveReconnectAttempts = ArrayDeque<Long>()
     private var reconnectPlaybackStableSinceEpochMs: Long? = null
+
+    /** Opaque id of this session, so two NO_PROGRESS reports can be told apart (guide preview vs fullscreen). */
+    private val instanceId = Integer.toHexString(System.identityHashCode(this))
+
+    /** Video-only freezes seen in the open incident; reset when the incident ends. */
+    private var incidentVideoOnlyFreezes = 0
+
+    /** Consecutive healthy runtime windows since the reconnect's first frame. */
+    private var probationPassingWindows = 0
+
+    /** Counts runtime freezes so each one is its own compatibility strike. */
+    private var freezeOrdinal = 0
+
+    /** Engine attempt whose stuck picture was already reported (libmpv keeps playing the audio). */
+    private var pictureStuckReportedAttempt: Long? = null
     private var audioFocusOwned = false
     private var pausedByAudioFocus = false
 
@@ -279,6 +294,7 @@ class PlaybackSession(
             before.snapshot.isReconnecting
         ) {
             reconnectPlaybackStableSinceEpochMs = clock.nowEpochMs()
+            probationPassingWindows = 0
         }
         observeCompatibilityFact(before, input)
         val resetsReconnectPressure = input is PlaybackReducerInput.Command &&
@@ -299,6 +315,10 @@ class PlaybackSession(
             runtimeMetricsUnavailableAttempt = null
         }
         machine = transition.state
+        if (transition.state.incident == null) {
+            incidentVideoOnlyFreezes = 0
+            probationPassingWindows = 0
+        }
         if (before.snapshot.generation != transition.state.snapshot.generation) {
             val activeGeneration = transition.state.snapshot.generation
             decoderStableIds.keys.removeAll { (generation, _) -> generation != activeGeneration }
@@ -351,7 +371,9 @@ class PlaybackSession(
             decoderStableId = decoderStableIds[generation to graph.engine],
         )
         val engineVersion = environment.engineVersions[graph.engine] ?: return
-        val key = CompatibilityRecordingKey(generation, graphFingerprint, outcome)
+        // Each runtime freeze is its own strike; everything else records once per generation.
+        val freeze = if (outcome == CompatibilityOutcome.RUNTIME_UNSTABLE) freezeOrdinal else 0
+        val key = CompatibilityRecordingKey(generation, graphFingerprint, outcome, freeze)
         if (!recordedCompatibilityOutcomes.add(key)) return
         val now = clock.nowEpochMs()
         if (now < 0 || now == Long.MAX_VALUE) return
@@ -1740,26 +1762,101 @@ class PlaybackSession(
         }
         watchdogArm = null
         watchdogJob = null
+        val live = machine.request?.contentType == ContentType.LIVE
+        val advanced = if (message.before == null || message.after == null) {
+            null
+        } else {
+            policy.renderedVideoAdvanced(message.before, message.after, live)
+        }
         when {
-            message.before == null || message.after == null -> {
+            advanced == null -> {
                 runtimeMetricsUnavailableAttempt = message.attempt
                 reconcileWatchdog()
             }
-            policy.renderedVideoAdvanced(message.before, message.after) == true -> reconcileWatchdog()
-            policy.renderedVideoAdvanced(message.before, message.after) == null -> {
-                runtimeMetricsUnavailableAttempt = message.attempt
+            advanced == true -> {
+                runtimeWindowPassed(message.generation, live)
                 reconcileWatchdog()
             }
-            else -> emitWatchdogFailure(
+            !live -> emitWatchdogFailure(
                 message.generation,
                 PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS,
             )
+            else -> liveRuntimeFreeze(message)
         }
     }
+
+    /** A healthy window: after enough of them in a row the reconnect's probation is over. */
+    private suspend fun runtimeWindowPassed(generation: Long, live: Boolean) {
+        pictureStuckReportedAttempt = null
+        if (!live || machine.incident?.probation != true) return
+        probationPassingWindows++
+        if (probationPassingWindows < policy.probationWindows()) return
+        probationPassingWindows = 0
+        // The stream held for the whole probation: hand the reconnect budget back with the incident.
+        liveReconnectAttempts.clear()
+        reconnectPlaybackStableSinceEpochMs = null
+        applyReducer(PlaybackReducerInput.LiveProbationPassed(generation))
+    }
+
+    private suspend fun liveRuntimeFreeze(message: LaneMessage.RuntimeWindowFinished) {
+        val generation = message.generation
+        val before = message.before ?: return
+        val after = message.after ?: return
+        val kind = LiveFreezePolicy.classify(before, after, policy.runtimeVideoWindowMs())
+            ?: LiveFreezePolicy.FreezeKind.SOURCE
+        val engine = activeGraph?.engine ?: EngineType.MEDIA3
+        val handoffAvailable = engine == EngineType.MEDIA3 &&
+            requirements?.takeIf { it.generation == generation }?.value
+                ?.eligibleEngines?.contains(EngineType.LIBMPV) == true
+        val action = LiveFreezePolicy.decide(
+            kind = kind,
+            engine = engine,
+            handoffAvailable = handoffAvailable,
+            priorVideoOnlyFreezes = incidentVideoOnlyFreezes,
+            inProbation = machine.incident?.probation == true,
+        )
+        probationPassingWindows = 0
+        if (action == LiveFreezePolicy.Action.KEEP_PLAYING) {
+            // libmpv's picture is stuck but its audio plays (still-image radio): failing or
+            // reconnecting would cut the part that works. Say so once and keep watching.
+            if (pictureStuckReportedAttempt != message.attempt) {
+                pictureStuckReportedAttempt = message.attempt
+                diagnostics.record(
+                    PlaybackDiagnosticEvent(
+                        generation = generation,
+                        code = PlaybackDiagnosticCode.LIVE_PICTURE_STUCK,
+                        engine = engine,
+                        freeze = freezeTelemetry(generation, kind, action),
+                    ),
+                )
+            }
+            reconcileWatchdog()
+            return
+        }
+        freezeOrdinal++
+        if (kind == LiveFreezePolicy.FreezeKind.VIDEO_ONLY) incidentVideoOnlyFreezes++
+        emitWatchdogFailure(
+            generation,
+            PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS,
+            FreezeDecision(kind, action),
+        )
+    }
+
+    private fun freezeTelemetry(
+        generation: Long,
+        kind: LiveFreezePolicy.FreezeKind,
+        action: LiveFreezePolicy.Action,
+    ) = LiveFreezeTelemetry(
+        kind = kind,
+        rung = action,
+        decoder = activeGraph?.engine?.let { decoderStableIds[generation to it] },
+        sessionInstance = instanceId,
+    )
 
     private suspend fun emitWatchdogFailure(
         generation: Long,
         phase: PlaybackPolicy.WatchdogPhase,
+        freeze: FreezeDecision? = null,
     ) {
         val evidence = machine.evidence ?: return
         val classified = policy.watchdogFailure(
@@ -1773,6 +1870,16 @@ class PlaybackSession(
                 code = FailureCode.NO_PROGRESS,
                 phase = FailurePhase.RECOVERY,
             )
+        } else if (freeze != null) {
+            // The ladder decided: a second video-only freeze (or one inside probation) is
+            // handoff-eligible and reaches libmpv through the reducer's handoff path.
+            classified.copy(
+                retryability = if (freeze.action == LiveFreezePolicy.Action.HANDOFF) {
+                    Retryability.HANDOFF_ELIGIBLE
+                } else {
+                    Retryability.RETRYABLE_WITH_FRESH_REQUEST
+                },
+            )
         } else {
             classified
         }
@@ -1783,6 +1890,7 @@ class PlaybackSession(
                 engine = activeGraph?.engine,
                 failure = failure,
                 highResolution = machine.snapshot.tracks.videoDimensions?.isHighResolution ?: false,
+                freeze = freeze?.let { freezeTelemetry(generation, it.kind, it.action) },
             ),
         )
         val event = PlaybackEvent.Failed(generation, failure)
@@ -2156,6 +2264,12 @@ class PlaybackSession(
         val generation: Long,
         val graph: CompatibilityGraphFingerprint,
         val outcome: CompatibilityOutcome,
+        val freeze: Int = 0,
+    )
+
+    private data class FreezeDecision(
+        val kind: LiveFreezePolicy.FreezeKind,
+        val action: LiveFreezePolicy.Action,
     )
 
     private sealed interface LaneMessage {

@@ -70,6 +70,14 @@ class PlaybackPolicy(
 
     fun watchdogEnabled(): Boolean = watchdogConfiguration.enabled
 
+    fun runtimeVideoWindowMs(): Long = watchdogConfiguration.runtimeVideoProgressWindowMs
+
+    /** Passing runtime windows that end a live reconnect's probation (~30 s). */
+    fun probationWindows(): Int = LiveFreezePolicy.probationWindows(
+        liveReconnectConfiguration.minimumStablePlaybackBeforeResetMs,
+        watchdogConfiguration.runtimeVideoProgressWindowMs,
+    )
+
     fun watchdogDelayMs(
         phase: WatchdogPhase,
         contentType: ContentType,
@@ -191,7 +199,13 @@ class PlaybackPolicy(
     fun renderedVideoAdvanced(
         before: PlaybackEngineMetricsSnapshot,
         after: PlaybackEngineMetricsSnapshot,
+        live: Boolean = false,
     ): Boolean? {
+        // Live: "moving" is a real frame rate, not one more frame than before (a decoder that
+        // trickles a frame every few seconds is frozen for the viewer).
+        if (live) {
+            return LiveFreezePolicy.videoAdvanced(before, after, watchdogConfiguration.runtimeVideoProgressWindowMs)
+        }
         if (before.generation != after.generation) return null
         val beforeFrames = before.videoFramesRendered ?: return null
         val afterFrames = after.videoFramesRendered ?: return null

@@ -233,6 +233,24 @@ class PlaybackPolicyTest {
     }
 
     @Test
+    fun `live runtime video must render at least a frame per second not merely one more`() {
+        fun metrics(frames: Long) = PlaybackEngineMetricsSnapshot(
+            generation = 7,
+            videoFramesRendered = frames,
+            videoFramesSkipped = null,
+            videoFramesDropped = null,
+            audioBuffersRendered = 99,
+            audioBuffersSkipped = null,
+            audioBuffersDropped = null,
+        )
+
+        assertEquals(false, policy.renderedVideoAdvanced(metrics(10), metrics(11), live = true))
+        assertEquals(false, policy.renderedVideoAdvanced(metrics(10), metrics(14), live = true))
+        assertEquals(true, policy.renderedVideoAdvanced(metrics(10), metrics(15), live = true))
+        assertEquals("VOD keeps the any-frame rule", true, policy.renderedVideoAdvanced(metrics(10), metrics(11)))
+    }
+
+    @Test
     fun `Media3 is the deterministic default primary graph`() {
         val selection = policy.selectPrimary(
             PlaybackPolicy.SelectionInput(requirements(), listOf(mpvRender, media3)),

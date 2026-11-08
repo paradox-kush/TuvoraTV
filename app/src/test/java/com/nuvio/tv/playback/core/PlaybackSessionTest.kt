@@ -1956,7 +1956,7 @@ class PlaybackSessionTest {
         engine.emit(PlaybackEvent.FirstVideoFrame(1))
         runCurrent()
 
-        engine.videoFramesRendered = 11
+        engine.videoFramesRendered = 135
         advanceTimeBy(5_000)
         runCurrent()
 
@@ -2399,6 +2399,286 @@ class PlaybackSessionTest {
         assertTrue(PlaybackStageDeadlinePolicy.SELECTING_GRAPH_MS > httpLimit)
     }
 
+    // ---- Live frozen picture (2026-11-08): video freezes while audio plays --------------------
+
+    private class FreezeRig(
+        val preferred: FakeEngine,
+        val fallback: FakeEngine,
+        val session: PlaybackSession,
+        val diagnostics: MutableList<PlaybackDiagnosticEvent>,
+        val history: FakeCompatibilityHistory,
+        val resolveCount: () -> Int,
+    )
+
+    /** Media3 primary plus libmpv fallback on one surface; every reconnect shows its first frame. */
+    private fun TestScope.freezeRig(
+        fallbackAudioMoving: Boolean = true,
+        fallbackVideoMoving: Boolean = false,
+    ): FreezeRig {
+        val surface = FakeSurface()
+        val history = FakeCompatibilityHistory()
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        var resolves = 0
+        val showFirstFrame: suspend (Int, PlaybackEngineStart, MutableSharedFlow<PlaybackEvent>) -> Unit =
+            { start, input, events ->
+                if (start >= 2) {
+                    events.emit(PlaybackEvent.TracksAvailable(input.generation, hasVideo = true, 1, 0))
+                    events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+                }
+            }
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface, onStart = showFirstFrame)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface, onStart = { _, input, events ->
+            events.emit(PlaybackEvent.TracksAvailable(input.generation, hasVideo = true, 1, 0))
+            events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+        })
+        preferred.videoFramesRendered = 10
+        preferred.audioBuffersRendered = 0
+        fallback.videoFramesRendered = 10
+        fallback.audioBuffersRendered = 0
+        fallback.videoMoving = fallbackVideoMoving
+        fallback.audioMoving = fallbackAudioMoving
+        val scope = CompatibilityScopeKey("freezing-channel")
+        val session = session(
+            engine = preferred,
+            otherEngine = fallback,
+            requestResolver = PlaybackRequestResolver { request ->
+                resolves++
+                PlaybackResult.Success(request.resolved(scope))
+            },
+            requirementsResolver = PlaybackRequirementsResolver {
+                PlaybackResult.Success(requirements(setOf(EngineType.MEDIA3, EngineType.LIBMPV)))
+            },
+            policy = PlaybackPolicy(),
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+            compatibilityRecording = compatibilityRecording(history),
+        )
+        return FreezeRig(preferred, fallback, session, diagnostics, history) { resolves }
+    }
+
+    private suspend fun TestScope.startFrozenChannel(rig: FreezeRig) {
+        rig.session.dispatch(PlaybackCommand.SurfaceAvailable)
+        rig.session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        rig.preferred.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
+        rig.preferred.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+    }
+
+    private suspend fun TestScope.runUntil(maxMs: Long = 60_000, condition: () -> Boolean) {
+        var elapsed = 0L
+        while (!condition() && elapsed < maxMs) {
+            advanceTimeBy(250)
+            runCurrent()
+            elapsed += 250
+        }
+    }
+
+    private suspend fun TestScope.runFor(ms: Long) {
+        var elapsed = 0L
+        while (elapsed < ms) {
+            advanceTimeBy(250)
+            runCurrent()
+            elapsed += 250
+        }
+    }
+
+    @Test
+    fun `first frame then refreeze escalates to handoff on the second video only freeze`() = runTest {
+        val rig = freezeRig()
+        rig.preferred.audioMoving = true
+        startFrozenChannel(rig)
+
+        runUntil { rig.preferred.startCalls >= 2 }
+        assertEquals("the first video only freeze reconnects once", 2, rig.preferred.startCalls)
+        assertEquals(0, rig.fallback.startCalls)
+
+        runUntil { rig.fallback.startCalls >= 1 }
+        assertEquals("the second video only freeze hands off to libmpv", 1, rig.fallback.startCalls)
+        assertEquals("no third plain reconnect", 2, rig.preferred.startCalls)
+        close(rig.session)
+    }
+
+    @Test
+    fun `a source freeze still reconnects with a fresh request`() = runTest {
+        val rig = freezeRig()
+        startFrozenChannel(rig)
+        val resolvesBefore = rig.resolveCount()
+
+        runUntil { rig.preferred.startCalls >= 3 }
+
+        assertEquals("both source freezes reconnect", 3, rig.preferred.startCalls)
+        assertEquals("a source freeze never hands off", 0, rig.fallback.startCalls)
+        assertTrue("each reconnect asks the resolver again", rig.resolveCount() - resolvesBefore >= 2)
+        close(rig.session)
+    }
+
+    @Test
+    fun `a freeze during probation hands off`() = runTest {
+        val rig = freezeRig()
+        startFrozenChannel(rig)
+        runUntil { rig.preferred.startCalls >= 2 } // a source freeze: one plain reconnect
+        rig.preferred.videoMoving = true
+        rig.preferred.audioMoving = true
+        runFor(10_000) // two healthy windows: probation has begun but is not over
+        assertEquals(0, rig.fallback.startCalls)
+
+        rig.preferred.videoMoving = false // picture freezes, audio plays on
+        runUntil { rig.fallback.startCalls >= 1 }
+
+        assertEquals("a video only freeze inside probation hands off", 1, rig.fallback.startCalls)
+        assertEquals(2, rig.preferred.startCalls)
+        close(rig.session)
+    }
+
+    @Test
+    fun `probation passing clears the incident and pressure`() = runTest {
+        val rig = freezeRig()
+        startFrozenChannel(rig)
+
+        // Eight source freezes inside one virtual instant would exhaust the six per window budget
+        // unless every passed probation hands the budget back.
+        repeat(8) { cycle ->
+            rig.preferred.videoMoving = false
+            rig.preferred.audioMoving = false
+            runUntil { rig.preferred.startCalls >= cycle + 2 }
+            rig.preferred.videoMoving = true
+            rig.preferred.audioMoving = true
+            runFor(35_000)
+        }
+
+        assertEquals(9, rig.preferred.startCalls)
+        assertEquals(PlaybackState.PLAYING, rig.session.snapshot.value.state)
+        assertEquals(0, rig.fallback.startCalls)
+        close(rig.session)
+    }
+
+    @Test
+    fun `a video only freeze after a passed probation reconnects instead of handing off`() = runTest {
+        val rig = freezeRig()
+        rig.preferred.audioMoving = true
+        startFrozenChannel(rig)
+        runUntil { rig.preferred.startCalls >= 2 }
+        rig.preferred.videoMoving = true
+        runFor(35_000) // probation passes: the incident is over
+
+        rig.preferred.videoMoving = false
+        runUntil { rig.preferred.startCalls >= 3 }
+
+        assertEquals("a new incident starts again at one reconnect", 3, rig.preferred.startCalls)
+        assertEquals(0, rig.fallback.startCalls)
+        close(rig.session)
+    }
+
+    @Test
+    fun `runtime instability strike is counted per freeze not per generation`() = runTest {
+        val rig = freezeRig()
+        startFrozenChannel(rig)
+
+        runUntil { rig.preferred.startCalls >= 3 } // two source freezes in the same generation
+        runCurrent()
+
+        val strikes = rig.history.values.filter { it.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE }
+        assertEquals(2, strikes.size)
+        close(rig.session)
+    }
+
+    @Test
+    fun `a handoff after repeated freezes leaves a proven libmpv success behind the strikes`() = runTest {
+        val rig = freezeRig()
+        rig.preferred.audioMoving = true
+        rig.fallback.videoMoving = true
+        startFrozenChannel(rig)
+
+        runUntil { rig.fallback.startCalls >= 1 }
+        runFor(2_000)
+
+        val strikes = rig.history.values.filter {
+            it.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE && it.engine == EngineType.MEDIA3
+        }
+        val mpvSuccess = rig.history.values.filter {
+            it.outcome == CompatibilityOutcome.SUCCESS && it.engine == EngineType.LIBMPV
+        }
+        assertEquals("two freezes are two strikes", 2, strikes.size)
+        assertEquals(1, mpvSuccess.size)
+        assertTrue(mpvSuccess.single().recordedAtEpochMs >= strikes.maxOf { it.recordedAtEpochMs })
+        close(rig.session)
+    }
+
+    @Test
+    fun `still image radio never goes terminal while audio advances`() = runTest {
+        val rig = freezeRig(fallbackAudioMoving = true, fallbackVideoMoving = false)
+        rig.preferred.audioMoving = true
+        startFrozenChannel(rig)
+        runUntil { rig.fallback.startCalls >= 1 }
+
+        runFor(60_000)
+
+        assertEquals(PlaybackState.PLAYING, rig.session.snapshot.value.state)
+        assertEquals("libmpv is neither restarted nor released", 1, rig.fallback.startCalls)
+        assertEquals(0, rig.fallback.releaseCalls)
+        assertEquals(
+            "the stuck picture is reported once",
+            1,
+            rig.diagnostics.count { it.code == PlaybackDiagnosticCode.LIVE_PICTURE_STUCK },
+        )
+        close(rig.session)
+    }
+
+    @Test
+    fun `libmpv freeze with audio also flat still ends in failed with retry`() = runTest {
+        val rig = freezeRig(fallbackAudioMoving = false, fallbackVideoMoving = false)
+        rig.preferred.audioMoving = true
+        startFrozenChannel(rig)
+        runUntil { rig.fallback.startCalls >= 1 }
+
+        runUntil(maxMs = 300_000) { rig.session.snapshot.value.state == PlaybackState.FAILED }
+
+        assertEquals(PlaybackState.FAILED, rig.session.snapshot.value.state)
+        close(rig.session)
+    }
+
+    @Test
+    fun `audio only channel never trips the watchdog or hands off`() = runTest {
+        val rig = freezeRig()
+        rig.preferred.videoFramesRendered = 0
+        rig.preferred.audioMoving = true
+        rig.session.dispatch(PlaybackCommand.SurfaceAvailable)
+        rig.session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        rig.preferred.emit(PlaybackEvent.FirstAudio(1))
+        rig.preferred.emit(PlaybackEvent.TracksAvailable(1, hasVideo = false, 1, 0))
+        runCurrent()
+
+        runFor(90_000)
+
+        assertEquals(PlaybackState.PLAYING, rig.session.snapshot.value.state)
+        assertEquals(0, rig.fallback.startCalls)
+        assertEquals(1, rig.preferred.startCalls)
+        assertTrue(rig.diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        close(rig.session)
+    }
+
+    @Test
+    fun `a runtime freeze diagnostic says what froze and which rung answered`() = runTest {
+        val rig = freezeRig()
+        rig.preferred.audioMoving = true
+        startFrozenChannel(rig)
+        rig.preferred.emit(PlaybackEvent.VideoDecoderInitialized(1, "c2.mtk.avc.decoder"))
+        runUntil { rig.fallback.startCalls >= 1 }
+
+        val freezes = rig.diagnostics.filter {
+            it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED && it.failure?.code == FailureCode.NO_PROGRESS
+        }
+        assertEquals(2, freezes.size)
+        assertEquals(LiveFreezePolicy.FreezeKind.VIDEO_ONLY, freezes[0].freeze?.kind)
+        assertEquals(LiveFreezePolicy.Action.RECONNECT, freezes[0].freeze?.rung)
+        assertEquals(LiveFreezePolicy.Action.HANDOFF, freezes[1].freeze?.rung)
+        assertEquals("c2.mtk.avc.decoder", freezes[0].freeze?.decoder)
+        assertTrue(freezes[0].freeze?.sessionInstance?.isNotBlank() == true)
+        assertEquals(freezes[0].freeze?.sessionInstance, freezes[1].freeze?.sessionInstance)
+        close(rig.session)
+    }
+
     private fun TestScope.session(
         engine: FakeEngine,
         otherEngine: FakeEngine? = null,
@@ -2484,6 +2764,13 @@ class PlaybackSessionTest {
         var hardAbortFailuresRemaining = 0
         var snapshotMetricsCalls = 0
         var videoFramesRendered: Long? = null
+        var audioBuffersRendered: Long? = null
+
+        /** While true every metrics read finds 125 more frames (25 fps over the 5 s window). */
+        var videoMoving = false
+
+        /** While true every metrics read finds 100 more audio buffers. */
+        var audioMoving = false
         val pausedValues = mutableListOf<Boolean>()
         val volumeValues = mutableListOf<Float>()
 
@@ -2546,13 +2833,15 @@ class PlaybackSessionTest {
             generation: Long,
         ): PlaybackResult<PlaybackEngineMetricsSnapshot> {
             snapshotMetricsCalls++
+            if (videoMoving) videoFramesRendered = (videoFramesRendered ?: 0L) + 125L
+            if (audioMoving) audioBuffersRendered = (audioBuffersRendered ?: 0L) + 100L
             return PlaybackResult.Success(
                 PlaybackEngineMetricsSnapshot(
                 generation = generation,
                 videoFramesRendered = videoFramesRendered,
                 videoFramesSkipped = null,
                 videoFramesDropped = null,
-                audioBuffersRendered = null,
+                audioBuffersRendered = audioBuffersRendered,
                 audioBuffersSkipped = null,
                 audioBuffersDropped = null,
                 ),
