@@ -795,6 +795,19 @@ private class AndroidMedia3Backend(
         )
     }
 
+    /** Off disables the audio renderer track type, so no audio is decoded at all (cheaper than volume 0). */
+    override suspend fun setAudioEnabled(enabled: Boolean): PlaybackResult<Unit> = withContext(dispatcher) {
+        if (released) return@withContext backendFailure(FailurePhase.PLAYBACK)
+        runCatching {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, !enabled)
+                .build()
+        }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { backendFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
     override suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = withContext(dispatcher) {
         if (released || !rate.isFinite() || rate !in 0.25f..4f) {
             return@withContext backendFailure(FailurePhase.PLAYBACK)

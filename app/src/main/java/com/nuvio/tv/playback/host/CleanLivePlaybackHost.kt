@@ -158,6 +158,7 @@ internal class CleanLivePlaybackHost private constructor(
     }
     suspend fun seekTo(positionMs: Long) = withActiveHost { controller.seekTo(positionMs) }
     suspend fun setPlaybackRate(rate: Float) = withActiveHost { controller.setPlaybackRate(rate) }
+    suspend fun setAudioEnabled(enabled: Boolean) = withActiveHost { controller.setAudioEnabled(enabled) }
     suspend fun selectAudioTrack(trackId: PlaybackTrackId) = withActiveHost {
         controller.selectAudioTrack(trackId)
     }

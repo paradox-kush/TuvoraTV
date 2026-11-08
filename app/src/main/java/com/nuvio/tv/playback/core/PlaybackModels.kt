@@ -947,6 +947,8 @@ sealed interface PlaybackCommand {
             require(positionMs >= 0) { "Seek position must not be negative" }
         }
     }
+    /** Audio on/off for the whole stream: off disables the audio track/decoder where the engine allows it (muted previews). */
+    data class SetAudioEnabled(val enabled: Boolean) : PlaybackCommand
     data class SetPlaybackRate(val rate: Float) : PlaybackCommand {
         init {
             require(rate.isFinite() && rate in 0.25f..4f) { "Playback rate must be between 0.25 and 4" }

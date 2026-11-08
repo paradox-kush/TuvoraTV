@@ -85,6 +85,7 @@ internal interface MpvBackend {
     suspend fun start(): PlaybackResult<Unit>
     suspend fun setPaused(paused: Boolean): PlaybackResult<Unit>
     suspend fun setVolume(volume: Float): PlaybackResult<Unit>
+    suspend fun setAudioEnabled(enabled: Boolean): PlaybackResult<Unit> = setVolume(if (enabled) 1f else 0f)
     suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = unsupportedMpvControl()
     suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = unsupportedMpvControl()
     suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long): PlaybackResult<Unit> =
@@ -333,6 +334,14 @@ internal class AndroidMpvBackend(
             else plan.preInitOptions["cache-secs"] ?: plan.preInitOptions["demuxer-readahead-secs"]
             secs?.let { core.setString("cache-secs", it) }
         }.fold(
+            onSuccess = { PlaybackResult.Success(Unit) },
+            onFailure = { stateFailure(FailurePhase.PLAYBACK) },
+        )
+    }
+
+    /** aid=no drops the audio track (no audio decoding); aid=auto restores the default selection. */
+    override suspend fun setAudioEnabled(enabled: Boolean): PlaybackResult<Unit> = onNativeLane(FailurePhase.PLAYBACK) {
+        runCatching { core.setString("aid", if (enabled) "auto" else "no") }.fold(
             onSuccess = { PlaybackResult.Success(Unit) },
             onFailure = { stateFailure(FailurePhase.PLAYBACK) },
         )

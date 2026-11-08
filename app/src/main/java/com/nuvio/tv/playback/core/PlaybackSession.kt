@@ -441,6 +441,9 @@ class PlaybackSession(
             is PlaybackAction.SetPaused -> setPaused(action)
             is PlaybackAction.SeekTo -> seekTo(action)
             is PlaybackAction.SetPlaybackRate -> setPlaybackRate(action)
+            is PlaybackAction.SetAudioEnabled -> engineControl(action.generation) { engine ->
+                engine.setAudioEnabled(action.generation, action.enabled)
+            }
             is PlaybackAction.SetLiveCacheBudget -> engineControl(action.generation) { engine ->
                 engine.setLiveCacheBudget(action.generation, action.maxBytes, action.maxBackBytes, action.cacheSecs)
             }

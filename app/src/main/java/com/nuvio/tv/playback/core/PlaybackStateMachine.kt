@@ -122,6 +122,11 @@ sealed interface PlaybackAction {
         val rate: Float,
     ) : PlaybackAction
 
+    data class SetAudioEnabled(
+        override val generation: Long,
+        val enabled: Boolean,
+    ) : PlaybackAction
+
     data class SetLiveCacheBudget(
         override val generation: Long,
         val maxBytes: Long,
@@ -371,6 +376,9 @@ object PlaybackStateMachine {
         PlaybackCommand.Retry -> retry(state)
         is PlaybackCommand.SeekTo -> playbackControl(state) {
             PlaybackAction.SeekTo(state.snapshot.generation, command.positionMs)
+        }
+        is PlaybackCommand.SetAudioEnabled -> playbackControl(state) {
+            PlaybackAction.SetAudioEnabled(state.snapshot.generation, command.enabled)
         }
         is PlaybackCommand.SetPlaybackRate -> playbackControl(state) {
             PlaybackAction.SetPlaybackRate(state.snapshot.generation, command.rate)

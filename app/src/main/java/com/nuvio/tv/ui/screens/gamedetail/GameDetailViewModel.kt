@@ -16,6 +16,8 @@ import com.nuvio.tv.core.sports.detail.screen.GameDetailEntry
 import com.nuvio.tv.core.sports.detail.screen.GameDetailPoller
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiReducer
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiState
+import com.nuvio.tv.core.sports.detail.screen.PreviewResolver
+import com.nuvio.tv.core.sports.detail.screen.PreviewSlot
 import com.nuvio.tv.core.sports.detail.screen.PrimaryAction
 import com.nuvio.tv.core.sports.detail.screen.WatchCandidate
 import com.nuvio.tv.core.sports.detail.screen.WatchResolver
@@ -61,6 +63,18 @@ class GameDetailViewModel @Inject constructor(
 
     private val _watch = MutableStateFlow(initialWatch())
     val watch: StateFlow<WatchUi> = _watch.asStateFlow()
+
+    private val _preview = MutableStateFlow<PreviewSlot>(PreviewSlot.Hidden)
+    val preview: StateFlow<PreviewSlot> = _preview.asStateFlow()
+    @Volatile private var gameState: com.nuvio.tv.core.sports.detail.GameState? = null
+    @Volatile private var previewFailed = false
+
+    /** The preview failed once (rejected host / failed stream): show "Preview unavailable" and never retry on a loop. */
+    fun markPreviewFailed() {
+        if (previewFailed) return
+        previewFailed = true
+        publishWatch()
+    }
 
     private val pollerReady = CompletableDeferred<GameDetailPoller>()
     @Volatile private var fixture: RadarFixture? = null
@@ -127,6 +141,7 @@ class GameDetailViewModel @Inject constructor(
     }
 
     private fun onLoad(load: com.nuvio.tv.core.sports.detail.DetailLoad) {
+        (load as? com.nuvio.tv.core.sports.detail.DetailLoad.Loaded)?.let { gameState = it.detail.state; publishWatch() }
         _ui.update { GameDetailUiReducer.onLoad(it, load, RadarTime.nowMs()) }
     }
 
@@ -192,8 +207,14 @@ class GameDetailViewModel @Inject constructor(
 
     private fun publishWatch() {
         val candidates = matches.map {
-            WatchCandidate(it.channel.contentId, it.channel.name, it.confidence.ordinal, it.score)
+            WatchCandidate(
+                it.channel.contentId, it.channel.name, it.confidence.ordinal, it.score,
+                logo = it.channel.logo, singleUse = it.channel.streamUrl.isBlank(),
+            )
         }
+        _preview.value = PreviewResolver.resolve(
+            gameState, watchingContentId, watchingName(), candidates, matching, matchingFailed, hasPlaylists, previewFailed,
+        )
         _watch.value = WatchResolver.resolve(watchingContentId, watchingName(), candidates, matching, matchingFailed, hasPlaylists, finished, replays.keys)
     }
 

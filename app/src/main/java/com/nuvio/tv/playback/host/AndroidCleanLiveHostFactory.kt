@@ -54,6 +54,9 @@ internal interface CleanLiveHost {
     ): Long = 0L
     suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long) {}
 
+    /** Muted game preview: audio off, decoder idle where the engine allows it. */
+    suspend fun setAudioEnabled(enabled: Boolean) {}
+
     /** F28: live track choices, the same session commands VOD uses. */
     suspend fun selectAudioTrack(trackId: PlaybackTrackId)
     suspend fun selectSubtitleTrack(trackId: PlaybackTrackId)
@@ -152,6 +155,7 @@ private class AndroidCleanLiveHost(
     ): Long = host.tuneCatchUp(selection, profile, metadata)
     override suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long) =
         host.setLiveCacheBudget(maxBytes, maxBackBytes, cacheSecs)
+    override suspend fun setAudioEnabled(enabled: Boolean) = host.setAudioEnabled(enabled)
     override suspend fun selectAudioTrack(trackId: PlaybackTrackId) = host.selectAudioTrack(trackId)
     override suspend fun selectSubtitleTrack(trackId: PlaybackTrackId) = host.selectSubtitleTrack(trackId)
     override suspend fun disableSubtitles() = host.disableSubtitles()

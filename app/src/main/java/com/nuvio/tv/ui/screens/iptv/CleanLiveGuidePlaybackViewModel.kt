@@ -595,6 +595,9 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
 
     // With live pause bound, Pause / Play go through its controller: it pauses plainly where the stream
     // cannot be buffered and starts the buffer where it can.
+    /** Muted previews (game screen): audio track off, not just volume 0. */
+    fun requestAudioEnabled(enabled: Boolean) = requestCommand { host -> host.setAudioEnabled(enabled) }
+
     fun requestPause() = requestCommand { host -> livePauseControl?.onPause() ?: host.pause() }
     fun requestResume() = requestCommand { host -> livePauseControl?.onPlay() ?: host.resume() }
     fun requestRetry() = requestCommand { host ->

@@ -208,6 +208,11 @@ class MpvEngine internal constructor(
         backend?.seekTo(positionMs) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
     }
 
+    override suspend fun setAudioEnabled(generation: Long, enabled: Boolean): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.setAudioEnabled(enabled) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
     override suspend fun setPlaybackRate(generation: Long, rate: Float): PlaybackResult<Unit> = lock.withLock {
         if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
         backend?.setPlaybackRate(rate) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)

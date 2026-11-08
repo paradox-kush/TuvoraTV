@@ -57,6 +57,8 @@ import com.nuvio.tv.core.sports.detail.screen.FocusKey
 import com.nuvio.tv.core.sports.detail.screen.GameDetailFocus
 import com.nuvio.tv.core.sports.detail.screen.GameDetailTvModel
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiState
+import com.nuvio.tv.core.sports.detail.screen.PreviewResolver
+import com.nuvio.tv.core.sports.detail.screen.PreviewSlot
 import com.nuvio.tv.core.sports.detail.screen.tvName
 import com.nuvio.tv.core.sports.detail.screen.PrimaryAction
 import com.nuvio.tv.core.sports.detail.screen.WatchMode
@@ -73,7 +75,9 @@ import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.shimmer
 import com.nuvio.tv.ui.theme.NuvioPrimitives
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.util.findActivity
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val LiveRed = NuvioPrimitives.marigoldLive
 
@@ -94,7 +98,46 @@ fun GameDetailScreen(
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val watch by viewModel.watch.collectAsStateWithLifecycle()
+    val preview by viewModel.preview.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    // ---- muted live preview (the same clean live host the guide uses; never two decoders) ----
+    val playback = hiltViewModel<com.nuvio.tv.ui.screens.iptv.CleanLiveGuidePlaybackViewModel>()
+    val playbackState by playback.state.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val surfaceOwner = remember(context) { android.widget.FrameLayout(context) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val previewViewport = remember(density) {
+        // The box is ~16:9 and ~190 dp tall: ask for no more than that, so the engine picks a low variant.
+        val heightPx = with(density) { 190.dp.roundToPx() }
+        com.nuvio.tv.playback.core.VideoDimensions(width = heightPx * 16 / 9, height = heightPx)
+    }
+    val liveSlot = preview as? PreviewSlot.Live
+    // Start only after the dwell, only while RESUMED; leaving (Back/Home/other screen) releases the player right away.
+    LaunchedEffect(liveSlot?.contentId) {
+        val slot = liveSlot ?: return@LaunchedEffect
+        val host = context.findActivity() ?: return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            delay(PreviewResolver.DWELL_MS)
+            playback.attachGuide(
+                initialContentId = com.nuvio.tv.playback.core.ProviderSelectionId(slot.contentId),
+                activity = host, lifecycle = lifecycleOwner.lifecycle, surfaceOwner = surfaceOwner, previewViewport = previewViewport,
+            )
+            try { kotlinx.coroutines.awaitCancellation() } finally { playback.detachGuide() }
+        }
+    }
+    // Muted = audio track off (not just volume 0) once the stream is up.
+    val readyTarget = (playbackState as? com.nuvio.tv.ui.screens.iptv.CleanLiveGuidePlaybackState.Ready)?.target?.contentId?.value
+    LaunchedEffect(readyTarget) { if (readyTarget != null) playback.requestAudioEnabled(false) }
+    // One failure ends the preview quietly ("Preview unavailable"): no spinner loop, no retry loop.
+    LaunchedEffect(playbackState) {
+        val failed = playbackState is com.nuvio.tv.ui.screens.iptv.CleanLiveGuidePlaybackState.Rejected ||
+            ((playbackState as? com.nuvio.tv.ui.screens.iptv.CleanLiveGuidePlaybackState.Ready)?.snapshot?.state ==
+                com.nuvio.tv.playback.core.PlaybackState.FAILED)
+        if (failed) viewModel.markPreviewFailed()
+    }
+    val previewReady = playbackState is com.nuvio.tv.ui.screens.iptv.CleanLiveGuidePlaybackState.Ready
 
     // Lifecycle-bound poll: only while RESUMED, one loop, restarted (not stacked) on return. The loop ends
     // itself when the game is idle (final / far-off): zero requests then.
@@ -124,7 +167,7 @@ fun GameDetailScreen(
         if (!autoFocusing) userMoved = true
         focusedKey = key
     }
-    val controls = GameDetailFocus.controls(ui, watch)
+    val controls = GameDetailFocus.controls(ui, watch, preview)
     // The primary action usually appears after the channel match finished, when Channels already holds focus:
     // until the viewer moves focus themselves, Play/Switch takes it the moment it exists.
     LaunchedEffect(controls) {
@@ -167,10 +210,14 @@ fun GameDetailScreen(
                                     PrimaryAction.AddProvider -> onAddProvider()
                                     is PrimaryAction.Replay -> viewModel.playReplay(onPlayCatchUp)
                                     is PrimaryAction.Rematch -> viewModel.retryMatching()
-                                    else -> viewModel.playPrimary(onPlayChannel)
+                                    else -> scope.launch {
+                                        // The preview decoder is released BEFORE the fullscreen player opens: never two at once.
+                                        playback.detach()
+                                        viewModel.playPrimary(onPlayChannel)
+                                    }
                                 }
                             },
-                            onChannels = { viewModel.requestMatchSheet(); onOpenMatchSheet() },
+                            onChannels = { scope.launch { playback.detach(); viewModel.requestMatchSheet(); onOpenMatchSheet() } },
                         )
                     }
                     val upcoming = model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING
@@ -179,9 +226,21 @@ fun GameDetailScreen(
                         if (upcoming) {
                             model.form?.let { FormCard(it, model, Modifier.weight(1f)) }
                         } else {
+                            val showPreview = preview !is PreviewSlot.Hidden
+                            if (showPreview) PreviewBox(
+                                slot = preview, surfaceOwner = surfaceOwner, ready = previewReady,
+                                actionRequester = requesters.getValue(FocusKey.PREVIEW), onFocused = { onFocused(FocusKey.PREVIEW) },
+                                onAction = {
+                                    when (watch.primary) {
+                                        PrimaryAction.AddProvider -> onAddProvider()
+                                        else -> viewModel.retryMatching()
+                                    }
+                                },
+                            )
                             if (model.leaders.isNotEmpty()) PerformersCard(model.leaders)
-                            if (model.stats.isNotEmpty()) StatsCard(model)
-                            PlaysCard(model, Modifier.weight(1f).heightIn(min = 160.dp))
+                            // The stats comparison gives way to the preview box: the right column is a fixed height.
+                            if (model.stats.isNotEmpty() && !showPreview) StatsCard(model)
+                            PlaysCard(model, Modifier.weight(1f).heightIn(min = 120.dp))
                         }
                     }
                 }
@@ -430,6 +489,51 @@ private fun FormCard(form: TvForm, model: GameDetailTvModel, modifier: Modifier 
                 }
             }
         }
+    }
+}
+
+/** The 16:9 preview slot. Live = the muted stream; otherwise a calm card, never a black rectangle or a spinner. */
+@Composable
+private fun PreviewBox(
+    slot: PreviewSlot,
+    surfaceOwner: android.widget.FrameLayout,
+    ready: Boolean,
+    actionRequester: FocusRequester,
+    onFocused: () -> Unit,
+    onAction: () -> Unit,
+) {
+    val shape = RoundedCornerShape(NuvioTheme.radii.md)
+    Box(
+        Modifier.fillMaxWidth().height(190.dp).clip(shape).background(Color.Black).border(1.dp, NuvioTheme.colors.Border, shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (slot) {
+            is PreviewSlot.Live -> {
+                androidx.compose.ui.viewinterop.AndroidView(factory = { surfaceOwner }, modifier = Modifier.fillMaxSize())
+                if (!ready) PreviewMessage("Starting preview…", sub = slot.name)
+            }
+            is PreviewSlot.PressOk -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Badge(slot.logoUrl, slot.name, 56.dp)
+                Text(slot.name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Press OK to watch", fontSize = 15.sp, color = NuvioTheme.colors.TextSecondary)
+            }
+            is PreviewSlot.Watching -> PreviewMessage("Now playing", sub = slot.name)
+            PreviewSlot.Searching -> PreviewMessage("Looking for a channel…")
+            PreviewSlot.Unavailable -> PreviewMessage("Preview unavailable")
+            is PreviewSlot.NoMatch -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(if (slot.failed) "Couldn't check your channels" else "No channel found yet", fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary)
+                TvButton(if (slot.failed) "Retry" else "Find channels", false, actionRequester, onFocused, onAction)
+            }
+            PreviewSlot.Hidden -> Unit
+        }
+    }
+}
+
+@Composable
+private fun PreviewMessage(text: String, sub: String? = null) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(text, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary)
+        sub?.let { Text(it, fontSize = 14.sp, color = NuvioTheme.colors.TextSecondary.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis) }
     }
 }
 

@@ -77,6 +77,7 @@ internal interface Media3Backend {
     ): PlaybackResult<Unit>
     suspend fun setPaused(paused: Boolean): PlaybackResult<Unit>
     suspend fun setVolume(volume: Float): PlaybackResult<Unit>
+    suspend fun setAudioEnabled(enabled: Boolean): PlaybackResult<Unit> = setVolume(if (enabled) 1f else 0f)
     suspend fun seekTo(positionMs: Long): PlaybackResult<Unit> = unsupportedMedia3Control()
     suspend fun setPlaybackRate(rate: Float): PlaybackResult<Unit> = unsupportedMedia3Control()
     suspend fun selectAudioTrack(trackId: PlaybackTrackId): PlaybackResult<Unit> = unsupportedMedia3Control()
@@ -335,6 +336,11 @@ class Media3Engine internal constructor(
     override suspend fun seekTo(generation: Long, positionMs: Long): PlaybackResult<Unit> = lock.withLock {
         if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
         backend?.seekTo(positionMs) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
+    }
+
+    override suspend fun setAudioEnabled(generation: Long, enabled: Boolean): PlaybackResult<Unit> = lock.withLock {
+        if (this.generation != generation) return@withLock stale(FailurePhase.PLAYBACK)
+        backend?.setAudioEnabled(enabled) ?: failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
     }
 
     override suspend fun setPlaybackRate(generation: Long, rate: Float): PlaybackResult<Unit> = lock.withLock {

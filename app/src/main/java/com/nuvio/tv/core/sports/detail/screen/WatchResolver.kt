@@ -4,7 +4,17 @@ enum class WatchMode { WATCHING, BROWSING }
 enum class WatchStatus { FINDING, READY, NO_CHANNELS, FAILED, NO_PROVIDER, ALREADY_ON_IT, HIDDEN }
 
 /** A channel the existing sports matcher found. [confidence]: 0 = best tier. */
-data class WatchCandidate(val contentId: String, val name: String, val confidence: Int, val score: Int)
+data class WatchCandidate(
+    val contentId: String,
+    val name: String,
+    val confidence: Int,
+    val score: Int,
+    val logo: String? = null,
+    /** Link minted per play (Stalker / blank listed URL): never spent on a preview. */
+    val singleUse: Boolean = false,
+) {
+    val confirmed: Boolean get() = confidence == 0
+}
 
 sealed interface PrimaryAction {
     data class Play(val channel: WatchCandidate) : PrimaryAction

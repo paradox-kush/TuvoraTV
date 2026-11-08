@@ -61,6 +61,7 @@ class PlaybackSessionController internal constructor(
     suspend fun resume() = dispatchCommand(PlaybackCommand.Resume)
     suspend fun retry() = dispatchCommand(PlaybackCommand.Retry)
     suspend fun seekTo(positionMs: Long) = dispatchCommand(PlaybackCommand.SeekTo(positionMs))
+    suspend fun setAudioEnabled(enabled: Boolean) = dispatchCommand(PlaybackCommand.SetAudioEnabled(enabled))
     suspend fun setPlaybackRate(rate: Float) =
         dispatchCommand(PlaybackCommand.SetPlaybackRate(rate))
     suspend fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long) =

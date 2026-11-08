@@ -1,21 +1,22 @@
 package com.nuvio.tv.core.sports.detail.screen
 
-enum class FocusKey { PRIMARY, CHANNELS, RETRY }
+enum class FocusKey { PRIMARY, CHANNELS, RETRY, PREVIEW }
 
 /** Pure focus plan: which control takes focus first, and where focus goes when its control disappears. */
 object GameDetailFocus {
-    private val order = listOf(FocusKey.PRIMARY, FocusKey.CHANNELS, FocusKey.RETRY)
+    private val order = listOf(FocusKey.PRIMARY, FocusKey.CHANNELS, FocusKey.PREVIEW, FocusKey.RETRY)
 
-    fun controls(state: GameDetailUiState, watch: WatchUi): Set<FocusKey> = when (state) {
+    fun controls(state: GameDetailUiState, watch: WatchUi, preview: PreviewSlot = PreviewSlot.Hidden): Set<FocusKey> = when (state) {
         is GameDetailUiState.Loaded -> buildSet {
             if (watch.primary != PrimaryAction.None) add(FocusKey.PRIMARY)
             if (watch.showChannels) add(FocusKey.CHANNELS)
+            if (preview is PreviewSlot.NoMatch) add(FocusKey.PREVIEW)
         }
         is GameDetailUiState.Failed -> setOf(FocusKey.RETRY)
         else -> emptySet()
     }
 
-    fun initial(state: GameDetailUiState, watch: WatchUi): FocusKey? = repair(null, controls(state, watch))
+    fun initial(state: GameDetailUiState, watch: WatchUi, preview: PreviewSlot = PreviewSlot.Hidden): FocusKey? = repair(null, controls(state, watch, preview))
 
     /**
      * Where focus should be NOW. Until the viewer moves focus themselves ([userMoved]), the primary action wins

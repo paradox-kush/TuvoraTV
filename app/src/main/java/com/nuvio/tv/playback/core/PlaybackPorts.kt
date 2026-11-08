@@ -134,6 +134,9 @@ interface PlaybackEngine {
     suspend fun setPaused(generation: Long, paused: Boolean): PlaybackResult<Unit>
     suspend fun setVolume(generation: Long, volume: Float): PlaybackResult<Unit> =
         unsupportedPlaybackControl()
+    /** Audio on/off. The default falls back to volume only; engines override it to disable the audio track/decoder. */
+    suspend fun setAudioEnabled(generation: Long, enabled: Boolean): PlaybackResult<Unit> =
+        setVolume(generation, if (enabled) 1f else 0f)
     suspend fun seekTo(generation: Long, positionMs: Long): PlaybackResult<Unit> =
         unsupportedPlaybackControl()
     suspend fun setPlaybackRate(generation: Long, rate: Float): PlaybackResult<Unit> =
