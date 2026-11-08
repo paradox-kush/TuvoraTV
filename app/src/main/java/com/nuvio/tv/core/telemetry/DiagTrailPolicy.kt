@@ -24,6 +24,9 @@ object DiagTrailPolicy {
         "sdk_int", "width", "height", "fps", "bitrate_kbps",
         // Why graph selection found nothing playable (NO_ELIGIBLE_GRAPH) and the stream's short codes.
         "rejected_by", "candidate_graphs", "stream_codec", "stream_container", "stream_height", "stream_hdr",
+        // Live freeze: what froze, which ladder rung answered, the decoder, firmware and the playback
+        // session that reported it (identifier-safe values only).
+        "freeze_kind", "ladder_rung", "decoder", "build_id", "session_instance",
     )
 
     private val identifier = Regex("^[A-Za-z0-9_:-]{1,$MAX_STRING}$")

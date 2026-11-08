@@ -77,6 +77,8 @@ internal data class MpvMetrics(
     val videoRendered: Long?,
     val videoSkipped: Long?,
     val videoDropped: Long?,
+    /** Audio played so far in ms (a monotonic counter; only its change matters), null if unknown. */
+    val audioPlayedMs: Long? = null,
 )
 
 internal interface MpvBackend {
@@ -185,6 +187,9 @@ internal class AndroidMpvBackend(
     private var lastStreamPosition = -1L
     private var firstVideoFrameSent = false
     private var firstAudioSent = false
+
+    /** Last observed audio-pts, in ms: advances while audio plays, so a stuck picture can be told from a stalled stream. */
+    @Volatile private var audioPtsMs: Long? = null
     @Volatile private var terminalEventsSuppressed = false
     private var videoWidth = 0
     private var videoHeight = 0
@@ -458,6 +463,7 @@ internal class AndroidMpvBackend(
                 videoRendered = core.long(PRESENTED_VIDEO_FRAMES),
                 videoSkipped = core.long("decoder-frame-drop-count"),
                 videoDropped = core.long("frame-drop-count"),
+                audioPlayedMs = audioPtsMs,
             ),
         )
     }
@@ -593,6 +599,7 @@ internal class AndroidMpvBackend(
     }
 
     override fun property(name: String, value: Double) {
+        if (name == "audio-pts" && value.isFinite()) audioPtsMs = (value * 1_000).toLong()
         scope.launch {
             if (terminalEventsSuppressed) return@launch
             if (name == "audio-pts" && value.isFinite() && !firstAudioSent) {
@@ -702,6 +709,7 @@ internal class AndroidMpvBackend(
         lastStreamPosition = -1L
         firstVideoFrameSent = false
         firstAudioSent = false
+        audioPtsMs = null
         videoWidth = 0
         videoHeight = 0
         videoPixelAspect = 1f

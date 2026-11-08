@@ -1,5 +1,6 @@
 package com.nuvio.tv.playback.wiring
 
+import android.os.Build
 import android.util.Log
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.playback.core.PlaybackDiagnosticEvent
@@ -16,7 +17,10 @@ data class FormattedPlaybackDiagnostic(
 
 /** Last-mile formatter whose inputs expose no endpoint, provider, account, or request secret. */
 object PlaybackDiagnosticFormatter {
-    fun format(event: PlaybackDiagnosticEvent): FormattedPlaybackDiagnostic {
+    fun format(
+        event: PlaybackDiagnosticEvent,
+        buildId: String? = null,
+    ): FormattedPlaybackDiagnostic {
         val properties = linkedMapOf<String, Any>(
             "schema_version" to 1,
             "generation" to event.generation,
@@ -31,6 +35,14 @@ object PlaybackDiagnosticFormatter {
         event.changeImpact?.let { properties["change_impact"] = it.name }
         event.changedFields?.let { fields ->
             properties["changed_fields"] = fields.map { it.name }.sorted().joinToString(",")
+        }
+        event.freeze?.let { freeze ->
+            // Closed enums plus identifier-safe strings (dots become `_`): never a URL, host or message.
+            properties["freeze_kind"] = freeze.kind.name
+            properties["ladder_rung"] = freeze.rung.name
+            freeze.decoder?.let(::identifier)?.let { properties["decoder"] = it }
+            buildId?.let(::identifier)?.let { properties["build_id"] = it }
+            identifier(freeze.sessionInstance)?.let { properties["session_instance"] = it }
         }
         event.failure?.let { failure ->
             properties["failure_code"] = failure.code.name
@@ -56,6 +68,12 @@ object PlaybackDiagnosticFormatter {
             PostHogPrivacy.sanitize(properties),
         )
     }
+
+    private val unsafeIdentifierChars = Regex("[^A-Za-z0-9_:-]+")
+
+    /** Component and firmware names carry dots; the trail allow-list takes identifiers only. */
+    private fun identifier(raw: String): String? =
+        raw.replace(unsafeIdentifierChars, "_").trim('_').take(40).takeIf { it.isNotEmpty() }
 }
 
 fun interface PlaybackDiagnosticSink {
@@ -66,7 +84,7 @@ class FormattingPlaybackDiagnostics(
     private val sink: PlaybackDiagnosticSink,
 ) : PlaybackDiagnostics {
     override fun record(event: PlaybackDiagnosticEvent) {
-        val formatted = PlaybackDiagnosticFormatter.format(event)
+        val formatted = PlaybackDiagnosticFormatter.format(event, Build.ID)
         // TV's debug flavor is intentionally non-debuggable, so BuildConfig.DEBUG is false.
         // IS_DEBUG_BUILD tracks the build flavor and keeps secret-safe playback diagnostics
         // available in simulator/device validation builds only.

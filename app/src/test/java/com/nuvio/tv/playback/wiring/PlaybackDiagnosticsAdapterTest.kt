@@ -1,7 +1,10 @@
 package com.nuvio.tv.playback.wiring
 
 import com.nuvio.tv.playback.core.EngineType
+import com.nuvio.tv.core.telemetry.DiagTrailPolicy
 import com.nuvio.tv.playback.core.FailureCode
+import com.nuvio.tv.playback.core.LiveFreezePolicy
+import com.nuvio.tv.playback.core.LiveFreezeTelemetry
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
 import com.nuvio.tv.playback.core.PlaybackDiagnosticCode
@@ -48,6 +51,63 @@ class PlaybackDiagnosticsAdapterTest {
         assertEquals("HANDOFF_ELIGIBLE", formatted.properties["retryability"])
         assertEquals(true, formatted.properties[PostHogPrivacy.GEOIP_DISABLE_PROPERTY])
         assertTrue(formatted.properties.values.all { it is String || it is Number || it is Boolean })
+    }
+
+    @Test
+    fun `a live freeze reports kind rung decoder firmware and session instance as identifiers`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 3,
+                code = PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
+                engine = EngineType.MEDIA3,
+                failure = PlaybackFailure(
+                    FailureCode.NO_PROGRESS,
+                    FailureDomain.VIDEO_RENDERER_SURFACE,
+                    FailurePhase.PLAYBACK,
+                    Retryability.HANDOFF_ELIGIBLE,
+                ),
+                freeze = LiveFreezeTelemetry(
+                    kind = LiveFreezePolicy.FreezeKind.VIDEO_ONLY,
+                    rung = LiveFreezePolicy.Action.HANDOFF,
+                    decoder = "c2.mtk.avc.decoder",
+                    sessionInstance = "1a2b3c",
+                ),
+            ),
+            buildId = "UTT3.240625.001",
+        )
+
+        assertEquals("VIDEO_ONLY", formatted.properties["freeze_kind"])
+        assertEquals("HANDOFF", formatted.properties["ladder_rung"])
+        assertEquals("c2_mtk_avc_decoder", formatted.properties["decoder"])
+        assertEquals("UTT3_240625_001", formatted.properties["build_id"])
+        assertEquals("1a2b3c", formatted.properties["session_instance"])
+        val forbidden = setOf("code", "state", "url", "token")
+        assertTrue(formatted.properties.keys.none { it in forbidden })
+        // The same fields survive the on-device trail allow-list.
+        val trail = DiagTrailPolicy.sanitize(formatted.properties)
+        listOf("freeze_kind", "ladder_rung", "decoder", "build_id", "session_instance").forEach {
+            assertTrue("$it is allow-listed", it in trail)
+        }
+    }
+
+    @Test
+    fun `a freeze with no decoder or firmware leaves those fields out`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 3,
+                code = PlaybackDiagnosticCode.LIVE_PICTURE_STUCK,
+                freeze = LiveFreezeTelemetry(
+                    kind = LiveFreezePolicy.FreezeKind.VIDEO_ONLY,
+                    rung = LiveFreezePolicy.Action.KEEP_PLAYING,
+                    sessionInstance = "ff",
+                ),
+            ),
+            buildId = null,
+        )
+
+        assertFalse("decoder" in formatted.properties)
+        assertFalse("build_id" in formatted.properties)
+        assertEquals("KEEP_PLAYING", formatted.properties["ladder_rung"])
     }
 
     @Test
