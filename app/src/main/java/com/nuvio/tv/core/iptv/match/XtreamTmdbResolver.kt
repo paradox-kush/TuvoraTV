@@ -2,6 +2,7 @@ package com.nuvio.tv.core.iptv.match
 
 import android.content.Context
 import android.util.Log
+import com.nuvio.tv.core.telemetry.ErrorClassPolicy
 import com.nuvio.tv.core.iptv.IptvCatalogFreshness
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.HttpStatusException
@@ -409,7 +410,7 @@ class XtreamTmdbResolver @Inject constructor(
                     buildLock.withLock { recordFailure(key) }
                 } catch (t: Throwable) {
                     Log.w(TAG, "index build failed for ${acc.name} ${kind.slug}", t)
-                    reportBuild(kind, itemCount, startedMs, outcome = "error", detail = "${t::class.java.simpleName}: ${t.message}")
+                    reportBuild(kind, itemCount, startedMs, outcome = "error", detail = ErrorClassPolicy.of(t))
                     StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.EXPECTED_FAILURE)
                     buildLock.withLock { recordFailure(key) }
                 } finally {
@@ -544,7 +545,7 @@ class XtreamTmdbResolver @Inject constructor(
         val why = stopped ?: fullFailure
         return BuildEnd(
             complete = false, itemCount = rows, outcome = "partial",
-            detail = "$done/${cats.size} categories${why?.let { ": ${it::class.java.simpleName}: ${it.message}" }.orEmpty()}",
+            detail = why?.let { ErrorClassPolicy.of(it) },
         )
     }
 
