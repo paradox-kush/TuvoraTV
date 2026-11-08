@@ -1,0 +1,27 @@
+{
+ "gameId": "tsdb:2111",
+ "home": 16,
+ "draw": 22,
+ "away": 62,
+ "asOf": 1794148200000,
+ "series": [
+  {
+   "t": 1794000000000,
+   "home": 21.2,
+   "draw": 21.6
+  },
+  {
+   "t": 1794000060000,
+   "home": 21.2,
+   "draw": 21.6
+  },
+  {
+   "t": 1794000120000,
+   "home": 21.2,
+   "draw": 21.6
+  }
+ ],
+ "storylines": [],
+ "source": "polymarket",
+ "attribution": "via Polymarket"
+}

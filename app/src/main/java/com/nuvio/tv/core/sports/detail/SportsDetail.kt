@@ -50,7 +50,9 @@ object SportsDetail {
         val store = SportsMappingStore(BundledSportsMapping.load(), persistence, SmokeFixture.bundled()).also { it.restore() }
         val resolver = GameDetailResolver(
             mappingProvider = { store.current },
-            sources = listOf<BlockSource>(TheSportsDbSource(http, functionsBase, clock), EspnSource(http, clock)).associateBy { it.id },
+            sources = listOf<BlockSource>(
+                TheSportsDbSource(http, functionsBase, clock), EspnSource(http, clock), MarketWinChanceSource(http, functionsBase, clock),
+            ).associateBy { it.id },
             telemetry = telemetry,
             clock = clock,
         )

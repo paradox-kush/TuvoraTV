@@ -1,0 +1,16 @@
+{
+ "gameId": "tsdb:2111",
+ "home": 16,
+ "draw": 22,
+ "away": 62,
+ "asOf": 1794148200000,
+ "storylines": [
+  {
+   "key": "both_teams_to_score",
+   "label": "Both teams to score",
+   "yes": 58
+  }
+ ],
+ "source": "polymarket",
+ "attribution": "via Polymarket"
+}

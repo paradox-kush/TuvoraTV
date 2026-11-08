@@ -10,10 +10,14 @@ import java.time.Instant
 enum class GameState { UPCOMING, LIVE, FINAL, POSTPONED }
 
 enum class SourceId(val wire: String) {
-    TSDB("tsdb"), ESPN("espn"), DERIVED("derived"), LOCAL("local");
+    TSDB("tsdb"), ESPN("espn"), DERIVED("derived"), LOCAL("local"),
+    /** Polymarket win chance served by OUR backend (devices never call Polymarket). Never part of a league's chain. */
+    MARKET("polymarket");
 
     companion object {
-        fun fromWire(s: String?): SourceId? = entries.firstOrNull { it.wire.equals(s, ignoreCase = true) }
+        /** "market" is the mapping's name for it (`killSwitch.market`, chains); "polymarket" is the telemetry/source name. */
+        fun fromWire(s: String?): SourceId? =
+            if (s.equals("market", ignoreCase = true)) MARKET else entries.firstOrNull { it.wire.equals(s, ignoreCase = true) }
     }
 }
 
@@ -66,6 +70,12 @@ sealed interface GameHeader {
 /** clock: "2H 49'", "Q2 5:12"; periodLabel: "Q2"; detail: "Halftime". */
 data class LiveInfo(val clock: String? = null, val periodLabel: String? = null, val detail: String? = null)
 
+/** A market storyline ("Goes to overtime", 8%): [yes] is 0..100, [side] set when it is about one team. */
+data class Storyline(val key: String, val label: String, val yes: Int, val side: SideKey? = null)
+
+/** One point of the market win-chance series (epoch ms). [home] is plotted as given (soccer: home's non-draw share). */
+data class WinPoint(val t: Long, val home: Int, val draw: Int? = null)
+
 data class StatRow(val label: String, val home: String, val away: String, val unit: String? = null)
 data class LeaderItem(val category: String, val athlete: String, val value: String, val side: SideKey?)
 data class TimelineItem(
@@ -109,8 +119,22 @@ sealed interface GameBlock {
     data class Highlights(override val source: SourceId, val url: String, val thumbnail: String? = null) : GameBlock {
         override val type get() = BlockType.HIGHLIGHTS
     }
-    /** 0..100, home side. */
-    data class WinProbability(override val source: SourceId, val homePercent: Double) : GameBlock {
+    /**
+     * 0..100, home side. The market fills [awayPercent]/[drawPercent] (soccer is 3-way: home + draw + away); ESPN gives only home.
+     * [storylines] and [history] come from the market even under an ESPN headline ([extrasAttribution] then credits them);
+     * [asOfMs] is the SERVER's time for the market data, so a stale served value can say so.
+     */
+    data class WinProbability(
+        override val source: SourceId,
+        val homePercent: Double,
+        val awayPercent: Double? = null,
+        val drawPercent: Double? = null,
+        val attribution: String? = null,
+        val history: List<WinPoint> = emptyList(),
+        val storylines: List<Storyline> = emptyList(),
+        val extrasAttribution: String? = null,
+        val asOfMs: Long? = null,
+    ) : GameBlock {
         override val type get() = BlockType.WIN_PROBABILITY
     }
 }
@@ -148,7 +172,7 @@ data class GameRef(
 /** What belongs on screen in each state: live-only blocks vanish after the whistle, score blocks wait for it. */
 object BlockVisibility {
     private val upcoming = setOf(
-        BlockType.FORM, BlockType.LINEUP, BlockType.RESULTS, BlockType.NEXT,
+        BlockType.WIN_PROBABILITY, BlockType.FORM, BlockType.LINEUP, BlockType.RESULTS, BlockType.NEXT,
         BlockType.STANDINGS, BlockType.HIGHLIGHTS,
     )
 

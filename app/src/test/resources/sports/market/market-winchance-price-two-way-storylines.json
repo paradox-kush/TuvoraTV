@@ -1,0 +1,21 @@
+{
+ "gameId": "tsdb:3001",
+ "home": 70,
+ "away": 30,
+ "asOf": 1794097800000,
+ "storylines": [
+  {
+   "key": "first_half_moneyline",
+   "label": "Leading at half-time",
+   "yes": 62,
+   "side": "home"
+  },
+  {
+   "key": "basketball_game_overtime",
+   "label": "Goes to overtime",
+   "yes": 8
+  }
+ ],
+ "source": "polymarket",
+ "attribution": "via Polymarket"
+}

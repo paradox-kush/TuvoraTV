@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.sports.detail
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -101,7 +102,7 @@ class GameDetailResolver(
         val sportTag = profileName ?: "unknown"
 
         val status = LinkedHashMap<SourceId, SourceStatus>()
-        val chain = league?.chain ?: listOf(SourceId.TSDB, SourceId.ESPN)
+        val chain = (league?.chain ?: listOf(SourceId.TSDB, SourceId.ESPN)).filter { it != SourceId.MARKET }
         val jobs = LinkedHashMap<SourceId, Deferred<Timed>>()
 
         for (id in chain) {
@@ -116,19 +117,19 @@ class GameDetailResolver(
             if (id == SourceId.TSDB && !mapping.gameDetailEnabled(ref.sport.ifBlank { league?.sport }, ref.leagueId)) {
                 status[id] = SourceStatus.DISABLED; continue
             }
-            jobs[id] = async {
-                val started = System.nanoTime()
-                val load = try {
-                    withTimeout(mapping.deadlineMs) { source.load(ref, parts, mapping) }
-                } catch (_: TimeoutCancellationException) {
-                    SourceLoad.failed(FetchOutcome.HTTP_FAIL)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    SourceLoad.failed(FetchOutcome.HTTP_FAIL)
-                }
-                Timed(load, (System.nanoTime() - started) / 1_000_000)
-            }
+            jobs[id] = start(source, ref, parts, mapping)
+        }
+
+        // The market is asked beside the chain (never in it): only when the mapping switched it on for this game, on the slow
+        // (summary) cadence, never for a game known to be over, and not again while a miss/failure is cooling down.
+        val market = sources[SourceId.MARKET]
+        val knownState = previous?.state ?: ref.seedState
+        if (market != null && market.wants(parts) && ref.awayName.isNotBlank() && mapping.marketEnabledFor(ref.leagueId) &&
+            knownState != GameState.FINAL && knownState != GameState.POSTPONED
+        ) {
+            val cooling = negativeCache.cooling(ref.gameId, SourceId.MARKET)
+            if (cooling != null) status[SourceId.MARKET] = statusOf(cooling.outcome)
+            else jobs[SourceId.MARKET] = start(market, ref, parts, mapping)
         }
 
         val loads = LinkedHashMap<SourceId, SourceLoad>()
@@ -137,6 +138,12 @@ class GameDetailResolver(
             val (load, ms) = job.await().let { it.load to it.ms }
             loads[id] = load
             status[id] = if (load.disabled) SourceStatus.DISABLED else statusOf(load.outcome)
+            if (id == SourceId.MARKET) {
+                val outcome = if (load.disabled) FetchOutcome.EMPTY else load.outcome
+                negativeCache.record(ref.gameId, id, outcome)
+                report(SportsDetailEvent(sportTag, BlockType.WIN_PROBABILITY, id, outcome, ms))
+                continue
+            }
             if (id == SourceId.ESPN && (load.outcome != FetchOutcome.EMPTY || RefreshPart.SCOREBOARD in parts)) {
                 negativeCache.record(ref.gameId, id, load.outcome)
             }
@@ -179,6 +186,7 @@ class GameDetailResolver(
             agree -> overlayScores(baseHeader!!, espn!!.header!!)
             else -> authority?.header
         }
+        foldWinChance(resolved, loads[SourceId.MARKET]?.takeIf { it.outcome == FetchOutcome.HIT && !it.disabled }, status[SourceId.MARKET], state, previous)
         val blocks = resolved.values
             .filter { BlockVisibility.visible(it.type, state) }
             .sortedBy { profile?.orderOf(it.type) ?: Int.MAX_VALUE }
@@ -201,6 +209,52 @@ class GameDetailResolver(
             asOf = loads.filterValues { it.outcome == FetchOutcome.HIT }.mapValues { now },
             headerFromPrimary = header != null,
         )
+    }
+
+    private fun CoroutineScope.start(source: BlockSource, ref: GameRef, parts: Set<RefreshPart>, mapping: SportsMapping): Deferred<Timed> = async {
+        val started = System.nanoTime()
+        val load = try {
+            withTimeout(mapping.deadlineMs) { source.load(ref, parts, mapping) }
+        } catch (_: TimeoutCancellationException) {
+            SourceLoad.failed(FetchOutcome.HTTP_FAIL)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            SourceLoad.failed(FetchOutcome.HTTP_FAIL)
+        }
+        Timed(load, (System.nanoTime() - started) / 1_000_000)
+    }
+
+    /**
+     * The win chance. ESPN stays the headline when it has one (no source flip-flop) and only while the game is LIVE; the market
+     * is asked as well for its storylines and series, credited separately. When ESPN has none (NHL, soccer, college…) the
+     * market is the headline, also before kickoff. A failed market keeps the extras already on screen.
+     */
+    private fun foldWinChance(
+        resolved: MutableMap<BlockType, GameBlock>,
+        market: SourceLoad?,
+        marketStatus: SourceStatus?,
+        state: GameState,
+        previous: GameDetail?,
+    ) {
+        val type = BlockType.WIN_PROBABILITY
+        var headline = resolved[type] as? GameBlock.WinProbability
+        if (headline != null && state != GameState.LIVE) { resolved.remove(type); headline = null }
+        val m = market?.blocks?.get(type) as? GameBlock.WinProbability
+        val prev = previous?.block(type) as? GameBlock.WinProbability
+        when {
+            m != null && headline != null -> resolved[type] = headline.copy(
+                history = headline.history.ifEmpty { m.history },
+                storylines = m.storylines,
+                extrasAttribution = m.attribution ?: "via Polymarket",
+                asOfMs = m.asOfMs,
+            )
+            m != null -> resolved[type] = m
+            headline != null && marketStatus == SourceStatus.FAILED && prev?.extrasAttribution != null -> resolved[type] = headline.copy(
+                history = headline.history.ifEmpty { prev.history }, storylines = prev.storylines,
+                extrasAttribution = prev.extrasAttribution, asOfMs = prev.asOfMs,
+            )
+        }
     }
 
     private fun namesAgree(primary: GameHeader, espn: GameHeader, aliases: Map<String, String>): Boolean {

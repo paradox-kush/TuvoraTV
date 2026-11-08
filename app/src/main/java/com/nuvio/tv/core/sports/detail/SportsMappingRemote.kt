@@ -4,6 +4,7 @@ package com.nuvio.tv.core.sports.detail
 object SportsDetailPaths {
     const val GAME_DETAIL = "game-detail"
     const val SPORTS_MAPPING = "sports-mapping"
+    const val MARKET_WIN_CHANCE = "market-winchance"
 }
 
 sealed interface RemoteMapping {

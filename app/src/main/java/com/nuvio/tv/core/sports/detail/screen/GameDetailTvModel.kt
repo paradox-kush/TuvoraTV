@@ -6,13 +6,16 @@ import com.nuvio.tv.core.sports.detail.GameDetail
 import com.nuvio.tv.core.sports.detail.GameHeader
 import com.nuvio.tv.core.sports.detail.GameState
 import com.nuvio.tv.core.sports.detail.LiveInfo
+import com.nuvio.tv.core.sports.detail.MarketPolicy
 import com.nuvio.tv.core.sports.detail.Side
 import com.nuvio.tv.core.sports.detail.SideKey
+import com.nuvio.tv.core.sports.detail.SourceId
 import com.nuvio.tv.core.sports.detail.TimelineKind
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /** One line of the by-period table: a team, its period cells and its total. */
 data class TvLineRow(val label: String, val badgeUrl: String?, val cells: List<String>, val total: String?, val leading: Boolean)
@@ -42,6 +45,15 @@ val Side.tvName: String get() = short?.takeIf { it.isNotBlank() } ?: name
  * latest plays. Lineups, standings and results tables are never included. Upcoming games swap the live
  * blocks for kickoff, venue and form.
  */
+data class TvWinChance(
+    val homePercent: Int,
+    val awayPercent: Int,
+    val drawPercent: Int?,
+    val caption: String?,
+    val line: String?,
+    val staleLabel: String?,
+)
+
 data class GameDetailTvModel(
     val title: String,
     val subtitle: String?,
@@ -53,6 +65,8 @@ data class GameDetailTvModel(
     val isLive: Boolean,
     val situation: String?,
     val homeWinPercent: Int?,
+    /** The win-chance card: bar, caption ("via Polymarket") and at most ONE extra line (comeback watch, else a storyline). */
+    val winChance: TvWinChance?,
     val linescore: TvLinescore?,
     val leaders: List<TvLeader>,
     val stats: List<TvStat>,
@@ -68,6 +82,27 @@ data class GameDetailTvModel(
         const val STATS = 3
         const val LEADERS = 3
         const val STALE_AFTER_MS = 20_000L
+
+        /** Home/away/draw whole percents (the market gives all three, ESPN only home) and the card's single extra line. */
+        private fun tvWinChance(b: GameBlock.WinProbability, d: GameDetail, sides: List<Side>, nowMs: Long): TvWinChance {
+            val home = b.homePercent.roundToInt().coerceIn(0, 100)
+            val draw = b.drawPercent?.roundToInt()?.coerceIn(0, 100)?.takeIf { it > 0 }
+            val away = (b.awayPercent?.roundToInt() ?: (100 - home - (draw ?: 0))).coerceIn(0, 100)
+            val homeTag = sides.getOrNull(0)?.tvName
+            val awayTag = sides.getOrNull(1)?.tvName
+            val comeback = MarketPolicy.comebackWatch(b.history, home, away, d.state, b.asOfMs)
+                ?.let { MarketPolicy.comebackText(it, homeTag, awayTag) }
+            val line = comeback ?: MarketPolicy.visibleStorylines(b.storylines, d.state, d.live, d.sport)
+                .firstOrNull()?.let { MarketPolicy.storylineText(it, homeTag, awayTag) }
+            val credit = b.extrasAttribution?.takeIf { line != null && b.source != SourceId.MARKET }
+                ?.let { "storyline " + it.replaceFirstChar { c -> c.lowercase() } }
+            return TvWinChance(
+                homePercent = home, awayPercent = away, drawPercent = draw,
+                caption = listOfNotNull(MarketPolicy.caption(b), credit).joinToString(" · ").ifBlank { null },
+                line = line,
+                staleLabel = MarketPolicy.staleLabel(b, d.state, nowMs),
+            )
+        }
 
         fun from(
             d: GameDetail,
@@ -88,7 +123,9 @@ data class GameDetailTvModel(
             val live = d.state == GameState.LIVE
             val line = liveLine(d.live)
             val situation = (d.block(BlockType.SITUATION) as? GameBlock.Situation)?.text
-            val win = (d.block(BlockType.WIN_PROBABILITY) as? GameBlock.WinProbability)?.homePercent?.toInt()?.coerceIn(0, 100)
+            val winBlock = d.block(BlockType.WIN_PROBABILITY) as? GameBlock.WinProbability
+            val win = winBlock?.homePercent?.toInt()?.coerceIn(0, 100)
+            val winChance = winBlock?.let { tvWinChance(it, d, sides, nowMs) }
             val linescore = (d.block(BlockType.LINESCORE) as? GameBlock.Linescore)?.let { linescore(it, sides, live, d.state) }
             val leaders = leaders(d, sides)
             val stats = stats(d)
@@ -112,7 +149,7 @@ data class GameDetailTvModel(
                 subtitle = listOfNotNull(d.leagueName.takeIf { it.isNotBlank() }, d.round?.let { "Round $it" }).joinToString(" · ").ifBlank { null },
                 sides = sides, state = d.state, pill = pill,
                 liveLine = line ?: (d.header as? GameHeader.Event)?.session,
-                isLive = live, situation = situation, homeWinPercent = win, linescore = linescore,
+                isLive = live, situation = situation, homeWinPercent = win, winChance = winChance, linescore = linescore,
                 leaders = leaders, stats = stats, form = form, latestPlays = plays,
                 kickoffLabel = if (d.state == GameState.UPCOMING && d.startsAtMs > 0) kickoff(d.startsAtMs, zone, locale) else null,
                 venue = d.venue ?: (d.header as? GameHeader.Event)?.venue,

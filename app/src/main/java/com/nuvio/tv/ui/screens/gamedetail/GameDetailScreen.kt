@@ -226,9 +226,11 @@ fun GameDetailScreen(
                     Column(Modifier.weight(if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING && model.form == null) 1f else 1.12f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ScoreboardCard(model, s.stale)
                         if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
+                            // Before kickoff only the market has a win chance (and its storylines): a small card above the kickoff.
+                            if (model.winChance != null) SituationCard(model)
                             KickoffCard(model, Modifier.weight(1f))
                         } else {
-                            if (model.situation != null || model.homeWinPercent != null) SituationCard(model)
+                            if (model.situation != null || model.winChance != null) SituationCard(model)
                             model.linescore?.let { ByPeriodCard(it, Modifier.weight(1f)) } ?: Spacer(Modifier.weight(1f))
                         }
                         if (watch.visible) SourceRow(
@@ -413,19 +415,30 @@ private fun SituationCard(model: GameDetailTvModel) {
     Card {
         model.situation?.let {
             Text(it, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
-            if (model.homeWinPercent != null) Spacer(Modifier.height(10.dp))
+            if (model.winChance != null) Spacer(Modifier.height(10.dp))
         }
-        model.homeWinPercent?.let { pct ->
-            if (model.situation == null) CardTitle("Win probability")
+        model.winChance?.let { w ->
+            if (model.situation == null) CardTitle(if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) "Win chance" else "Win probability")
             val home = model.sides.getOrNull(0)?.tvName.orEmpty(); val away = model.sides.getOrNull(1)?.tvName.orEmpty()
             Row(Modifier.fillMaxWidth()) {
-                Text("$home $pct%", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.Secondary, modifier = Modifier.weight(1f))
-                Text("${100 - pct}% $away", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.Info)
+                Text("$home ${w.homePercent}%", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.Secondary, modifier = Modifier.weight(1f))
+                w.drawPercent?.let { Text("Draw $it%", fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.padding(horizontal = 12.dp)) }
+                Text("${w.awayPercent}% $away", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.Info)
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(NuvioTheme.colors.Border)) {
-                if (pct > 0) Box(Modifier.weight(pct.toFloat()).fillMaxHeight().background(NuvioTheme.colors.Secondary))
-                if (pct < 100) Box(Modifier.weight((100 - pct).toFloat()).fillMaxHeight().background(NuvioTheme.colors.Info))
+                if (w.homePercent > 0) Box(Modifier.weight(w.homePercent.toFloat()).fillMaxHeight().background(NuvioTheme.colors.Secondary))
+                w.drawPercent?.let { Box(Modifier.weight(it.toFloat()).fillMaxHeight().background(NuvioTheme.colors.TextSecondary.copy(alpha = 0.5f))) }
+                if (w.awayPercent > 0) Box(Modifier.weight(w.awayPercent.toFloat()).fillMaxHeight().background(NuvioTheme.colors.Info))
+            }
+            w.line?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, fontSize = 16.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            val foot = listOfNotNull(w.caption, w.staleLabel).joinToString("  ·  ")
+            if (foot.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(foot, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

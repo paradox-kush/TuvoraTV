@@ -1,0 +1,23 @@
+{
+ "gameId": "tsdb:2494097",
+ "home": 60,
+ "away": 40,
+ "asOf": 1794073800000,
+ "series": [
+  {
+   "t": 1794000000000,
+   "home": 60
+  },
+  {
+   "t": 1794000060000,
+   "home": 60
+  },
+  {
+   "t": 1794000120000,
+   "home": 60
+  }
+ ],
+ "storylines": [],
+ "source": "polymarket",
+ "attribution": "via Polymarket"
+}

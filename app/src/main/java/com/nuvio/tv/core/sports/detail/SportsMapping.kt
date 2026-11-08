@@ -11,6 +11,12 @@ import kotlinx.serialization.json.longOrNull
 
 data class RefreshConfig(val liveMs: Long = 15_000, val summaryMs: Long = 60_000, val idleMs: Long = 0, val minMs: Long = 6_000)
 
+/**
+ * The Polymarket win-chance switch `{all, sports, leagues}`. ON only when `all` is an explicit boolean false and the game's
+ * sport/league is not listed. Any other shape (missing, boolean, malformed, `all` absent or not a boolean) parses to null = OFF.
+ */
+data class MarketSwitch(val all: Boolean, val sports: Set<String> = emptySet(), val leagues: Set<String> = emptySet())
+
 /** Remote kill switches: the whole ESPN source, per sport profile, per TheSportsDB league id. */
 data class KillSwitch(
     val espn: Boolean = false,
@@ -20,6 +26,7 @@ data class KillSwitch(
     val gameDetailAll: Boolean = false,
     val gameDetailSports: Set<String> = emptySet(),
     val gameDetailLeagues: Set<String> = emptySet(),
+    val market: MarketSwitch? = null,
 )
 
 data class LeagueMapping(
@@ -92,6 +99,15 @@ data class SportsMapping(
     fun espnEnabled(profile: String?, leagueId: String?): Boolean =
         !killSwitch.espn && profile !in killSwitch.sports && leagueId !in killSwitch.leagues
 
+    /** Polymarket win chance (served by our backend): ON only for `killSwitch.market = {all:false,…}` and a game not listed by league or sport. */
+    fun marketEnabledFor(leagueId: String?): Boolean {
+        val k = killSwitch.market ?: return false
+        if (k.all || leagueId in k.leagues) return false
+        val league = leagueFor(leagueId) ?: return true
+        val off = k.sports.map { it.lowercase() }
+        return league.sport?.lowercase() !in off && league.profile?.lowercase() !in off
+    }
+
     fun gameDetailEnabled(sportName: String?, leagueId: String?): Boolean =
         !killSwitch.gameDetailAll && leagueId !in killSwitch.gameDetailLeagues &&
             killSwitch.gameDetailSports.none { it.equals(sportName, ignoreCase = true) }
@@ -142,6 +158,10 @@ object SportsMappingParser {
                     gameDetailAll = ((ks?.get("gameDetail") as? JsonObject)?.get("all") as? JsonPrimitive)?.booleanOrNull ?: false,
                     gameDetailSports = strings((ks?.get("gameDetail") as? JsonObject)?.get("sports")),
                     gameDetailLeagues = strings((ks?.get("gameDetail") as? JsonObject)?.get("leagues")),
+                    market = (ks?.get("market") as? JsonObject)?.let { mk ->
+                        val all = (mk["all"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull
+                        if (all == null) null else MarketSwitch(all, strings(mk["sports"]), strings(mk["leagues"]))
+                    },
                 ),
                 espnScoreboardUrl = str(espn?.get("scoreboard")) ?: DEFAULT_SCOREBOARD,
                 espnSummaryUrl = str(espn?.get("summary")) ?: DEFAULT_SUMMARY,
