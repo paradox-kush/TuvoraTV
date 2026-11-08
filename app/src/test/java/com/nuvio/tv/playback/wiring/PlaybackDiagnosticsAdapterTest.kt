@@ -91,6 +91,37 @@ class PlaybackDiagnosticsAdapterTest {
     }
 
     @Test
+    fun `a busy freeze event keeps its retryability in the trail`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 3,
+                code = PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
+                engine = EngineType.MEDIA3,
+                outputProfile = com.nuvio.tv.playback.core.GraphOutputProfile.MEDIA3_STANDARD,
+                attempt = 2,
+                releaseReason = com.nuvio.tv.playback.core.ActiveWorkReleaseReason.HANDOFF,
+                failure = PlaybackFailure(
+                    FailureCode.NO_PROGRESS,
+                    FailureDomain.VIDEO_RENDERER_SURFACE,
+                    FailurePhase.PLAYBACK,
+                    Retryability.HANDOFF_ELIGIBLE,
+                ),
+                freeze = LiveFreezeTelemetry(
+                    kind = LiveFreezePolicy.FreezeKind.VIDEO_ONLY,
+                    rung = LiveFreezePolicy.Action.HANDOFF,
+                    decoder = "c2.mtk.avc.decoder",
+                    sessionInstance = "1a2b3c",
+                ),
+            ),
+            buildId = "UTT3.240625.001",
+        )
+
+        val trail = DiagTrailPolicy.sanitize(formatted.properties)
+        listOf("failure_code", "failure_domain", "failure_phase", "retryability", "freeze_kind", "session_instance")
+            .forEach { assertTrue("$it survives the field cap", it in trail) }
+    }
+
+    @Test
     fun `a freeze with no decoder or firmware leaves those fields out`() {
         val formatted = PlaybackDiagnosticFormatter.format(
             PlaybackDiagnosticEvent(

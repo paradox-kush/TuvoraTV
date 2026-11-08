@@ -12,7 +12,8 @@ import org.json.JSONObject
  */
 object DiagTrailPolicy {
     const val MAX_STRING = 40
-    const val MAX_FIELDS = 12
+    // Wide enough for a freeze event (fields from the event, the failure and the freeze) to keep every one.
+    const val MAX_FIELDS = 16
     const val MAX_TRAIL_BYTES = 12 * 1024
 
     val ALLOWED_FIELDS: Set<String> = setOf(

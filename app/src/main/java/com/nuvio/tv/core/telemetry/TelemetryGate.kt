@@ -36,6 +36,7 @@ class TelemetryGate(
             TelemetrySendPolicy.Action.SEND_ONCE_PER_VERSION ->
                 if (onceStore.firstTime("$event@$appVersion")) Result.Pass(properties) else Result.Drop
             TelemetrySendPolicy.Action.SEND -> {
+                decision.onceKey?.let { key -> if (!firstSend(key)) return Result.Drop }
                 // An error is also a step in the log, recorded before the trail is cut so it is the last line.
                 if (decision.withTrail) recorder.record(decision.area, decision.code, fields)
                 if (!decision.withTrail) return Result.Pass(properties)
@@ -48,7 +49,16 @@ class TelemetryGate(
         }
     }
 
+    private val sentOnce = HashSet<String>()
+
+    @Synchronized
+    private fun firstSend(key: String): Boolean {
+        if (sentOnce.size >= MAX_ONCE_KEYS) sentOnce.clear()
+        return sentOnce.add(key)
+    }
+
     companion object {
+        private const val MAX_ONCE_KEYS = 256
         const val TRAIL_ON_ERROR = 40
         const val TRAIL_ON_REPORT = 80
     }

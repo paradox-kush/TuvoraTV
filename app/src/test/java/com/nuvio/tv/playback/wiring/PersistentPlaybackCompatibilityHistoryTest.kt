@@ -89,7 +89,7 @@ class PersistentPlaybackCompatibilityHistoryTest {
         val history = history(storage, clock)
         history.record(unstable(scopeA, recordedAt = 1_000, expiresAt = 10_000))
         history.record(success(scopeA, recordedAt = 1_001, expiresAt = 10_000))
-        history.record(unstable(scopeA, recordedAt = 1_002, expiresAt = 10_000))
+        history.record(unstable(scopeA, recordedAt = 5_000, expiresAt = 10_000))
 
         val record = history.records(scopeA).single()
         assertEquals(CompatibilityOutcome.RUNTIME_UNSTABLE, record.outcome)
@@ -97,6 +97,22 @@ class PersistentPlaybackCompatibilityHistoryTest {
 
         val reloaded = history(storage, clock).records(scopeA).single()
         assertEquals("strikes survive a restart", 2, reloaded.strikes)
+    }
+
+    @Test
+    fun `one freeze reported twice within two seconds is one strike`() = runTest {
+        // Two playback sessions (guide preview and fullscreen) or two emissions can report the same
+        // freeze on the same channel milliseconds apart.
+        val storage = FakeStorage()
+        val history = history(storage, FakeClock(1_000))
+        history.record(unstable(scopeA, recordedAt = 1_000, expiresAt = 10_000))
+        history.record(unstable(scopeA, recordedAt = 1_030, expiresAt = 10_000))
+        history.record(unstable(scopeA, recordedAt = 2_900, expiresAt = 10_000))
+
+        assertEquals(1, history.records(scopeA).single().strikes)
+
+        history.record(unstable(scopeA, recordedAt = 3_100, expiresAt = 10_000))
+        assertEquals("a freeze 2 s after the last strike is a new one", 2, history.records(scopeA).single().strikes)
     }
 
     @Test

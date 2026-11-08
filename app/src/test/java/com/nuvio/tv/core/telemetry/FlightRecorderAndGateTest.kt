@@ -121,6 +121,24 @@ class FlightRecorderAndGateTest {
         assertTrue((result.properties["diag_trail"] as String).contains("last_run_step"))
     }
 
+    private fun stuck(instance: String) = mapOf(
+        "diagnostic_code" to "LIVE_PICTURE_STUCK",
+        "engine" to "LIBMPV",
+        "freeze_kind" to "VIDEO_ONLY",
+        "ladder_rung" to "KEEP_PLAYING",
+        "session_instance" to instance,
+    )
+
+    @Test
+    fun aStuckPictureWithLiveAudioIsSentOncePerSessionInstanceWithItsTrail() {
+        val g = gate()
+        val first = g.process("clean_playback_diagnostic", stuck("ab12"))
+        assertTrue("sent, not just recorded", first is TelemetryGate.Result.Pass)
+        assertTrue((first as TelemetryGate.Result.Pass).properties.containsKey("diag_trail"))
+        assertTrue("the same session reports once", g.process("clean_playback_diagnostic", stuck("ab12")) is TelemetryGate.Result.Drop)
+        assertTrue("another session is its own report", g.process("clean_playback_diagnostic", stuck("cd34")) is TelemetryGate.Result.Pass)
+    }
+
     @Test
     fun audioProfileIsSentOncePerVersion() {
         val g = gate()

@@ -122,11 +122,18 @@ class PersistentPlaybackCompatibilityHistory(
         if (newestExactRecord != null && newestExactRecord > value.recordedAtEpochMs) {
             return@withLock
         }
-        val priorStrikes = existing.asSequence()
+        val priorUnstable = existing.asSequence()
             .filter(sameGraph)
             .map(StoredRecord::record)
             .firstOrNull { it.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE }
-            ?.strikes
+        // One freeze can be reported by two sessions (guide preview and fullscreen) or twice by one:
+        // a strike within SAME_FREEZE_WINDOW_MS of the last one on this channel is the same freeze.
+        if (value.outcome == CompatibilityOutcome.RUNTIME_UNSTABLE && priorUnstable != null &&
+            value.recordedAtEpochMs - priorUnstable.recordedAtEpochMs < SAME_FREEZE_WINDOW_MS
+        ) {
+            return@withLock
+        }
+        val priorStrikes = priorUnstable?.strikes
         // A live freeze usually follows a good start, so a good start must not erase the strikes —
         // they age out with the record instead. Each new freeze adds a strike.
         if (value.outcome == CompatibilityOutcome.SUCCESS && priorStrikes != null) return@withLock
@@ -270,6 +277,7 @@ class PersistentPlaybackCompatibilityHistory(
     }
 
     private companion object {
+        const val SAME_FREEZE_WINDOW_MS = 2_000L
         const val FORMAT_VERSION = "nuvio-playback-history-v2"
         const val FIELD_COUNT = 20
         const val DEFAULT_MAX_RECORDS = 512

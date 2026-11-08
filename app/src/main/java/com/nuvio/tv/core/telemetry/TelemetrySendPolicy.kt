@@ -14,6 +14,8 @@ object TelemetrySendPolicy {
         val withTrail: Boolean = false,
         val area: DiagArea = DiagArea.LIFECYCLE,
         val code: String = "event",
+        /** When set, the gate sends at most one event per key for the life of the process. */
+        val onceKey: String? = null,
     )
 
     /** Outcomes that mean "worked" for the load-style events. */
@@ -29,6 +31,8 @@ object TelemetrySendPolicy {
         "app_uncaught_exception_ios",
     )
 
+    private const val STUCK_PICTURE = "LIVE_PICTURE_STUCK"
+
     private fun number(v: Any?): Int = (v as? Number)?.toInt() ?: 0
 
     fun decide(event: String, properties: Map<String, Any?>): Decision {
@@ -41,7 +45,17 @@ object TelemetrySendPolicy {
 
             "clean_playback_diagnostic" -> {
                 val failure = properties["failure_code"] as? String
-                if (!failure.isNullOrBlank()) {
+                if ((properties["diagnostic_code"] as? String) == STUCK_PICTURE) {
+                    // libmpv shows a stuck picture while audio plays: no failure_code, but it is the
+                    // only sign that the last rung of the freeze ladder did not help.
+                    Decision(
+                        Action.SEND,
+                        withTrail = true,
+                        area = DiagArea.PLAYBACK,
+                        code = STUCK_PICTURE,
+                        onceKey = "stuck:" + (properties["session_instance"] as? String ?: "unknown"),
+                    )
+                } else if (!failure.isNullOrBlank()) {
                     Decision(Action.SEND, withTrail = true, area = DiagArea.PLAYBACK, code = failure)
                 } else {
                     Decision(
