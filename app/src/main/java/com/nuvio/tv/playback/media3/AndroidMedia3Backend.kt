@@ -37,7 +37,6 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.extractor.DefaultExtractorsFactory
-import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
 import com.nuvio.tv.playback.core.AudioMode
 import com.nuvio.tv.playback.core.ApplicationDnsKey
@@ -249,11 +248,7 @@ internal class AndroidMedia3BackendFactory(
         val extractors = DefaultExtractorsFactory().apply {
             if (plan.request.confirmedRawTransportStream) {
                 setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT)
-                setTsExtractorFlags(
-                    DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
-                        DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
-                        DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM,
-                )
+                setTsExtractorFlags(LiveTsExtractorFlags.rawTransportStream())
             }
         }
         val sourceFactory = DefaultMediaSourceFactory(upstream, extractors).apply {
