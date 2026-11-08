@@ -2575,8 +2575,6 @@
     <string name="action_switch">تبديل</string>
     <string name="advanced_nuvio_performance_mode">ذاكرة ExoPlayer الأصلية</string>
     <string name="advanced_nuvio_performance_mode_subtitle">يفعّل مخصص ذاكرة أصليًا عالي الأداء وذاكرة خارج الكومة وتحسينات شبكة لتشغيل أكثر سلاسة</string>
-    <string name="advanced_playback_issue_reports">تقارير مشاكل التشغيل</string>
-    <string name="advanced_playback_issue_reports_subtitle">إظهار أزرار التقرير أثناء التشغيل والتحميل الطويل وأخطاء التشغيل</string>
     <string name="advanced_sentry_reports">تقارير أعطال Sentry</string>
     <string name="advanced_sentry_reports_subtitle">إرسال تقارير الأعطال وتعليقات التطبيق (ANR) مع سياق آمن. مفعّل افتراضيًا.</string>
     <string name="appearance_settings_style">نمط الإعدادات</string>

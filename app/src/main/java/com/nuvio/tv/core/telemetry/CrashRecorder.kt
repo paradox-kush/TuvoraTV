@@ -27,8 +27,6 @@ import java.util.UUID
 object CrashRecorder {
     private const val TAG = "CrashRecorder"
     private const val DIR = "telemetry"
-    private const val PENDING = "pending_crash.json"
-    private const val SENDING = "sending.json"
     private const val CONFIRM_AFTER_MS = 90_000L
     const val EVENT = "app_crash_report"
 
@@ -61,36 +59,33 @@ object CrashRecorder {
         }.getOrDefault(""),
     )
 
-    /** Atomic: a crash mid-write leaves the previous file or none, never half a file. */
+    /**
+     * Atomic: a crash mid-write leaves nothing half-written. Each crash gets its own file, so a second
+     * crash before the first was ever sent cannot overwrite it.
+     */
     internal fun write(dir: File, record: CrashRecord) {
         dir.mkdirs()
-        val tmp = File(dir, "$PENDING.tmp")
+        val tmp = File(dir, "sending_${record.crashId}.json.tmp")
         tmp.writeText(record.toJson())
-        tmp.renameTo(File(dir, PENDING))
+        tmp.renameTo(File(dir, "sending_${record.crashId}.json"))
     }
 
-    /** Call off Main, after PostHog setup and only with consent. Sends at most one record. */
+    /**
+     * Call off Main, after PostHog setup and only with consent. Sends every waiting record (see
+     * [CrashOutbox]) and deletes each one only after the app has kept running [CONFIRM_AFTER_MS];
+     * a kill before that leaves the files and the next launch resends the same `crash_id`s.
+     */
     fun sendPending(context: Context, supportCode: String) {
-        val dir = File(context.filesDir, DIR)
-        val sending = File(dir, SENDING)
-        val pending = File(dir, PENDING)
-        // A leftover `sending.json` is a crash we are not sure arrived: resend it first (same id).
-        val file = when {
-            sending.exists() -> sending
-            pending.exists() -> if (pending.renameTo(sending)) sending else pending
-            else -> return
+        val entries = CrashOutbox.collect(File(context.filesDir, DIR))
+        if (entries.isEmpty()) return
+        for (entry in entries) {
+            capture(entry.record, supportCode)
+            Log.i(TAG, "sent crash ${entry.record.crashId}; confirming in ${CONFIRM_AFTER_MS / 1000}s")
         }
-        val record = runCatching { CrashRecord.fromJson(file.readText()) }.getOrNull()
-        if (record == null) {
-            file.delete()
-            return
-        }
-        capture(record, supportCode)
-        Log.i(TAG, "sent crash ${record.crashId}; confirming in ${CONFIRM_AFTER_MS / 1000}s")
         Handler(Looper.getMainLooper()).postDelayed({
             Thread({
                 runCatching { PostHog.flush() }
-                file.delete()
+                entries.forEach { it.file.delete() }
             }, "crash-confirm").start()
         }, CONFIRM_AFTER_MS)
     }

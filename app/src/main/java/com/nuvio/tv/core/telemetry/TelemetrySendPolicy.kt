@@ -17,15 +17,19 @@ object TelemetrySendPolicy {
     )
 
     /** Outcomes that mean "worked" for the load-style events. */
-    private val loadSuccess = setOf("loaded")
+    // Empty is counted by surface and source type in `session_health` (an M3U that loads "nothing" is a
+    // signal worth a rate, not an event each); failed and timeout are always sent.
+    private val loadSuccess = setOf("loaded", "empty")
     private val epgSuccess = setOf("ok", "empty", "skipped")
-    private val indexSuccess = setOf("ok", "success", "built")
+    private val indexSuccess = setOf("ok", "success", "built", "category_fallback")
 
     private val alwaysSendWithTrail = setOf(
         "live_playback_freeze", "live_playback_error", "live_preview_stall", "mpv_lifecycle_warning",
         "app_crash_report", "user_issue_report", "simkl_match_failure",
-        "app_uncaught_exception_ios", "playback_issue_reported",
+        "app_uncaught_exception_ios",
     )
+
+    private fun number(v: Any?): Int = (v as? Number)?.toInt() ?: 0
 
     fun decide(event: String, properties: Map<String, Any?>): Decision {
         val outcome = (properties["outcome"] as? String)?.lowercase()
@@ -52,9 +56,20 @@ object TelemetrySendPolicy {
                 if (outcome in loadSuccess) Decision(Action.COUNT, area = DiagArea.IPTV_LOAD, code = outcome ?: "loaded")
                 else Decision(Action.SEND, withTrail = true, area = DiagArea.IPTV_LOAD, code = outcome ?: "failed")
 
-            "epg_resolve", "epg_ingest", "epg_mapping" ->
+            "epg_ingest" ->
                 if (outcome in epgSuccess) Decision(Action.COUNT, area = DiagArea.EPG, code = outcome ?: "ok")
                 else Decision(Action.SEND, withTrail = true, area = DiagArea.EPG, code = outcome ?: "failed")
+
+            // `epg_resolve` is a tally of counts with no outcome: it only matters when a panel ask FAILED.
+            "epg_resolve" ->
+                if (number(properties["unavailable"]) > 0) Decision(Action.SEND, withTrail = true, area = DiagArea.EPG, code = "resolve_unavailable")
+                else Decision(Action.COUNT, area = DiagArea.EPG, code = "resolve")
+
+            // `epg_mapping` has no outcome either: a collapse to zero matches is the one event worth sending.
+            "epg_mapping" ->
+                if (number(properties["matched"]) == 0 && number(properties["channels"]) > 0)
+                    Decision(Action.SEND, withTrail = true, area = DiagArea.EPG, code = "mapping_empty")
+                else Decision(Action.COUNT, area = DiagArea.EPG, code = "mapping")
 
             "iptv_index_build" ->
                 if (outcome in indexSuccess) Decision(Action.COUNT, area = DiagArea.IPTV_LOAD, code = "index_$outcome")
@@ -68,8 +83,10 @@ object TelemetrySendPolicy {
 
             // The `$exception` promoted from a crash exit repeats what `app_crash_report` and the exit
             // record already say.
+            // posthog-android 3.x / core 6.x send `$exception_list`; older SDKs sent `$exception_values`.
             "\$exception" ->
-                if (properties["\$exception_values"].toString().contains("exited abnormally: crash"))
+                if (properties["\$exception_list"].toString().contains("exited abnormally: crash") ||
+                    properties["\$exception_values"].toString().contains("exited abnormally: crash"))
                     Decision(Action.COUNT, area = DiagArea.LIFECYCLE, code = "exit_crash")
                 else Decision(Action.SEND, withTrail = true, area = DiagArea.LIFECYCLE, code = "exception")
 

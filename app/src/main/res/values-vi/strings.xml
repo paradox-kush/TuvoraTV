@@ -591,8 +591,6 @@
     <string name="advanced_section_diagnostics">Chẩn đoán</string>
     <string name="advanced_sentry_reports">Báo cáo sự cố Sentry</string>
     <string name="advanced_sentry_reports_subtitle">Gửi báo cáo sự cố và lỗi ứng dụng không phản hồi kèm thông tin an toàn. Bật theo mặc định.</string>
-    <string name="advanced_playback_issue_reports">Báo cáo vấn đề phát lại</string>
-    <string name="advanced_playback_issue_reports_subtitle">Hiển thị các nút báo cáo trong khi phát lại, tải lâu và khi phát lại bị lỗi</string>
     <string name="advanced_player_stats_hud">Lớp phủ thống kê phát lại</string>
     <string name="advanced_player_stats_hud_subtitle">Hiển thị nút trong thông tin luồng để bật hoặc tắt các chỉ số CPU, bộ nhớ, bộ đệm, bitrate và nhiệt độ theo thời gian thực khi phát lại</string>
     <string name="sentry_enable_dialog_title">Bật báo cáo sự cố?</string>

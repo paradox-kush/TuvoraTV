@@ -170,6 +170,10 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         val crashReportsEnabled = runBlocking(Dispatchers.IO) {
             sentrySettingsDataStore.isEnabled()
         }
+        // As early as consent is known: a crash during the rest of startup still leaves a stack. The
+        // handler goes in before PostHog's, so ours writes the file before its best-effort capture.
+        telemetry.applyConsent(crashReportsEnabled)
+        com.nuvio.tv.core.telemetry.CrashRecorder.install(this, BuildConfig.VERSION_NAME)
         // Breadcrumbs persist locally so AppExitReporter can attribute a process death on the
         // NEXT launch; their live-event side goes through PostHog and is consent-gated by the
         // SDK like every other capture.
@@ -260,9 +264,6 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
             override fun onActivityDestroyed(activity: android.app.Activity) = Unit
         })
-        com.nuvio.tv.core.telemetry.TelemetryHolder.consentEnabled = crashReportsEnabled
-        // Outermost handler: writes the crash file before PostHog's best-effort capture runs.
-        com.nuvio.tv.core.telemetry.CrashRecorder.install(this, BuildConfig.VERSION_NAME)
         if (crashReportsEnabled) {
             PostHog.optIn()
             AppExitReporter.reportPendingExits(this)
@@ -275,7 +276,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         }
         analyticsConsentScope.launch {
             sentrySettingsDataStore.enabled.distinctUntilChanged().collect { enabled ->
-                com.nuvio.tv.core.telemetry.TelemetryHolder.consentEnabled = enabled
+                telemetry.applyConsent(enabled)
                 if (enabled) PostHog.optIn() else PostHog.optOut()
             }
         }

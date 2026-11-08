@@ -594,8 +594,6 @@
     <string name="advanced_section_diagnostics">Diagnósticos</string>
     <string name="advanced_sentry_reports">Informes de fallos de Sentry</string>
     <string name="advanced_sentry_reports_subtitle">Envía informes de fallos y ANR con contexto seguro. Activado de forma predeterminada.</string>
-    <string name="advanced_playback_issue_reports">Informes de problemas de reproducción</string>
-    <string name="advanced_playback_issue_reports_subtitle">Muestra botones de informe durante la reproducción, cargas largas y errores de reproducción</string>
     <string name="advanced_player_stats_hud">Superposición de estadísticas de reproducción</string>
     <string name="advanced_player_stats_hud_subtitle">Muestra un botón en la información de transmisión para alternar lecturas en vivo de CPU, memoria, búfer, velocidad de bits y temperatura durante la reproducción</string>
     <string name="sentry_enable_dialog_title">¿Activar informes de fallos?</string>

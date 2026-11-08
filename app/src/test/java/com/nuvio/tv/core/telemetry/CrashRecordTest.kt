@@ -42,10 +42,12 @@ class CrashRecordTest {
         val dir = Files.createTempDirectory("telemetry").toFile()
         val record = CrashRecorder.record(Thread.currentThread(), IllegalStateException("live crash"), "1.18.0")
         CrashRecorder.write(dir, record)
-        val written = CrashRecord.fromJson(File(dir, "pending_crash.json").readText())
-        assertEquals("exception type kept", "java.lang.IllegalStateException", written?.exceptionType)
-        assertTrue("stack kept", written!!.frames.isNotEmpty())
-        assertTrue("no temp file left", !File(dir, "pending_crash.json.tmp").exists())
+        val entries = CrashOutbox.collect(dir)
+        assertEquals("one waiting record", 1, entries.size)
+        val written = entries.single().record
+        assertEquals("exception type kept", "java.lang.IllegalStateException", written.exceptionType)
+        assertTrue("stack kept", written.frames.isNotEmpty())
+        assertTrue("no temp file left", dir.listFiles().orEmpty().none { it.name.endsWith(".tmp") })
     }
 
     /** Privacy regression: a parse error that embeds provider credentials must not reach the record. */

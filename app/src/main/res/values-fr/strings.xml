@@ -591,8 +591,6 @@
     <string name="advanced_section_diagnostics">Diagnostics</string>
     <string name="advanced_sentry_reports">Rapports de plantage Sentry</string>
     <string name="advanced_sentry_reports_subtitle">Envoyer les rapports de plantage et d’ANR avec un contexte sécurisé. Activé par défaut.</string>
-    <string name="advanced_playback_issue_reports">Rapports de problèmes de lecture</string>
-    <string name="advanced_playback_issue_reports_subtitle">Afficher des boutons de signalement pendant la lecture, lors des chargements longs et en cas d’erreur de lecture</string>
     <string name="advanced_player_stats_hud">Superposition des statistiques de lecture</string>
     <string name="advanced_player_stats_hud_subtitle">Affiche, dans les infos du flux, un bouton pour activer ou désactiver l’affichage en direct du processeur, de la mémoire, du tampon, du débit et de la température pendant la lecture</string>
     <string name="sentry_enable_dialog_title">Activer les rapports de plantage&#160;?</string>

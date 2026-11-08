@@ -22,12 +22,12 @@ class TelemetryPolicyTest {
 
     @Test
     fun failuresAreSentWithTheTrail() {
-        for (outcome in listOf("failed", "timeout", "empty")) {
+        for (outcome in listOf("failed", "timeout")) {
             val d = decide("iptv_load", "outcome" to outcome)
             assertEquals("iptv_load $outcome", Action.SEND, d.action)
             assertTrue("trail attached for $outcome", d.withTrail)
         }
-        assertEquals("epg error", Action.SEND, decide("epg_resolve", "outcome" to "error").action)
+        assertEquals("epg ingest error", Action.SEND, decide("epg_ingest", "outcome" to "error").action)
     }
 
     @Test

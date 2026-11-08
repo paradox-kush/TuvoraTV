@@ -547,8 +547,6 @@
     <string name="advanced_section_diagnostics">ডায়াগনস্টিকস</string>
     <string name="advanced_sentry_reports">Sentry ক্র্যাশ রিপোর্ট</string>
     <string name="advanced_sentry_reports_subtitle">নিরাপদ প্রসঙ্গসহ ক্র্যাশ এবং ANR রিপোর্ট পাঠান। ডিফল্টরূপে চালু।</string>
-    <string name="advanced_playback_issue_reports">প্লেব্যাক সমস্যার রিপোর্ট</string>
-    <string name="advanced_playback_issue_reports_subtitle">প্লেব্যাক, দীর্ঘ লোডিং এবং প্লেব্যাক এররের সময় রিপোর্ট বাটন দেখান</string>
     <string name="advanced_player_stats_hud">প্লেব্যাক স্ট্যাটস ওভারলে</string>
     <string name="advanced_player_stats_hud_subtitle">প্লেব্যাকের সময় লাইভ cpu, মেমোরি, বাফার, বিটরেট এবং থার্মাল রিডিং টগল করতে স্ট্রিম ইনফোতে একটি বাটন দেখান</string>
     <string name="sentry_enable_dialog_title">ক্র্যাশ রিপোর্ট চালু করবেন?</string>

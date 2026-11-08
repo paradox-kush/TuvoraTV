@@ -2636,8 +2636,6 @@
     <string name="settings_content_discovery_subtitle">Адони, плагіни, каталоги та джерела пошуку</string>
     <string name="settings_content_discovery_addons_subtitle">Керуйте адонами, порядком каталогів і колекціями</string>
     <string name="settings_content_discovery_plugins_subtitle">Керуйте репозиторіями та постачальниками потоків</string>
-    <string name="advanced_playback_issue_reports">Звіти про проблеми відтворення</string>
-    <string name="advanced_playback_issue_reports_subtitle">Показувати кнопки звіту під час відтворення, тривалого завантаження та помилок відтворення</string>
     <string name="advanced_nuvio_performance_mode">Нативна пам’ять ExoPlayer</string>
     <string name="advanced_nuvio_performance_mode_subtitle">Увімкнути високопродуктивний нативний алокатор, пам’ять поза купою та мережеві оптимізації для плавнішого відтворення</string>
     <string name="buffer_device_ram_info">RAM пристрою: %s</string>

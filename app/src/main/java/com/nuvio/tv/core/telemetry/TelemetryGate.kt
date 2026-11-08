@@ -20,7 +20,8 @@ class TelemetryGate(
         data object Drop : Result
     }
 
-    fun process(event: String, properties: Map<String, Any?>): Result {
+    fun process(event: String, rawProperties: Map<String, Any?>): Result {
+        val properties = ExceptionScrub.scrub(event, rawProperties)
         val decision = TelemetrySendPolicy.decide(event, properties)
         val fields = properties.filterKeys { it in DiagTrailPolicy.ALLOWED_FIELDS }
         return when (decision.action) {

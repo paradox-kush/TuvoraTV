@@ -38,6 +38,7 @@ class TelemetryService @Inject constructor(
     private var handler: Handler? = null
     @Volatile private var lastWrittenVersion = -1L
     @Volatile private var sampling = false
+    @Volatile private var samplingGeneration = 0
 
     val gate: TelemetryGate by lazy {
         TelemetryGate(
@@ -87,23 +88,40 @@ class TelemetryService @Inject constructor(
         }
     }
 
+    /**
+     * Applies the "Crash & usage reports" switch to everything held on disk. Turning reports OFF
+     * deletes the saved ring and any waiting crash records and clears what is in memory, so nothing
+     * recorded while they were off, or before, can be sent later.
+     */
+    fun applyConsent(enabled: Boolean) {
+        TelemetryHolder.consentEnabled = enabled
+        if (enabled) return
+        previousRun = emptyList()
+        recorder.restore(emptyList())
+        runCatching { dir.listFiles()?.forEach { it.delete() } }
+    }
+
     /** Immediately after an error, so a following kill still leaves the lead-up on disk. */
     fun flushNow() { handler?.post { writeRingIfDirty() } }
 
     fun onPlaybackStarted() {
         if (sampling) return
         sampling = true
-        handler?.post(sampleTask)
+        val gen = ++samplingGeneration
+        handler?.post(SampleTask(gen))
     }
 
     fun onPlaybackStopped() {
         sampling = false
-        handler?.removeCallbacks(sampleTask)
+        samplingGeneration++ // a loop that is mid-run sees the new generation and ends
+        handler?.removeCallbacksAndMessages(null)
+        handler?.let { scheduleWrite(it) }
     }
 
-    private val sampleTask = object : Runnable {
+    /** One sampling loop per playback; a stale loop (older generation) never reschedules itself. */
+    private inner class SampleTask(private val generation: Int) : Runnable {
         override fun run() {
-            if (!sampling) return
+            if (!sampling || generation != samplingGeneration) return
             val rt = Runtime.getRuntime()
             recorder.record(
                 DiagArea.MEMORY, "sample",
@@ -135,7 +153,8 @@ class TelemetryService @Inject constructor(
         if (!sentrySettings.isEnabled()) return ReportResult.ConsentOff
         val wait = rateLimit.tryAcquire(System.currentTimeMillis())
         if (wait > 0) return ReportResult.RateLimited(((wait + 999) / 1000).toInt())
-        return runCatching {
+        // PostHog.flush() must not run on Main: callers launch from UI scopes.
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching {
             val rt = Runtime.getRuntime()
             recorder.record(DiagArea.UI, "user_report", mapOf("surface" to surface.wire, "category" to category.wire))
             PostHog.capture(
@@ -149,14 +168,14 @@ class TelemetryService @Inject constructor(
                     put("heap_used_mb", (rt.totalMemory() - rt.freeMemory()) / MB)
                     put("heap_max_mb", rt.maxMemory() / MB)
                     put("native_mb", Debug.getNativeHeapAllocatedSize() / MB)
-                    // The gate attaches the (shorter) error trail; a report carries the longer one.
-                    put("report_trail", DiagTrailPolicy.render(recorder.snapshot(), TelemetryGate.TRAIL_ON_REPORT))
+                    // A report carries the long trail (80 lines); the gate keeps a trail that is already set.
+                    put("diag_trail", DiagTrailPolicy.render(recorder.snapshot(), TelemetryGate.TRAIL_ON_REPORT))
                 },
             )
             PostHog.flush()
             flushNow()
             ReportResult.Sent(supportCode)
-        }.getOrElse { ReportResult.Failed }
+        }.getOrElse { rateLimit.release(); ReportResult.Failed } }
     }
 
     companion object {

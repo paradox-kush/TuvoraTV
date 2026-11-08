@@ -572,8 +572,6 @@
     <string name="advanced_section_diagnostics">診斷</string>
     <string name="advanced_sentry_reports">Sentry 崩潰報告</string>
     <string name="advanced_sentry_reports_subtitle">傳送包含安全內容的崩潰和 ANR 報告。預設開啟。</string>
-    <string name="advanced_playback_issue_reports">播放問題報告</string>
-    <string name="advanced_playback_issue_reports_subtitle">在播放期間、長時間載入和播放錯誤時顯示報告按鈕</string>
     <string name="advanced_player_stats_hud">播放統計覆蓋層</string>
     <string name="advanced_player_stats_hud_subtitle">在串流資訊中顯示一個按鈕，用於在播放期間切換即時 CPU、記憶體、緩衝、位元率和溫度讀數</string>
     <string name="sentry_enable_dialog_title">開啟崩潰報告？</string>

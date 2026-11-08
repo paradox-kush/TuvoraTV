@@ -15,7 +15,8 @@ class SessionHealth {
     fun key(event: String, properties: Map<String, Any?>): String {
         val outcome = (properties["outcome"] as? String) ?: (properties["kind"] as? String)
         val surface = properties["surface"] as? String
-        return listOfNotNull(event, outcome, surface)
+        val source = properties["source_type"] as? String
+        return listOfNotNull(event, outcome, surface, source)
             .joinToString(":") { DiagTrailPolicy.safeCode(it) }
             .take(80)
     }
