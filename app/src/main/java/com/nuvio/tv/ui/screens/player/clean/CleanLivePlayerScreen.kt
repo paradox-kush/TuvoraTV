@@ -61,6 +61,9 @@ import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayActions
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayInfo
 import com.nuvio.tv.ui.screens.player.clean.live.LivePanel
+import com.nuvio.tv.ui.screens.player.clean.live.LiveReportPolicy
+import com.nuvio.tv.ui.screens.player.clean.live.LiveReportState
+import com.nuvio.tv.core.telemetry.ReportCategory
 import com.nuvio.tv.ui.screens.player.clean.live.LiveStreamInfoDialog
 import com.nuvio.tv.ui.screens.player.clean.live.LiveTrackChoices
 import com.nuvio.tv.ui.screens.player.clean.live.LiveTrackDialog
@@ -102,6 +105,10 @@ internal fun CleanLivePlayerScreen(
     livePause: LivePauseView = LivePauseView.OFF,
     onSeekInWindow: (Long) -> Unit = {},
     onGoLive: () -> Unit = {},
+    /** Telemetry v2: the report's state, and a one-press send about the error on screen (null = not offered). */
+    reportState: LiveReportState = LiveReportState.Idle,
+    onSendReport: ((ReportCategory, String?) -> Unit)? = null,
+    onClearReport: () -> Unit = {},
 ) {
     val chrome = CleanLivePlayerUiPolicy.present(uiState)
     val latestSurfaceOwnerReady by rememberUpdatedState(onSurfaceOwnerReady)
@@ -125,6 +132,9 @@ internal fun CleanLivePlayerScreen(
     val scrubbable = LiveControlsPolicy.isScrubbable(livePause.phase)
     // Any error keeps the controls up; Retry itself is offered only where retrying can help.
     val failed = chrome.messageIsError || pauseFailed
+    // The report's result belongs to the error it was about: gone when the error is.
+    val latestClearReport by rememberUpdatedState(onClearReport)
+    LaunchedEffect(failed) { if (!failed) latestClearReport() }
     val nowMs by produceState(System.currentTimeMillis()) {
         while (true) { delay(30_000); value = System.currentTimeMillis() }
     }
@@ -244,6 +254,8 @@ internal fun CleanLivePlayerScreen(
                 subtitleTracks = trackCatalog.subtitles.size,
                 audioTracks = trackCatalog.audio.size,
                 hasLineup = false,
+                reportable = onSendReport != null,
+                errorShown = failed,
             )
             val messageText = chrome.messageRes?.let { stringResource(it) }
             LiveControlsOverlay(
@@ -264,6 +276,8 @@ internal fun CleanLivePlayerScreen(
                     ),
                     errorText = if (chrome.messageIsError && !pauseOn) messageText else null,
                     pauseErrorText = livePause.problem?.let { stringResource(livePauseProblemRes(it)) },
+                    reportText = reportStateText(reportState),
+                    reportSending = reportState == LiveReportState.Sending,
                 ),
                 nowMs = nowMs,
                 buttons = buttons,
@@ -293,6 +307,15 @@ internal fun CleanLivePlayerScreen(
                     onHide = { hideControls() },
                     onSeekWindow = onSeekInWindow.takeIf { scrubbable },
                     onGoLive = onGoLive.takeIf { pauseOn },
+                    onSendReport = onSendReport?.let { send ->
+                        {
+                            revealTick++
+                            send(
+                                LiveReportPolicy.category(uiState.bottomErrorCode, livePause.problem),
+                                LiveReportPolicy.failureCode(uiState.bottomErrorCode, livePause.problem),
+                            )
+                        }
+                    },
                 ),
                 pause = livePause,
             )
@@ -327,6 +350,16 @@ internal fun CleanLivePlayerScreen(
         }
         aspectLabel?.let { LiveAspectIndicator(it) }
     }
+}
+
+@Composable
+private fun reportStateText(state: LiveReportState): String? = when (state) {
+    LiveReportState.Idle -> null
+    LiveReportState.Sending -> stringResource(R.string.report_sending)
+    is LiveReportState.Sent -> stringResource(R.string.report_sent, state.displayCode)
+    LiveReportState.ConsentOff -> stringResource(R.string.report_consent_off)
+    is LiveReportState.RateLimited -> stringResource(R.string.report_rate_limited)
+    LiveReportState.Failed -> stringResource(R.string.report_failed)
 }
 
 @StringRes

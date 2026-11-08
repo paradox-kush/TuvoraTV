@@ -205,6 +205,8 @@ internal object LiveControlsPolicy {
         val audio: Boolean,
         val channelList: Boolean,
         val favourite: Boolean,
+        /** Telemetry v2: "Send report", right after Retry, whenever an error is on screen. */
+        val sendReport: Boolean = false,
     )
 
     /**
@@ -222,11 +224,36 @@ internal object LiveControlsPolicy {
      * there is a choice (one track is no choice). The channel list and favourite only where there
      * is a lineup (the guide), not for a one-off stream (a Sports launch).
      */
-    fun buttons(failed: Boolean, subtitleTracks: Int, audioTracks: Int, hasLineup: Boolean): Buttons = Buttons(
+    fun buttons(
+        failed: Boolean,
+        subtitleTracks: Int,
+        audioTracks: Int,
+        hasLineup: Boolean,
+        /** This host can send a report (the clean live player); the guide's fullscreen does not yet. */
+        reportable: Boolean = false,
+        /**
+         * An error is on screen. Wider than [failed]: some errors offer no Retry (an expired stream),
+         * yet the viewer can still tell us about them.
+         */
+        errorShown: Boolean = failed,
+    ): Buttons = Buttons(
         retry = failed,
         subtitles = subtitleTracks > 0,
         audio = audioTracks > 1,
         channelList = hasLineup,
         favourite = hasLineup,
+        sendReport = reportable && (failed || errorShown),
     )
+
+    enum class PrimaryFocus { SCRUB_BAR, RETRY, PLAY_PAUSE }
+
+    /**
+     * Where the overlay's first focus lands. Retry keeps it on an error; "Send report" is secondary
+     * and never takes it (one stray OK must retry, not send). Without Retry, play/pause has it.
+     */
+    fun primaryFocus(buttons: Buttons, scrubbing: Boolean): PrimaryFocus = when {
+        scrubbing -> PrimaryFocus.SCRUB_BAR
+        buttons.retry -> PrimaryFocus.RETRY
+        else -> PrimaryFocus.PLAY_PAUSE
+    }
 }

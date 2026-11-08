@@ -1435,12 +1435,6 @@ class PlayerSettingsDataStore @Inject constructor(
         }
     }
 
-    suspend fun setPlaybackIssueReportsEnabled(enabled: Boolean) {
-        store().edit { prefs ->
-            prefs[playbackIssueReportsEnabledKey] = enabled
-        }
-    }
-
     suspend fun setFrameRateMatchingMode(mode: FrameRateMatchingMode) {
         store().edit { prefs ->
             prefs[frameRateMatchingModeKey] = mode.name

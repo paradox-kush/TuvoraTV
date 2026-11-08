@@ -28,4 +28,47 @@ object DeviceProfile {
             put("hw_sdk_int", Build.VERSION.SDK_INT)
         }
     }
+
+    /**
+     * Slower facts (codec list, display modes), gathered off the main thread after startup and
+     * registered as super properties once ready. Everything is a capability flag or a number.
+     */
+    fun extended(context: Context): Map<String, Any> = buildMap {
+        put("hw_cpu_cores", Runtime.getRuntime().availableProcessors())
+        runCatching {
+            val display = (context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager)
+                .getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            val mode = display.mode
+            put("hw_display_px", "${mode.physicalWidth}x${mode.physicalHeight}")
+            put("hw_display_hz_max", display.supportedModes.maxOf { it.refreshRate }.toInt())
+            val hdr = display.hdrCapabilities?.supportedHdrTypes?.map {
+                when (it) {
+                    android.view.Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION -> "dv"
+                    android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 -> "hdr10"
+                    android.view.Display.HdrCapabilities.HDR_TYPE_HLG -> "hlg"
+                    android.view.Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS -> "hdr10plus"
+                    else -> "other"
+                }
+            }.orEmpty()
+            put("hw_hdr", hdr.joinToString(","))
+        }
+        runCatching {
+            val codecs = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos
+            fun hw(mime: String): String = codecs
+                .filter { !it.isEncoder && it.supportedTypes.any { t -> t.equals(mime, true) } }
+                .let { list ->
+                    if (list.isEmpty()) return@let "none"
+                    val hardware = list.filter { c ->
+                        if (android.os.Build.VERSION.SDK_INT >= 29) c.isHardwareAccelerated
+                        else !c.name.startsWith("OMX.google.", true)
+                    }
+                    if (hardware.isEmpty()) "sw" else "hw"
+                }
+            put("hw_dec_h264", hw("video/avc"))
+            put("hw_dec_hevc", hw("video/hevc"))
+            put("hw_dec_av1", hw("video/av01"))
+            put("hw_dec_vp9", hw("video/x-vnd.on2.vp9"))
+            put("hw_dec_dv", hw("video/dolby-vision"))
+        }
+    }
 }

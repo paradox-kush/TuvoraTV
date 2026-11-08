@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -99,6 +100,10 @@ internal data class LiveOverlayInfo(
     val errorText: String? = null,
     /** Live pause / rewind: why the saved part could not start or ended (shown with Retry + Live). */
     val pauseErrorText: String? = null,
+    /** Telemetry v2: the report's outcome ("Sending…", the support code, why it wasn't sent). */
+    val reportText: String? = null,
+    /** A send is in flight: the button shows it and further presses do nothing. */
+    val reportSending: Boolean = false,
 )
 
 /** Every action the live overlay can take; null = that control is not offered here. */
@@ -124,6 +129,8 @@ internal class LiveOverlayActions(
     val onSeekWindow: ((Long) -> Unit)? = null,
     /** Live pause / rewind: leave the saved part and go back to the live edge. */
     val onGoLive: (() -> Unit)? = null,
+    /** Telemetry v2: one press sends a report about the error on screen. Null = not offered here. */
+    val onSendReport: (() -> Unit)? = null,
 )
 
 /**
@@ -213,6 +220,9 @@ internal fun BoxScope.LiveControlsOverlay(
             if (info.pauseErrorText != null) {
                 Text(text = info.pauseErrorText, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.Error, maxLines = 2)
             }
+            if (buttons.sendReport && info.reportText != null) {
+                Text(text = info.reportText, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.9f), maxLines = 2)
+            }
 
             Spacer(Modifier.height(NuvioTheme.spacing.md))
             // The airing programme's elapsed share where VOD has its seek bar. Not focusable.
@@ -233,22 +243,38 @@ internal fun BoxScope.LiveControlsOverlay(
                     horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    val firstFocus = LiveControlsPolicy.primaryFocus(buttons, scrubbing)
                     if (buttons.retry) {
                         ControlButton(
                             icon = Icons.Default.Refresh,
                             contentDescription = stringResource(R.string.clean_live_action_retry),
                             onClick = actions.onRetry,
-                            focusRequester = primaryFocus.takeUnless { scrubbing },
+                            focusRequester = primaryFocus.takeIf { firstFocus == LiveControlsPolicy.PrimaryFocus.RETRY },
                             onDownKey = actions.onHide,
                             onFocused = actions.onKeepAlive,
                         )
+                    }
+                    // Secondary to Retry, never the first focus. It stays enabled (a disabled TV
+                    // button can drop focus off the row); the controller ignores a press mid-send
+                    // and the dimmed icon says so.
+                    if (buttons.sendReport) {
+                        actions.onSendReport?.let { send ->
+                            ControlButton(
+                                icon = Icons.Default.BugReport,
+                                contentDescription = stringResource(if (info.reportSending) R.string.report_sending else R.string.report_send),
+                                onClick = { if (!info.reportSending) send() },
+                                onDownKey = actions.onHide,
+                                onFocused = actions.onKeepAlive,
+                                contentColor = if (info.reportSending) Color.White.copy(alpha = 0.4f) else Color.White,
+                            )
+                        }
                     }
                     ControlButton(
                         icon = if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
                         iconPainter = if (paused) playPainter else pausePainter,
                         contentDescription = stringResource(if (paused) R.string.cd_play else R.string.cd_pause),
                         onClick = actions.onPlayPause,
-                        focusRequester = if (buttons.retry || scrubbing) null else primaryFocus,
+                        focusRequester = primaryFocus.takeIf { firstFocus == LiveControlsPolicy.PrimaryFocus.PLAY_PAUSE },
                         onDownKey = actions.onHide,
                         onFocused = actions.onKeepAlive,
                     )

@@ -137,6 +137,47 @@ class LiveControlsPolicyTest {
         assertFalse("nor a favourite", failedOneOff.favourite)
     }
 
+    // Telemetry v2: "Send report" on the live error state.
+
+    @Test
+    fun `send report shows on an error where the host can report`() {
+        val failed = LiveControlsPolicy.buttons(failed = true, subtitleTracks = 0, audioTracks = 0, hasLineup = false, reportable = true)
+        assertTrue("retry on error", failed.retry)
+        assertTrue("send report beside it", failed.sendReport)
+        val healthy = LiveControlsPolicy.buttons(failed = false, subtitleTracks = 0, audioTracks = 0, hasLineup = false, reportable = true)
+        assertFalse("nothing to report while healthy", healthy.sendReport)
+    }
+
+    @Test
+    fun `send report shows on an error that offers no retry`() {
+        val expired = LiveControlsPolicy.buttons(failed = false, subtitleTracks = 0, audioTracks = 0, hasLineup = false, reportable = true, errorShown = true)
+        assertFalse("no retry for an expired stream", expired.retry)
+        assertTrue("still reportable", expired.sendReport)
+    }
+
+    @Test
+    fun `a host that cannot report never shows the button`() {
+        val guide = LiveControlsPolicy.buttons(failed = true, subtitleTracks = 0, audioTracks = 0, hasLineup = true)
+        assertFalse("guide fullscreen has no report path yet", guide.sendReport)
+    }
+
+    @Test
+    fun `retry keeps the first focus and send report never takes it`() {
+        val withRetry = LiveControlsPolicy.buttons(failed = true, subtitleTracks = 0, audioTracks = 0, hasLineup = false, reportable = true)
+        assertEquals("retry first", LiveControlsPolicy.PrimaryFocus.RETRY, LiveControlsPolicy.primaryFocus(withRetry, scrubbing = false))
+        val noRetry = LiveControlsPolicy.buttons(failed = false, subtitleTracks = 0, audioTracks = 0, hasLineup = false, reportable = true, errorShown = true)
+        assertEquals("no retry: play/pause, not send report", LiveControlsPolicy.PrimaryFocus.PLAY_PAUSE, LiveControlsPolicy.primaryFocus(noRetry, scrubbing = false))
+        assertEquals("time-shifted: the scrub bar", LiveControlsPolicy.PrimaryFocus.SCRUB_BAR, LiveControlsPolicy.primaryFocus(withRetry, scrubbing = true))
+    }
+
+    @Test
+    fun `send report follows reality even while tuning`() {
+        val failed = LiveControlsPolicy.buttons(failed = true, subtitleTracks = 0, audioTracks = 0, hasLineup = true, reportable = true)
+        val calm = LiveControlsPolicy.buttons(failed = false, subtitleTracks = 2, audioTracks = 3, hasLineup = true, reportable = true)
+        assertEquals("error: shown", true, LiveControlsPolicy.holdWhileTuning(calm, failed, tuning = true).sendReport)
+        assertEquals("healthy: gone", false, LiveControlsPolicy.holdWhileTuning(failed, calm, tuning = true).sendReport)
+    }
+
     /** T10 (W2 device pass): a failed tune left fullscreen black with no message until OK. */
     @Test
     fun `trouble reveals the hidden controls by itself`() {

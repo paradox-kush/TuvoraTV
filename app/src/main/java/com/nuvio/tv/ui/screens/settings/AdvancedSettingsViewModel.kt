@@ -6,7 +6,7 @@ import com.nuvio.tv.core.runtime.AppRestarter
 import com.nuvio.tv.data.local.DeviceLocalPlayerPreferences
 import com.nuvio.tv.data.local.ImagePerformancePreferences
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
-import com.nuvio.tv.data.local.PlayerSettingsDataStore
+import com.nuvio.tv.core.telemetry.TelemetryService
 import com.nuvio.tv.core.rec.RecEventSettings
 import com.nuvio.tv.data.local.SentrySettingsDataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -22,7 +22,6 @@ data class AdvancedSettingsUiState(
     val fastHorizontalNavigationEnabled: Boolean = false,
     val smoothBringIntoViewEnabled: Boolean = true,
     val composeHighlighterEnabled: Boolean = false,
-    val playbackIssueReportsEnabled: Boolean = false,
     val playerStatsHudEnabled: Boolean = false,
     val rgb565Enabled: Boolean = true,
     val sentryEnabled: Boolean = true,
@@ -33,7 +32,6 @@ sealed class AdvancedSettingsEvent {
     data class SetFastHorizontalNavigationEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetSmoothBringIntoViewEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetComposeHighlighterEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
-    data class SetPlaybackIssueReportsEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetPlayerStatsHudEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetRgb565Enabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetSentryEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
@@ -43,13 +41,16 @@ sealed class AdvancedSettingsEvent {
 @HiltViewModel
 class AdvancedSettingsViewModel @Inject constructor(
     private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
-    private val playerSettingsDataStore: PlayerSettingsDataStore,
     private val deviceLocalPlayerPreferences: DeviceLocalPlayerPreferences,
     private val sentrySettingsDataStore: SentrySettingsDataStore,
     private val imagePerformancePreferences: ImagePerformancePreferences,
     private val appRestarter: AppRestarter,
-    private val recEventSettings: RecEventSettings
+    private val recEventSettings: RecEventSettings,
+    telemetry: TelemetryService
 ) : ViewModel() {
+    /** Settings > Diagnostics > Send a report. */
+    val reportFlow = SettingsReportFlow(telemetry, viewModelScope)
+
     private val _uiState = MutableStateFlow(AdvancedSettingsUiState())
     val uiState: StateFlow<AdvancedSettingsUiState> = _uiState.asStateFlow()
 
@@ -68,11 +69,6 @@ class AdvancedSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             layoutPreferenceDataStore.composeHighlighterEnabled.collectLatest { enabled ->
                 _uiState.update { it.copy(composeHighlighterEnabled = enabled) }
-            }
-        }
-        viewModelScope.launch {
-            playerSettingsDataStore.playerSettings.collectLatest { settings ->
-                _uiState.update { it.copy(playbackIssueReportsEnabled = settings.playbackIssueReportsEnabled) }
             }
         }
         viewModelScope.launch {
@@ -107,11 +103,6 @@ class AdvancedSettingsViewModel @Inject constructor(
             is AdvancedSettingsEvent.SetComposeHighlighterEnabled -> {
                 viewModelScope.launch {
                     layoutPreferenceDataStore.setComposeHighlighterEnabled(event.enabled)
-                }
-            }
-            is AdvancedSettingsEvent.SetPlaybackIssueReportsEnabled -> {
-                viewModelScope.launch {
-                    playerSettingsDataStore.setPlaybackIssueReportsEnabled(event.enabled)
                 }
             }
             is AdvancedSettingsEvent.SetPlayerStatsHudEnabled -> {

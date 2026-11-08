@@ -16,6 +16,8 @@ data class CrashRecord(
     val exceptionType: String,
     val message: String?,
     val frames: List<String>,
+    /** Rendered on-device trail leading up to the crash (see [DiagTrailPolicy.render]); empty when none. */
+    val trail: String = "",
 ) {
     fun toJson(): String = JSONObject()
         .put("schema_version", SCHEMA_VERSION)
@@ -26,6 +28,7 @@ data class CrashRecord(
         .put("exception_type", exceptionType)
         .put("message", message ?: JSONObject.NULL)
         .put("frames", JSONArray(frames))
+        .put("trail", trail)
         .toString()
 
     companion object {
@@ -45,6 +48,7 @@ data class CrashRecord(
                 exceptionType = o.getString("exception_type"),
                 message = if (o.isNull("message")) null else o.getString("message"),
                 frames = List(arr.length()) { arr.getString(it) },
+                trail = o.optString("trail", ""),
             )
         }.getOrNull()
 

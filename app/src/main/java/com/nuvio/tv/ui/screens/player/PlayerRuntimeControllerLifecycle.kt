@@ -48,6 +48,8 @@ internal fun PlayerRuntimeController.releasePlayer(
     }
 
     isReleasingPlayer = true
+    // Every rebuild and exit releases here: the viewing that started on this player ends now.
+    playbackBreadcrumbs.stop()
     com.nuvio.tv.core.recommendations.TvRecommendationManager.isPlaybackActive.value = false
     if (flushPlaybackState) {
         if (!keepTorrentStream) stopTorrentStream()

@@ -48,6 +48,18 @@ class CrashRecordTest {
         assertTrue("no temp file left", !File(dir, "pending_crash.json.tmp").exists())
     }
 
+    /** Privacy regression: a parse error that embeds provider credentials must not reach the record. */
+    @Test
+    fun crashRecordNeverCarriesTheExceptionMessage() {
+        val error = IllegalStateException("JSON input: {\"user_info\":{\"username\":\"john\",\"password\":\"s3cret\"} at https://MyIptv.Provider.com/x")
+        val record = CrashRecorder.record(Thread.currentThread(), error, "1.18.1")
+        val json = record.toJson()
+        assertNull("message dropped", record.message)
+        assertTrue("no password in the stored record", !json.contains("s3cret"))
+        assertTrue("no host in the stored record", !json.contains("MyIptv"))
+        assertTrue("type kept", json.contains("java.lang.IllegalStateException"))
+    }
+
     @Test
     fun supportCodeUsesOnlyUnambiguousCharacters() {
         val code = SupportCodeGenerator.generate(Random(42))

@@ -10,6 +10,14 @@ import com.nuvio.tv.core.picture.LivePicturePort
 import com.nuvio.tv.core.picture.PictureChoice
 import com.nuvio.tv.data.local.LivePicturePreferences
 import com.nuvio.tv.ui.screens.player.clean.live.LivePictureFollower
+import com.nuvio.tv.ui.screens.player.clean.live.LiveReportController
+import com.nuvio.tv.ui.screens.player.clean.live.LiveReportState
+import com.nuvio.tv.core.telemetry.ReportCategory
+import com.nuvio.tv.core.telemetry.ReportResult
+import com.nuvio.tv.core.telemetry.ReportSurface
+import com.nuvio.tv.core.telemetry.DiagEntry
+import com.nuvio.tv.core.telemetry.TelemetryPort
+import com.nuvio.tv.core.telemetry.TelemetryService
 import android.app.Activity
 import android.content.Context
 import android.widget.FrameLayout
@@ -20,6 +28,8 @@ import com.nuvio.tv.playback.core.PlaybackSnapshot
 import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.SessionProfile
+import com.nuvio.tv.core.analytics.PlaybackBreadcrumbTracker
+import com.nuvio.tv.playback.live.LivePlaybackBreadcrumbs
 import com.nuvio.tv.playback.host.AndroidCleanLiveHostFactory
 import com.nuvio.tv.playback.host.AndroidCleanLiveHostInput
 import com.nuvio.tv.playback.host.CleanLiveHost
@@ -128,6 +138,8 @@ internal class CleanLivePlayerViewModel private constructor(
     private val zapSettleWait: CleanLiveZapSettleWait,
     picturePort: LivePicturePort,
     private val livePauseFactory: LivePauseControlFactory,
+    telemetry: TelemetryPort,
+    reportDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
     @Inject
     internal constructor(
@@ -139,6 +151,7 @@ internal class CleanLivePlayerViewModel private constructor(
         playedHistory: LivePlayedHistoryPort,
         livePicture: LivePicturePreferences,
         livePauseFactory: LivePauseControlFactory,
+        telemetry: TelemetryService,
     ) : this(
         appContext = context.applicationContext,
         launchConsumer = CleanLiveDestinationLaunchConsumer(launchStore::consume),
@@ -151,6 +164,8 @@ internal class CleanLivePlayerViewModel private constructor(
         zapSettleWait = CleanLiveZapSettleWait { delay(LiveZapSettlePolicy.SETTLE_MS) },
         picturePort = livePicture,
         livePauseFactory = livePauseFactory,
+        telemetry = telemetry,
+        reportDispatcher = Dispatchers.IO,
     )
 
     internal constructor(
@@ -167,6 +182,7 @@ internal class CleanLivePlayerViewModel private constructor(
         zapSettleWait: CleanLiveZapSettleWait = CleanLiveZapSettleWait {},
         picturePort: LivePicturePort = LivePicturePort.Unremembered,
         livePauseFactory: LivePauseControlFactory = LivePauseControlFactory { null },
+        telemetry: TelemetryPort = UnsentTelemetryPort,
         @Suppress("UNUSED_PARAMETER") testOnly: Unit = Unit,
     ) : this(
         appContext = context.applicationContext,
@@ -180,6 +196,8 @@ internal class CleanLivePlayerViewModel private constructor(
         zapSettleWait = zapSettleWait,
         picturePort = picturePort,
         livePauseFactory = livePauseFactory,
+        telemetry = telemetry,
+        reportDispatcher = ownerDispatcher,
     )
 
     private val ownerJob = SupervisorJob()
@@ -200,6 +218,19 @@ internal class CleanLivePlayerViewModel private constructor(
     fun requestPictureChange(update: (PictureChoice) -> PictureChoice) {
         pictureFollower.change(update) { choice -> command { it.applyPicture(choice.aspectMode, choice.zoom) } }
     }
+
+    // Telemetry v2: the overlay's one-press "Send report", owned here so recomposition can't drop it.
+    private val reportController = LiveReportController(telemetry, ownerScope, reportDispatcher)
+    val report: StateFlow<LiveReportState> = reportController.state
+
+    /** One press = one send; a press while one is in flight does nothing. */
+    fun sendReport(category: ReportCategory, failureCode: String?) {
+        if (releaseCompleted || clearedReleaseLoopStarted) return
+        reportController.send(category, failureCode)
+    }
+
+    /** The error on screen cleared: its report result goes with it. */
+    fun clearReport() = reportController.clear()
 
     private fun followPicture(channelId: String) {
         pictureFollower.follow(channelId) { choice -> command { it.applyPicture(choice.aspectMode, choice.zoom) } }
@@ -268,6 +299,10 @@ internal class CleanLivePlayerViewModel private constructor(
     private var historyRecordTail: Job? = null
     private var pendingPlayed: LivePlayedIdentity? = null
     private var clearedReleaseLoopStarted = false
+
+    // Playback breadcrumbs (app_exit was_playing, memory sampling): started on rendered output,
+    // stopped on every exit path — failure snapshot, rebind, release, reject, leave.
+    private val playbackBreadcrumbs = PlaybackBreadcrumbTracker()
 
     private val zapWorker = ownerScope.launch {
         // Held-remote presses accumulate into signed steps; after the shared settle window
@@ -430,6 +465,8 @@ internal class CleanLivePlayerViewModel private constructor(
      */
     fun requestZap(direction: LiveZapDirection) {
         if (releaseCompleted || clearedReleaseLoopStarted) return
+        // No report state survives a zap: the new channel has its own story.
+        reportController.clear()
         pendingZapSteps.addAndGet(if (direction == LiveZapDirection.NEXT) 1 else -1)
         zapSignal.trySend(Unit)
     }
@@ -594,6 +631,8 @@ internal class CleanLivePlayerViewModel private constructor(
     }
 
     override fun onCleared() {
+        // Leaving the destination ends the viewing even if the release barrier has to retry.
+        playbackBreadcrumbs.stop()
         if (!ownerJob.isActive || clearedReleaseLoopStarted) return
         clearedReleaseLoopStarted = true
         ownerScope.launch {
@@ -626,6 +665,14 @@ internal class CleanLivePlayerViewModel private constructor(
                 presentation = LivePlaybackUiPresenter.present(snapshot),
             )
             acceptRenderedVideoEvidence(snapshot)
+            playbackBreadcrumbs.onPhase(
+                LivePlaybackBreadcrumbs.phaseOf(snapshot),
+                // After onCleared the viewer has left: a late frame from a retrying release
+                // must not reopen the viewing.
+                activeLaunch?.takeUnless { clearedReleaseLoopStarted }?.let {
+                    LivePlaybackBreadcrumbs.identityOf(snapshot, it.target.selection, SessionProfile.FULLSCREEN)
+                },
+            )
         }
 
         val initialSnapshot = current.snapshot.value
@@ -665,6 +712,7 @@ internal class CleanLivePlayerViewModel private constructor(
         val current = host ?: return true
         presentationJob?.cancelAndJoin()
         presentationJob = null
+        playbackBreadcrumbs.stop()
         pendingPlayed = null
         unbindLivePause()
         mutableRouteState.value = CleanLivePlayerRouteState.Initializing
@@ -701,6 +749,7 @@ internal class CleanLivePlayerViewModel private constructor(
     }
 
     private fun completeRelease() {
+        playbackBreadcrumbs.stop()
         unbindLivePause()
         releaseCompleted = true
         zapSignal.close()
@@ -742,4 +791,15 @@ internal class CleanLivePlayerViewModel private constructor(
         const val INITIAL_CLEAR_RELEASE_BACKOFF_MS = 100L
         const val MAX_CLEAR_RELEASE_BACKOFF_MS = 5_000L
     }
+}
+
+/** Test default only: reports nothing and says so (never a fake success). */
+private object UnsentTelemetryPort : TelemetryPort {
+    override val supportCode: String = ""
+    override fun record(entry: DiagEntry) = Unit
+    override suspend fun sendUserReport(
+        category: ReportCategory,
+        surface: ReportSurface,
+        failureCode: String?,
+    ): ReportResult = ReportResult.ConsentOff
 }

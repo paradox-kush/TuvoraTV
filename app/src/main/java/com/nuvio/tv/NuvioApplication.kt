@@ -77,6 +77,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var realtimeSyncInvalidationService: RealtimeSyncInvalidationService
     @Inject lateinit var m3uIdRekeyer: com.nuvio.tv.core.iptv.M3uIdRekeyer
     @Inject lateinit var sentrySettingsDataStore: SentrySettingsDataStore
+    @Inject lateinit var telemetry: com.nuvio.tv.core.telemetry.TelemetryService
     @Inject lateinit var imagePerformancePreferences: ImagePerformancePreferences
     @Inject lateinit var simklAnimeIdPreferenceHolder: SimklAnimeIdPreferenceHolder
     @Inject lateinit var xtreamIptvSearchProvider: com.nuvio.tv.core.iptv.XtreamIptvSearchProvider
@@ -165,6 +166,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         // only sweeps + decides safe mode; the UI-launch attempt is opened in MainActivity. In safe
         // mode the resolver warm-up + IPTV refresh worker + channel sync withhold their heavy work.
         com.nuvio.tv.core.journal.StartupJournal.decideStartupMode()
+        telemetry.start(BuildConfig.VERSION_NAME)
         val crashReportsEnabled = runBlocking(Dispatchers.IO) {
             sentrySettingsDataStore.isEnabled()
         }
@@ -181,10 +183,12 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
 
                 override fun onPlaybackStarted(kind: String, engine: String, surface: String) {
                     AppExitReporter.recordPlaybackStarted(this@NuvioApplication, kind, engine, surface)
+                    telemetry.onPlaybackStarted()
                 }
 
                 override fun onPlaybackStopped() {
                     AppExitReporter.recordPlaybackStopped(this@NuvioApplication)
+                    telemetry.onPlaybackStopped()
                 }
             }
         PostHogAndroid.setup(
@@ -214,10 +218,18 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 tracingHeaders = emptyList()
                 logs.addBeforeSend(PostHogBeforeSendLog { null })
                 addBeforeSend(PostHogBeforeSend { event ->
-                    if (PostHogPrivacy.shouldDropEvent(event.event)) null
-                    else event.copy(
-                        properties = PostHogPrivacy.sanitize(event.properties.orEmpty()).toMutableMap(),
-                    )
+                    if (PostHogPrivacy.shouldDropEvent(event.event)) return@PostHogBeforeSend null
+                    val sanitized = PostHogPrivacy.sanitize(event.properties.orEmpty())
+                    // Error-only sending: routine successes are logged on-device or counted, errors
+                    // go out with the trail that led up to them (see core/telemetry).
+                    when (val gated = telemetry.gate.process(event.event, sanitized)) {
+                        is com.nuvio.tv.core.telemetry.TelemetryGate.Result.Drop -> null
+                        is com.nuvio.tv.core.telemetry.TelemetryGate.Result.Pass -> {
+                            if (gated.isError) telemetry.flushNow()
+                            @Suppress("UNCHECKED_CAST")
+                            event.copy(properties = (gated.properties.filterValues { it != null } as Map<String, Any>).toMutableMap())
+                        }
+                    }
                 })
                 // Upload queued events quickly after launch: a crash queued by the previous
                 // run must ship before the user navigates back into whatever crashed
@@ -231,12 +243,31 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         val supportCode = com.nuvio.tv.core.telemetry.SupportCodeStore.get(this)
         PostHog.register("support_code", supportCode)
         com.nuvio.tv.core.telemetry.DeviceProfile.properties(this).forEach { (k, v) -> PostHog.register(k, v) }
+        // Background -> one session_health summary and a durable copy of the on-device log.
+        registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
+            private var started = 0
+            override fun onActivityStarted(activity: android.app.Activity) { started++ }
+            override fun onActivityStopped(activity: android.app.Activity) {
+                if (--started <= 0) {
+                    started = 0
+                    telemetry.flushHealth()
+                    telemetry.flushNow()
+                }
+            }
+            override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) = Unit
+            override fun onActivityResumed(activity: android.app.Activity) = Unit
+            override fun onActivityPaused(activity: android.app.Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
+            override fun onActivityDestroyed(activity: android.app.Activity) = Unit
+        })
+        com.nuvio.tv.core.telemetry.TelemetryHolder.consentEnabled = crashReportsEnabled
         // Outermost handler: writes the crash file before PostHog's best-effort capture runs.
         com.nuvio.tv.core.telemetry.CrashRecorder.install(this, BuildConfig.VERSION_NAME)
         if (crashReportsEnabled) {
             PostHog.optIn()
             AppExitReporter.reportPendingExits(this)
             Thread({
+                runCatching { com.nuvio.tv.core.telemetry.DeviceProfile.extended(this).forEach { (k, v) -> PostHog.register(k, v) } }
                 runCatching { com.nuvio.tv.core.telemetry.CrashRecorder.sendPending(this, supportCode) }
             }, "pending-crash-send").start()
         } else {
@@ -244,6 +275,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         }
         analyticsConsentScope.launch {
             sentrySettingsDataStore.enabled.distinctUntilChanged().collect { enabled ->
+                com.nuvio.tv.core.telemetry.TelemetryHolder.consentEnabled = enabled
                 if (enabled) PostHog.optIn() else PostHog.optOut()
             }
         }
