@@ -16,6 +16,7 @@ import com.nuvio.tv.core.sports.detail.screen.GameDetailEntry
 import com.nuvio.tv.core.sports.detail.screen.GameDetailPoller
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiReducer
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiState
+import com.nuvio.tv.core.sports.detail.screen.PreviewFailure
 import com.nuvio.tv.core.sports.detail.screen.PreviewResolver
 import com.nuvio.tv.core.sports.detail.screen.PreviewSlot
 import com.nuvio.tv.core.sports.detail.screen.PrimaryAction
@@ -67,12 +68,15 @@ class GameDetailViewModel @Inject constructor(
     private val _preview = MutableStateFlow<PreviewSlot>(PreviewSlot.Hidden)
     val preview: StateFlow<PreviewSlot> = _preview.asStateFlow()
     @Volatile private var gameState: com.nuvio.tv.core.sports.detail.GameState? = null
-    @Volatile private var previewFailed = false
+    @Volatile private var previewFailure: PreviewFailure? = null
 
     /** The preview failed once (rejected host / failed stream): show "Preview unavailable" and never retry on a loop. */
-    fun markPreviewFailed() {
-        if (previewFailed) return
-        previewFailed = true
+    fun markPreviewFailed(failure: PreviewFailure) {
+        if (previewFailure != null) return
+        previewFailure = failure
+        // Reason code only: never a URL, host, channel or team name.
+        runCatching { com.posthog.PostHog.capture(event = "sports_preview_failed", properties = mapOf("code" to failure.code)) }
+        android.util.Log.w("GameDetailVM", "preview failed: ${failure.code}")
         publishWatch()
     }
 
@@ -213,7 +217,7 @@ class GameDetailViewModel @Inject constructor(
             )
         }
         _preview.value = PreviewResolver.resolve(
-            gameState, watchingContentId, watchingName(), candidates, matching, matchingFailed, hasPlaylists, previewFailed,
+            gameState, watchingContentId, watchingName(), candidates, matching, matchingFailed, hasPlaylists, previewFailure,
         )
         _watch.value = WatchResolver.resolve(watchingContentId, watchingName(), candidates, matching, matchingFailed, hasPlaylists, finished, replays.keys)
     }
@@ -225,12 +229,21 @@ class GameDetailViewModel @Inject constructor(
             is PrimaryAction.Switch -> p.channel
             else -> return
         }
+        if (!publishLineup(channel.contentId)) return
+        onPlay(channel.contentId)
+    }
+
+    /**
+     * Publishes the matched channels as the current live lineup (the playback layer resolves a channel only through it,
+     * and channel up/down walks it). Used before the player opens AND before a preview attaches. False if [contentId] is not in it.
+     */
+    fun publishLineup(contentId: String): Boolean {
         val lineup = matches.distinctBy { it.channel.contentId }.mapNotNull {
             XtreamLiveChannelIdentity.from(contentId = it.channel.contentId, title = it.channel.name, logo = it.channel.logo)
         }
-        if (lineup.none { it.contentId.value == channel.contentId }) return
+        if (lineup.none { it.contentId.value == contentId }) return false
         livePlaylist.set(PlaybackProfileId(profileManager.activeProfileId.value.toString()), lineup)
-        onPlay(channel.contentId)
+        return true
     }
 
     /** Starts the catch-up session for the replay shown on a finished game and hands the launch to the screen. */

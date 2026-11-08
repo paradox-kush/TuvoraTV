@@ -16,8 +16,46 @@ sealed interface PreviewSlot {
     data class NoMatch(val failed: Boolean) : PreviewSlot
     /** Opened while watching: what is already playing, never a second stream. */
     data class Watching(val name: String?) : PreviewSlot
-    /** The preview failed once: a quiet message, no retry loop. */
-    data object Unavailable : PreviewSlot
+    /** The preview failed once: a quiet message with the reason, no retry loop. */
+    data class Unavailable(val failure: PreviewFailure? = null) : PreviewSlot
+}
+
+/**
+ * Why a preview did not play: [code] goes to telemetry (never a URL, host or title), [label] is the short reason shown in
+ * the box ("Preview unavailable: stream timed out").
+ */
+data class PreviewFailure(val code: String, val label: String) {
+    companion object {
+        val NO_LINEUP = PreviewFailure("no_lineup", "not in your channel list")
+        val TIMEOUT = PreviewFailure("timeout", "stream timed out")
+
+        /** The clean live host refused to start: [reason] is the guide playback failure name. */
+        fun rejected(reason: String) = PreviewFailure(
+            "rejected_${reason.lowercase()}",
+            when (reason) {
+                "SELECTION_UNAVAILABLE" -> "channel unavailable"
+                "PROFILE_CHANGED" -> "profile changed"
+                "INVALID_TARGET" -> "channel not playable"
+                "HOST_CREATION_FAILED" -> "player could not start"
+                "TUNE_FAILED" -> "could not tune the channel"
+                else -> "player error"
+            },
+        )
+
+        /** The stream started and then failed: [engineCode] is the playback FailureCode name. */
+        fun stream(engineCode: String?) = PreviewFailure(
+            "stream_${(engineCode ?: "unknown").lowercase()}",
+            when (engineCode) {
+                "NETWORK_TIMEOUT", "NO_PROGRESS" -> "stream timed out"
+                "NETWORK_UNREACHABLE" -> "stream unreachable"
+                "AUTHORIZATION_REJECTED", "PROVIDER_CONNECTION_LIMIT" -> "provider refused the stream"
+                "MANIFEST_INVALID", "DEMUX_FAILED" -> "stream format error"
+                "VIDEO_DECODER_UNAVAILABLE", "VIDEO_DECODER_FAILED", "VIDEO_RENDERER_FAILED" -> "decoder error"
+                "SURFACE_LOST" -> "video surface lost"
+                else -> "stream error"
+            },
+        )
+    }
 }
 
 /** Pure: which preview slot to show. Spends no link and starts no stream by itself. */
@@ -33,7 +71,7 @@ object PreviewResolver {
         matching: Boolean,
         matchingFailed: Boolean,
         hasPlaylists: Boolean,
-        previewFailed: Boolean,
+        previewFailure: PreviewFailure?,
     ): PreviewSlot {
         if (state != GameState.LIVE) return PreviewSlot.Hidden
         if (watchingContentId != null) return PreviewSlot.Watching(watchingName)
@@ -46,6 +84,6 @@ object PreviewResolver {
             }
         }
         if (!best.confirmed || best.singleUse) return PreviewSlot.PressOk(best.name, best.logo)
-        return if (previewFailed) PreviewSlot.Unavailable else PreviewSlot.Live(best.contentId, best.name)
+        return if (previewFailure != null) PreviewSlot.Unavailable(previewFailure) else PreviewSlot.Live(best.contentId, best.name)
     }
 }

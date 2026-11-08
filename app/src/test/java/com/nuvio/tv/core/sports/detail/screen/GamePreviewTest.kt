@@ -9,8 +9,8 @@ class GamePreviewTest {
 
     private fun slot(
         state: GameState? = GameState.LIVE, watching: String? = null, watchingName: String? = null, cands: List<WatchCandidate> = emptyList(),
-        matching: Boolean = false, failed: Boolean = false, playlists: Boolean = true, previewFailed: Boolean = false,
-    ) = PreviewResolver.resolve(state, watching, watchingName, cands, matching, failed, playlists, previewFailed)
+        matching: Boolean = false, failed: Boolean = false, playlists: Boolean = true, previewFailure: PreviewFailure? = null,
+    ) = PreviewResolver.resolve(state, watching, watchingName, cands, matching, failed, playlists, previewFailure)
 
     @Test fun `a confirmed reusable channel previews live`() =
         assertEquals(PreviewSlot.Live("a", "Ch a"), slot(cands = listOf(c("a"))))
@@ -32,14 +32,32 @@ class GamePreviewTest {
         assertEquals(PreviewSlot.Hidden, slot(state = GameState.UPCOMING, cands = listOf(c("a"))))
         assertEquals(PreviewSlot.Hidden, slot(state = null, cands = listOf(c("a"))))
     }
-    @Test fun `a preview failure ends quietly with no loop`() =
-        assertEquals(PreviewSlot.Unavailable, slot(cands = listOf(c("a")), previewFailed = true))
+    @Test fun `a preview failure ends quietly with no loop and carries its reason`() =
+        assertEquals(PreviewSlot.Unavailable(PreviewFailure.TIMEOUT), slot(cands = listOf(c("a")), previewFailure = PreviewFailure.TIMEOUT))
     @Test fun `a failed preview does not hide the single-use message`() =
-        assertEquals(PreviewSlot.PressOk("Ch a", "l.png"), slot(cands = listOf(c("a", single = true)), previewFailed = true))
+        assertEquals(PreviewSlot.PressOk("Ch a", "l.png"), slot(cands = listOf(c("a", single = true)), previewFailure = PreviewFailure.TIMEOUT))
     @Test fun `dwell is one second`() = assertEquals(1_000L, PreviewResolver.DWELL_MS)
-    @Test fun `the no-match box carries a focusable action`() {
+    @Test fun `the no-match box has no action of its own - the source row owns the single Find channels button`() {
         val watch = WatchResolver.resolve(null, null, emptyList(), false, false, true)
         val ui = GameDetailUiState.Loaded(com.nuvio.tv.core.sports.detail.GameDetail.skeleton(com.nuvio.tv.core.sports.detail.GameRef("tsdb:1", "1", "A", "B", 0L)))
-        assertEquals(setOf(FocusKey.PRIMARY, FocusKey.PREVIEW), GameDetailFocus.controls(ui, watch, PreviewSlot.NoMatch(false)))
+        assertEquals(setOf(FocusKey.PRIMARY), GameDetailFocus.controls(ui, watch, PreviewSlot.NoMatch(false)))
+        assertEquals(FocusKey.PRIMARY, GameDetailFocus.initial(ui, watch, PreviewSlot.NoMatch(false)))
+    }
+
+    @Test fun `every failure has a telemetry code and a short human reason`() {
+        assertEquals("no_lineup", PreviewFailure.NO_LINEUP.code)
+        assertEquals("rejected_host_creation_failed", PreviewFailure.rejected("HOST_CREATION_FAILED").code)
+        assertEquals("player could not start", PreviewFailure.rejected("HOST_CREATION_FAILED").label)
+        assertEquals("stream_network_timeout", PreviewFailure.stream("NETWORK_TIMEOUT").code)
+        assertEquals("stream timed out", PreviewFailure.stream("NETWORK_TIMEOUT").label)
+        assertEquals("stream timed out", PreviewFailure.stream("NO_PROGRESS").label)
+        assertEquals("decoder error", PreviewFailure.stream("VIDEO_DECODER_FAILED").label)
+        assertEquals("provider refused the stream", PreviewFailure.stream("PROVIDER_CONNECTION_LIMIT").label)
+        assertEquals("unknown code still maps", "stream error", PreviewFailure.stream("SOMETHING_NEW").label)
+        assertEquals("missing code", "stream_unknown", PreviewFailure.stream(null).code)
+    }
+    @Test fun `codes never contain anything but lowercase letters digits and underscores`() {
+        listOf(PreviewFailure.NO_LINEUP, PreviewFailure.TIMEOUT, PreviewFailure.rejected("TUNE_FAILED"), PreviewFailure.stream("MANIFEST_INVALID"))
+            .forEach { assertEquals(it.code, true, Regex("[a-z0-9_]+").matches(it.code)) }
     }
 }

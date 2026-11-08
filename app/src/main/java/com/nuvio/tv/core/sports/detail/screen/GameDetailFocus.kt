@@ -10,7 +10,6 @@ object GameDetailFocus {
         is GameDetailUiState.Loaded -> buildSet {
             if (watch.primary != PrimaryAction.None) add(FocusKey.PRIMARY)
             if (watch.showChannels) add(FocusKey.CHANNELS)
-            if (preview is PreviewSlot.NoMatch) add(FocusKey.PREVIEW)
         }
         is GameDetailUiState.Failed -> setOf(FocusKey.RETRY)
         else -> emptySet()
