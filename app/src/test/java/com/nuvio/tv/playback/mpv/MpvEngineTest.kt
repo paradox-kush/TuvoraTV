@@ -105,7 +105,7 @@ class MpvEngineTest {
 
     @Test
     fun `metrics report audio progress so a stuck picture with live audio can be told apart`() = runTest {
-        val backend = FakeBackend().apply { metrics = MpvMetrics(90, 2, 3, audioPlayedMs = 4_200) }
+        val backend = FakeBackend().apply { metrics = MpvMetrics(90, 2, 3, audioProgress = 4_200) }
         val engine = engine(backend, backgroundScope)
         success(engine.attachSurface(3, graph()))
         success(engine.start(start(3)))
