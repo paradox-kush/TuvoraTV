@@ -80,7 +80,6 @@ import com.nuvio.tv.data.local.SUBTITLE_LANGUAGE_FORCED
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.data.local.LibassRenderMode
 import com.nuvio.tv.data.local.PlayerSettings
-import com.nuvio.tv.data.repository.PlaybackIssueErrorInput
 import com.nuvio.tv.domain.model.Subtitle
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -183,16 +182,10 @@ internal fun PlayerRuntimeController.initializePlayer(
             autoSubtitleSelected = false
             hasScannedTextTracksOnce = false
             lastPlaybackDiagnosticsForReport = LastPlaybackDiagnostics.EMPTY
-            lastPlaybackIssueError = null
-            playbackIssueReportRequestVersion.incrementAndGet()
+            lastPlaybackFailureCode = null
+            playbackReportSubmitter.reset()
             playbackAnalyticsDiagnostics.reset()
-            _uiState.update {
-                it.copy(
-                    playbackIssueReportStatus = PlaybackIssueReportStatus.Idle,
-                    playbackIssueReportId = null,
-                    playbackIssueReportError = null
-                )
-            }
+            _uiState.update { it.copy(playbackReportState = PlaybackReportState.Idle) }
             resetLoadingOverlayForNewStream()
             armCatchUpStartupDeadline()
             // Decided once: a single-use replay link (Stalker archive) is spent by the first request, so
@@ -284,7 +277,6 @@ internal fun PlayerRuntimeController.initializePlayer(
                     resizeMode = playerSettings.resizeMode,
                     aspectMode = deviceAspectMode,
                     tunneledSurfaceFill = tunneledSurfaceFill,
-                    playbackIssueReportsEnabled = playerSettings.playbackIssueReportsEnabled,
                     tunnelingEnabled = tunnelingActive &&
                             effectiveInternalPlayerEngine != InternalPlayerEngine.MVP_PLAYER
                 )
@@ -1330,6 +1322,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                             if (readyTransition.nextState.hasRenderedFirstFrame && isTunneledPlayback) {
                                 hasRenderedFirstFrame = true
                                 reportCatchUpFirstFrame()
+                                recordPlaybackOutputStarted()
                             }
                             when (val action = readyTransition.action) {
                                 is PlayerStartupPlaybackPolicy.ReadyAction.TunneledFirstReady -> {
@@ -1485,6 +1478,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         val isFirstFrame = !hasRenderedFirstFrame  // capture BEFORE flipping
                         hasRenderedFirstFrame = true
                         reportCatchUpFirstFrame()
+                        recordPlaybackOutputStarted()
                         mediaSourceFactory.unlockStartupPrefetch()
                         if (isFirstFrame && _uiState.value.postPlayDismissedForCurrentEpisode) {
                             _uiState.update { it.copy(postPlayDismissedForCurrentEpisode = false) }
@@ -1711,15 +1705,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                             result = "Error: $detailedError"
                         )
                         lastPlaybackDiagnosticsForReport = errorDiagnostics
-                        lastPlaybackIssueError = PlaybackIssueErrorInput(
-                            displayMessage = detailedError,
-                            errorCode = error.errorCode,
-                            errorCodeName = error.errorCodeName,
-                            exceptionClass = error.javaClass.name,
-                            causeClass = error.cause?.javaClass?.name,
-                            causeMessage = error.cause?.message,
-                            httpStatus = error.findInvalidResponseCodeException()?.responseCode
-                        )
+                        lastPlaybackFailureCode = error.errorCodeName
                         scope.launch {
                             runCatching {
                                 playerSettingsDataStore.setLastPlaybackDiagnostics(errorDiagnostics)
@@ -1973,15 +1959,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 result = "Error: $displayError"
             )
             lastPlaybackDiagnosticsForReport = diagnostics
-            lastPlaybackIssueError = PlaybackIssueErrorInput(
-                displayMessage = displayError,
-                errorCode = null,
-                errorCodeName = null,
-                exceptionClass = e.javaClass.name,
-                causeClass = e.cause?.javaClass?.name,
-                causeMessage = e.cause?.message ?: e.message,
-                httpStatus = null
-            )
+            lastPlaybackFailureCode = e.javaClass.simpleName.takeIf { it.isNotBlank() }
             scope.launch {
                 runCatching { playerSettingsDataStore.setLastPlaybackDiagnostics(diagnostics) }
             }

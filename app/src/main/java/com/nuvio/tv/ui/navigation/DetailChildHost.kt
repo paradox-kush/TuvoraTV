@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
+import com.nuvio.tv.core.analytics.Breadcrumbs
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -82,6 +83,10 @@ internal fun DetailChildHost(
                 closedEpoch += 1
             }
             overlayOpen = nowOpen
+            // Child screens (cast, entity browse, nested detail) are real screens; when the
+            // overlay closes the viewer is back on the parent's screen.
+            val screen = if (nowOpen) destination else parentNavController.currentDestination
+            screen?.let { Breadcrumbs.screenChanged(ScreenRouteName.of(it)) }
         }
         childNav.addOnDestinationChangedListener(listener)
         onDispose {

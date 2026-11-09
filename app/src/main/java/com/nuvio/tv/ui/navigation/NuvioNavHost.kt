@@ -24,7 +24,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavBackStackEntry
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import androidx.navigation.NavController
 import androidx.navigation.NavHostController
+import com.nuvio.tv.core.analytics.Breadcrumbs
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -115,6 +117,16 @@ private fun PlaybackNavHost(
         onDispose {
             cleanLiveIngressJob.getAndSet(null)?.cancel()
         }
+    }
+
+    // Screen breadcrumbs (flight recorder + next-launch app_exit route): the route PATTERN head
+    // only — never its arguments, ids or titles. Breadcrumbs dedupes repeats.
+    DisposableEffect(navController) {
+        val listener = NavController.OnDestinationChangedListener { _, destination, _ ->
+            Breadcrumbs.screenChanged(ScreenRouteName.of(destination))
+        }
+        navController.addOnDestinationChangedListener(listener)
+        onDispose { navController.removeOnDestinationChangedListener(listener) }
     }
 
     /** One URL-free launch path for every production content-card Live TV ingress in this host. */

@@ -3081,7 +3081,6 @@
     <item quantity="one">Ακόμα φορτώνει μετά από %1$d δευτερόλεπτο</item>
     <item quantity="other">Ακόμα φορτώνει μετά από %1$d δευτερόλεπτα</item>
   </plurals>
-  <string name="advanced_playback_issue_reports_subtitle">Εμφάνιση κουμπιών αναφοράς κατά την αναπαραγωγή, σε παρατεταμένη φόρτωση και σε σφάλματα αναπαραγωγής</string>
   <string name="advanced_player_stats_hud">Οθόνη στατιστικών αναπαραγωγής</string>
   <string name="advanced_player_stats_hud_subtitle">Εμφάνιση κουμπιού στις πληροφορίες ροής για εναλλαγή ζωντανών ενδείξεων CPU, μνήμης, buffer, ρυθμού μετάδοσης και θερμοκρασίας κατά την αναπαραγωγή</string>
   <string name="settings_stream_badge_position_top">Πάνω</string>
@@ -3104,7 +3103,6 @@
   <string name="stream_test_btn_measuring_parallel4">Μέτρηση παράλληλης (4MB)...</string>
   <string name="diag_label_source_profile">Προφίλ πηγής</string>
   <string name="web_debrid_per_quality">Ανά ποιότητα</string>
-  <string name="advanced_playback_issue_reports">Αναφορές προβλημάτων αναπαραγωγής</string>
   <string name="buffer_device_ram_info">RAM συσκευής: %s</string>
   <string name="diag_value_on">On</string>
   <string name="player_report_issue_sent">Η αναφορά στάλθηκε: %1$s</string>

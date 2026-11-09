@@ -486,8 +486,6 @@
     <string name="advanced_section_diagnostics">Diagnostika</string>
     <string name="advanced_sentry_reports">Hlášení pádů Sentry</string>
     <string name="advanced_sentry_reports_subtitle">Odesílat hlášení o pádech a ANR s bezpečným kontextem. Ve výchozím stavu zapnuto.</string>
-    <string name="advanced_playback_issue_reports">Hlášení problémů s přehráváním</string>
-    <string name="advanced_playback_issue_reports_subtitle">Zobrazit tlačítka hlášení během přehrávání, dlouhého načítání a chyb přehrávání</string>
     <string name="sentry_enable_dialog_title">Zapnout hlášení pádů?</string>
     <string name="sentry_enable_dialog_subtitle">Hlášení pádů pomáhají identifikovat chyby specifické pro zařízení, aniž byste museli problém reprodukovat pomocí ADB logů.</string>
     <string name="sentry_disable_dialog_title">Vypnout hlášení pádů?</string>

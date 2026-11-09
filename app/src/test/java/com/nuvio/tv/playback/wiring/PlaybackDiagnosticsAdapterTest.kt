@@ -1,7 +1,10 @@
 package com.nuvio.tv.playback.wiring
 
 import com.nuvio.tv.playback.core.EngineType
+import com.nuvio.tv.core.telemetry.DiagTrailPolicy
 import com.nuvio.tv.playback.core.FailureCode
+import com.nuvio.tv.playback.core.LiveFreezePolicy
+import com.nuvio.tv.playback.core.LiveFreezeTelemetry
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
 import com.nuvio.tv.playback.core.PlaybackDiagnosticCode
@@ -48,6 +51,94 @@ class PlaybackDiagnosticsAdapterTest {
         assertEquals("HANDOFF_ELIGIBLE", formatted.properties["retryability"])
         assertEquals(true, formatted.properties[PostHogPrivacy.GEOIP_DISABLE_PROPERTY])
         assertTrue(formatted.properties.values.all { it is String || it is Number || it is Boolean })
+    }
+
+    @Test
+    fun `a live freeze reports kind rung decoder firmware and session instance as identifiers`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 3,
+                code = PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
+                engine = EngineType.MEDIA3,
+                failure = PlaybackFailure(
+                    FailureCode.NO_PROGRESS,
+                    FailureDomain.VIDEO_RENDERER_SURFACE,
+                    FailurePhase.PLAYBACK,
+                    Retryability.HANDOFF_ELIGIBLE,
+                ),
+                freeze = LiveFreezeTelemetry(
+                    kind = LiveFreezePolicy.FreezeKind.VIDEO_ONLY,
+                    rung = LiveFreezePolicy.Action.HANDOFF,
+                    decoder = "c2.mtk.avc.decoder",
+                    sessionInstance = "1a2b3c",
+                ),
+            ),
+            buildId = "UTT3.240625.001",
+        )
+
+        assertEquals("VIDEO_ONLY", formatted.properties["freeze_kind"])
+        assertEquals("HANDOFF", formatted.properties["ladder_rung"])
+        assertEquals("c2_mtk_avc_decoder", formatted.properties["decoder"])
+        assertEquals("UTT3_240625_001", formatted.properties["build_id"])
+        assertEquals("1a2b3c", formatted.properties["session_instance"])
+        val forbidden = setOf("code", "state", "url", "token")
+        assertTrue(formatted.properties.keys.none { it in forbidden })
+        // The same fields survive the on-device trail allow-list.
+        val trail = DiagTrailPolicy.sanitize(formatted.properties)
+        listOf("freeze_kind", "ladder_rung", "decoder", "build_id", "session_instance").forEach {
+            assertTrue("$it is allow-listed", it in trail)
+        }
+    }
+
+    @Test
+    fun `a busy freeze event keeps its retryability in the trail`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 3,
+                code = PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
+                engine = EngineType.MEDIA3,
+                outputProfile = com.nuvio.tv.playback.core.GraphOutputProfile.MEDIA3_STANDARD,
+                attempt = 2,
+                releaseReason = com.nuvio.tv.playback.core.ActiveWorkReleaseReason.HANDOFF,
+                failure = PlaybackFailure(
+                    FailureCode.NO_PROGRESS,
+                    FailureDomain.VIDEO_RENDERER_SURFACE,
+                    FailurePhase.PLAYBACK,
+                    Retryability.HANDOFF_ELIGIBLE,
+                ),
+                freeze = LiveFreezeTelemetry(
+                    kind = LiveFreezePolicy.FreezeKind.VIDEO_ONLY,
+                    rung = LiveFreezePolicy.Action.HANDOFF,
+                    decoder = "c2.mtk.avc.decoder",
+                    sessionInstance = "1a2b3c",
+                ),
+            ),
+            buildId = "UTT3.240625.001",
+        )
+
+        val trail = DiagTrailPolicy.sanitize(formatted.properties)
+        listOf("failure_code", "failure_domain", "failure_phase", "retryability", "freeze_kind", "session_instance")
+            .forEach { assertTrue("$it survives the field cap", it in trail) }
+    }
+
+    @Test
+    fun `a freeze with no decoder or firmware leaves those fields out`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 3,
+                code = PlaybackDiagnosticCode.LIVE_PICTURE_STUCK,
+                freeze = LiveFreezeTelemetry(
+                    kind = LiveFreezePolicy.FreezeKind.VIDEO_ONLY,
+                    rung = LiveFreezePolicy.Action.KEEP_PLAYING,
+                    sessionInstance = "ff",
+                ),
+            ),
+            buildId = null,
+        )
+
+        assertFalse("decoder" in formatted.properties)
+        assertFalse("build_id" in formatted.properties)
+        assertEquals("KEEP_PLAYING", formatted.properties["ladder_rung"])
     }
 
     @Test
@@ -171,4 +262,91 @@ class PlaybackDiagnosticsAdapterTest {
             assertTrue("$code must upload", PlaybackDiagnosticUploadPolicy.shouldUpload(formatted))
         }
     }
+
+    @Test
+    fun `no eligible graph failure sends why and the stream facts`() {
+        val formatted = PlaybackDiagnosticFormatter.format(noEligibleGraphEvent())
+
+        assertEquals("DECODER_PREFERENCE", formatted.properties["rejected_by"])
+        assertEquals(3, formatted.properties["candidate_graphs"])
+        assertEquals(1, formatted.properties["rejected_engine_or_surface"])
+        assertEquals(2, formatted.properties["rejected_decoder_preference"])
+        assertEquals("hevc", formatted.properties["stream_codec"])
+        assertEquals("ts", formatted.properties["stream_container"])
+        assertEquals("uhd", formatted.properties["stream_height"])
+        assertEquals("dv", formatted.properties["stream_hdr"])
+    }
+
+    @Test
+    fun `graph rejection properties carry only allow-listed enum codes and numbers`() {
+        val formatted = PlaybackDiagnosticFormatter.format(noEligibleGraphEvent())
+        val allowedStrings = com.nuvio.tv.playback.core.GraphRejectionReason.entries.map { it.name }.toSet() +
+            com.nuvio.tv.playback.core.StreamCodecCode.entries.map { it.wire } +
+            com.nuvio.tv.playback.core.StreamContainerCode.entries.map { it.wire } +
+            com.nuvio.tv.playback.core.StreamHeightCode.entries.map { it.wire } +
+            com.nuvio.tv.playback.core.StreamHdrCode.entries.map { it.wire }
+        val added = formatted.properties.filterKeys {
+            it == "rejected_by" || it == "candidate_graphs" || it.startsWith("rejected_") || it.startsWith("stream_")
+        }
+        assertEquals(
+            setOf(
+                "rejected_by", "candidate_graphs", "rejected_engine_or_surface", "rejected_decoder_preference",
+                "stream_codec", "stream_container", "stream_height", "stream_hdr",
+            ),
+            added.keys,
+        )
+        added.forEach { (key, value) ->
+            when (value) {
+                is Int -> assertTrue("$key must be a non-negative count", value >= 0)
+                is String -> assertTrue("$key=$value must be an allow-listed code", value in allowedStrings)
+                else -> throw AssertionError("$key has a non enum/number value: $value")
+            }
+        }
+        // The privacy guard must not strip them (it drops keys named code/state/url/token).
+        assertEquals(formatted.properties, PostHogPrivacy.sanitize(formatted.properties))
+    }
+
+    @Test
+    fun `failures without a graph rejection add no rejection properties`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 1,
+                code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                failure = PlaybackFailure(
+                    FailureCode.NO_ELIGIBLE_GRAPH,
+                    FailureDomain.DEVICE_RESOURCE,
+                    FailurePhase.PLAYBACK,
+                    Retryability.FATAL,
+                ),
+            ),
+        )
+        assertFalse(formatted.properties.keys.any { it.startsWith("rejected_") || it.startsWith("stream_") })
+        assertFalse("candidate_graphs" in formatted.properties)
+    }
+
+    private fun noEligibleGraphEvent() = PlaybackDiagnosticEvent(
+        generation = 9,
+        code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+        failure = PlaybackFailure(
+            code = FailureCode.NO_ELIGIBLE_GRAPH,
+            domain = FailureDomain.UNKNOWN,
+            phase = FailurePhase.GRAPH_SELECTION,
+            retryability = Retryability.FATAL,
+            deterministic = true,
+            graphRejection = com.nuvio.tv.playback.core.GraphRejection(
+                rejectedBy = com.nuvio.tv.playback.core.GraphRejectionReason.DECODER_PREFERENCE,
+                candidateGraphs = 3,
+                removedBy = mapOf(
+                    com.nuvio.tv.playback.core.GraphRejectionReason.ENGINE_OR_SURFACE to 1,
+                    com.nuvio.tv.playback.core.GraphRejectionReason.DECODER_PREFERENCE to 2,
+                ),
+                stream = com.nuvio.tv.playback.core.StreamFactCodes(
+                    codec = com.nuvio.tv.playback.core.StreamCodecCode.HEVC,
+                    container = com.nuvio.tv.playback.core.StreamContainerCode.TS,
+                    height = com.nuvio.tv.playback.core.StreamHeightCode.UHD,
+                    hdr = com.nuvio.tv.playback.core.StreamHdrCode.DV,
+                ),
+            ),
+        ),
+    )
 }

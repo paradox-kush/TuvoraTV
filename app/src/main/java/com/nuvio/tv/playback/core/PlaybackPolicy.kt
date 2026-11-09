@@ -70,6 +70,14 @@ class PlaybackPolicy(
 
     fun watchdogEnabled(): Boolean = watchdogConfiguration.enabled
 
+    fun runtimeVideoWindowMs(): Long = watchdogConfiguration.runtimeVideoProgressWindowMs
+
+    /** Passing runtime windows that end a live reconnect's probation (~30 s). */
+    fun probationWindows(): Int = LiveFreezePolicy.probationWindows(
+        liveReconnectConfiguration.minimumStablePlaybackBeforeResetMs,
+        watchdogConfiguration.runtimeVideoProgressWindowMs,
+    )
+
     fun watchdogDelayMs(
         phase: WatchdogPhase,
         contentType: ContentType,
@@ -191,7 +199,19 @@ class PlaybackPolicy(
     fun renderedVideoAdvanced(
         before: PlaybackEngineMetricsSnapshot,
         after: PlaybackEngineMetricsSnapshot,
+        live: Boolean = false,
+        frameRate: Float? = null,
     ): Boolean? {
+        // Live: "moving" is relative to the content's frame rate when it is known (a 25 fps stream
+        // that renders one frame in five seconds is frozen for the viewer).
+        if (live) {
+            return LiveFreezePolicy.videoAdvanced(
+                before,
+                after,
+                watchdogConfiguration.runtimeVideoProgressWindowMs,
+                frameRate,
+            )
+        }
         if (before.generation != after.generation) return null
         val beforeFrames = before.videoFramesRendered ?: return null
         val afterFrames = after.videoFramesRendered ?: return null
@@ -202,6 +222,8 @@ class PlaybackPolicy(
         val requirements: PlaybackRequirements,
         val candidates: List<PlaybackGraph>,
         val excludedEngines: Set<EngineType> = emptySet(),
+        /** Only feeds the stream fact codes recorded on a rejection; never changes eligibility. */
+        val evidence: StreamEvidence? = null,
     )
 
     sealed interface Selection {
@@ -226,11 +248,13 @@ class PlaybackPolicy(
         requirements: PlaybackRequirements,
         candidates: List<PlaybackGraph>,
         failedGraph: PlaybackGraph,
+        evidence: StreamEvidence? = null,
     ): Selection = select(
         SelectionInput(
             requirements = requirements,
             candidates = candidates,
             excludedEngines = setOf(failedGraph.engine),
+            evidence = evidence,
         ),
         handoff = true,
     )
@@ -282,28 +306,55 @@ class PlaybackPolicy(
     }
 
     private fun select(input: SelectionInput, handoff: Boolean): Selection {
-        val eligible = input.candidates
-            .asSequence()
-            .filter(PlaybackGraph::isStructurallyValid)
-            .filter { it.engine in input.requirements.eligibleEngines }
-            .filterNot { it.engine in input.excludedEngines }
-            .filter { !input.requirements.secureOutputRequired || it.secureOutput }
-            .filter { it.surfaceMode in input.requirements.allowedSurfaceModes }
-            .filter { graph -> decoderEligible(graph, input.requirements) }
-            .filter { graph -> audioEligible(graph, input.requirements.audioOutput) }
-            .filter {
+        val requirements = input.requirements
+        // The filters run in this order and each is pure; counting what each removes changes
+        // nothing about which graphs survive, it only records why none did.
+        val filters: List<Pair<GraphRejectionReason, (PlaybackGraph) -> Boolean>> = listOf(
+            GraphRejectionReason.INVALID_GRAPH to PlaybackGraph::isStructurallyValid,
+            GraphRejectionReason.ENGINE_OR_SURFACE to { it.engine in requirements.eligibleEngines },
+            GraphRejectionReason.HANDOFF_EXCLUDED to { it.engine !in input.excludedEngines },
+            GraphRejectionReason.SECURE_OUTPUT to { !requirements.secureOutputRequired || it.secureOutput },
+            GraphRejectionReason.ENGINE_OR_SURFACE to { it.surfaceMode in requirements.allowedSurfaceModes },
+            GraphRejectionReason.DECODER_PREFERENCE to { decoderEligible(it, requirements) },
+            GraphRejectionReason.AUDIO_OUTPUT_PREFERENCE to { audioEligible(it, requirements.audioOutput) },
+            GraphRejectionReason.GPU_RENDER to {
                 it.outputProfile != GraphOutputProfile.MPV_RENDER ||
-                    input.requirements.gpuRenderingAllowed && it.surfaceMode == SurfaceMode.GPU_RENDER
+                    requirements.gpuRenderingAllowed && it.surfaceMode == SurfaceMode.GPU_RENDER
+            },
+            GraphRejectionReason.SUBTITLE_FIDELITY to {
+                !(it.outputProfile == GraphOutputProfile.MPV_DIRECT &&
+                    requirements.subtitlesEnabled &&
+                    requirements.subtitleFidelity == SubtitleFidelity.FULL)
+            },
+        )
+        var remaining = input.candidates
+        val removedBy = linkedMapOf<GraphRejectionReason, Int>()
+        var rejectedBy = GraphRejectionReason.NO_CANDIDATES
+        for ((reason, keep) in filters) {
+            if (remaining.isEmpty()) break
+            val kept = remaining.filter(keep)
+            val removed = remaining.size - kept.size
+            if (removed > 0) {
+                removedBy[reason] = (removedBy[reason] ?: 0) + removed
+                if (kept.isEmpty()) rejectedBy = reason
             }
-            .filterNot {
-                it.outputProfile == GraphOutputProfile.MPV_DIRECT &&
-                    input.requirements.subtitlesEnabled &&
-                    input.requirements.subtitleFidelity == SubtitleFidelity.FULL
-            }
-            .distinctBy(PlaybackGraph::id)
-            .toList()
+            remaining = kept
+        }
+        val eligible = remaining.distinctBy(PlaybackGraph::id)
+        val rejected by lazy {
+            Selection.Rejected(
+                noEligibleGraphFailure(
+                    GraphRejection(
+                        rejectedBy = rejectedBy,
+                        candidateGraphs = input.candidates.size,
+                        removedBy = removedBy,
+                        stream = StreamFactCodes.from(input.evidence),
+                    ),
+                ),
+            )
+        }
 
-        if (eligible.isEmpty()) return Selection.Rejected(noEligibleGraphFailure())
+        if (eligible.isEmpty()) return rejected
 
         val engineOrder = effectiveEngineOrder(input.requirements)
         val selected = eligible.minWithOrNull(
@@ -313,7 +364,7 @@ class PlaybackPolicy(
                 { decoderRank(it) },
                 PlaybackGraph::id,
             ),
-        ) ?: return Selection.Rejected(noEligibleGraphFailure())
+        ) ?: return rejected
 
         val reason = when {
             eligible.size == 1 -> SelectionReason.ONLY_ELIGIBLE_GRAPH
@@ -374,12 +425,13 @@ class PlaybackPolicy(
         AudioOutputPreference.PCM -> graph.audioMode == AudioMode.DECODE
     }
 
-    private fun noEligibleGraphFailure() = PlaybackFailure(
+    private fun noEligibleGraphFailure(rejection: GraphRejection) = PlaybackFailure(
         code = FailureCode.NO_ELIGIBLE_GRAPH,
         domain = FailureDomain.UNKNOWN,
         phase = FailurePhase.GRAPH_SELECTION,
         retryability = Retryability.FATAL,
         deterministic = true,
+        graphRejection = rejection,
     )
 
     private companion object {
@@ -427,8 +479,18 @@ class DefaultPlaybackRequirementsResolver(
         val capabilities = environment.runtimeCapabilities
         val secureOutputRequired = environment.secureOutputRequired
         val allowedSurfaces = resolveAllowedSurfaces(input, capabilities, secureOutputRequired)
-        val eligibleEngines = resolveEligibleEngines(input, allowedSurfaces)
-        if (eligibleEngines.isEmpty() || allowedSurfaces.isEmpty()) return rejectedRequirements()
+        val engineResolution = resolveEligibleEngines(input, allowedSurfaces)
+        val eligibleEngines = engineResolution.engines
+        if (eligibleEngines.isEmpty() || allowedSurfaces.isEmpty()) {
+            return rejectedRequirements(
+                reason = if (allowedSurfaces.isEmpty()) {
+                    GraphRejectionReason.ENGINE_OR_SURFACE
+                } else {
+                    engineResolution.emptiedBy ?: GraphRejectionReason.ENGINE_OR_SURFACE
+                },
+                evidence = input.evidence,
+            )
+        }
 
         val preferences = input.effectivePreferences
         val adaptive = input.evidence.adaptive?.value == true
@@ -585,10 +647,13 @@ class DefaultPlaybackRequirementsResolver(
             .intersect(secureSupported)
     }
 
+    /** [emptiedBy] names the constraint that left no engine; null while engines remain. */
+    private class EngineResolution(val engines: Set<EngineType>, val emptiedBy: GraphRejectionReason?)
+
     private fun resolveEligibleEngines(
         input: PlaybackRequirementsInput,
         allowedSurfaces: Set<SurfaceMode>,
-    ): Set<EngineType> {
+    ): EngineResolution {
         val surfaceEligible = buildSet {
             if (allowedSurfaces.any { it == SurfaceMode.SURFACE_VIEW || it == SurfaceMode.TEXTURE_VIEW }) {
                 add(EngineType.MEDIA3)
@@ -605,10 +670,10 @@ class DefaultPlaybackRequirementsResolver(
         } else {
             EngineType.entries.toSet()
         }
-        var eligible = input.environment.eligibleEngines
-            .intersect(surfaceEligible)
-            .intersect(drmEligible)
-            .intersect(schemeEligible)
+        var eligible = input.environment.eligibleEngines.intersect(surfaceEligible)
+        var emptiedBy = GraphRejectionReason.ENGINE_OR_SURFACE.takeIf { eligible.isEmpty() }
+        eligible = eligible.intersect(drmEligible).intersect(schemeEligible)
+        if (emptiedBy == null && eligible.isEmpty()) emptiedBy = GraphRejectionReason.DRM_OR_SCHEME
         val explicit = when (input.effectivePreferences.engine) {
             EnginePreference.AUTO -> null
             EnginePreference.MEDIA3 -> EngineType.MEDIA3
@@ -616,8 +681,9 @@ class DefaultPlaybackRequirementsResolver(
         }
         if (explicit != null && !input.effectivePreferences.automaticFallback) {
             eligible = eligible.intersect(setOf(explicit))
+            if (emptiedBy == null && eligible.isEmpty()) emptiedBy = GraphRejectionReason.ENGINE_PREFERENCE
         }
-        return eligible
+        return EngineResolution(eligible, emptiedBy)
     }
 
     private fun resolveEngineOrder(
@@ -668,13 +734,18 @@ class DefaultPlaybackRequirementsResolver(
         HdrPreference.DOLBY_VISION -> if (HdrType.DOLBY_VISION in available) requested else HdrPreference.AUTO
     }
 
-    private fun rejectedRequirements(): PlaybackResult.Failure = PlaybackResult.Failure(
+    private fun rejectedRequirements(
+        reason: GraphRejectionReason,
+        evidence: StreamEvidence,
+    ): PlaybackResult.Failure = PlaybackResult.Failure(
         PlaybackFailure(
             code = FailureCode.NO_ELIGIBLE_GRAPH,
             domain = FailureDomain.DEVICE_RESOURCE,
             phase = FailurePhase.GRAPH_SELECTION,
             retryability = Retryability.FATAL,
             deterministic = true,
+            // Graphs are never built on this path, so there is no candidate count.
+            graphRejection = GraphRejection(rejectedBy = reason, stream = StreamFactCodes.from(evidence)),
         ),
     )
 

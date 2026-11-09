@@ -695,7 +695,116 @@ data class PlaybackFailure(
     val deterministic: Boolean = false,
     val httpStatus: Int? = null,
     val statusProvenance: HttpStatusProvenance? = null,
+    /** Set only on [FailureCode.NO_ELIGIBLE_GRAPH] from graph selection: why nothing was eligible. */
+    val graphRejection: GraphRejection? = null,
 )
+
+/**
+ * The filter that left graph selection with nothing to play. A closed set so it can be sent as
+ * telemetry as-is. The policy has no resolution or HDR filter, so neither appears here.
+ */
+enum class GraphRejectionReason {
+    /** The adapter offered no candidate graph at all. */
+    NO_CANDIDATES,
+    /** An adapter built a graph whose engine cannot own its output (an adapter bug). */
+    INVALID_GRAPH,
+    /** The graph's engine or surface mode is not allowed on this device/environment. */
+    ENGINE_OR_SURFACE,
+    /** A handoff excluded the engine that just failed and nothing else was left. */
+    HANDOFF_EXCLUDED,
+    /** Secure (DRM) output is required and the graph cannot provide it. */
+    SECURE_OUTPUT,
+    /** Decoder preference (hardware/software only, or software fallback disallowed). */
+    DECODER_PREFERENCE,
+    /** Audio output preference (passthrough / PCM) does not match the graph's audio mode. */
+    AUDIO_OUTPUT_PREFERENCE,
+    /** The GPU render output is not allowed (budget, guide profile, or wrong surface). */
+    GPU_RENDER,
+    /** Full subtitle fidelity rules out the direct mpv output. */
+    SUBTITLE_FIDELITY,
+    /** DRM or the URL scheme limits the stream to an engine the environment does not allow. */
+    DRM_OR_SCHEME,
+    /** The user pinned an engine with automatic fallback off, and that engine is not eligible. */
+    ENGINE_PREFERENCE,
+}
+
+/**
+ * Why graph selection rejected every candidate. [rejectedBy] is the filter that removed the last
+ * candidates; [removedBy] counts how many candidates each filter removed (filters run in order).
+ * [candidateGraphs] is null when rejection happened before graphs were built (requirements).
+ */
+data class GraphRejection(
+    val rejectedBy: GraphRejectionReason,
+    val candidateGraphs: Int? = null,
+    val removedBy: Map<GraphRejectionReason, Int> = emptyMap(),
+    val stream: StreamFactCodes = StreamFactCodes(),
+)
+
+enum class StreamCodecCode(val wire: String) {
+    H264("h264"), HEVC("hevc"), AV1("av1"), VP9("vp9"), MPEG2("mpeg2"), OTHER("other"),
+}
+
+enum class StreamContainerCode(val wire: String) {
+    TS("ts"), HLS("hls"), DASH("dash"), MP4("mp4"), MKV("mkv"), OTHER("other"),
+}
+
+enum class StreamHeightCode(val wire: String) { SD("sd"), HD("hd"), FHD("fhd"), UHD("uhd") }
+
+enum class StreamHdrCode(val wire: String) { SDR("sdr"), HDR10("hdr10"), DV("dv"), HLG("hlg") }
+
+/** Allow-listed short codes for the stream's known facts; null means the fact is unknown. */
+data class StreamFactCodes(
+    val codec: StreamCodecCode? = null,
+    val container: StreamContainerCode? = null,
+    val height: StreamHeightCode? = null,
+    val hdr: StreamHdrCode? = null,
+) {
+    companion object {
+        fun from(evidence: StreamEvidence?): StreamFactCodes {
+            if (evidence == null) return StreamFactCodes()
+            val codec = evidence.videoCodec?.value
+            return StreamFactCodes(
+                codec = when (codec) {
+                    null, VideoCodec.UNKNOWN -> null
+                    VideoCodec.AVC -> StreamCodecCode.H264
+                    VideoCodec.HEVC -> StreamCodecCode.HEVC
+                    VideoCodec.AV1 -> StreamCodecCode.AV1
+                    VideoCodec.VP9 -> StreamCodecCode.VP9
+                    VideoCodec.MPEG2 -> StreamCodecCode.MPEG2
+                    // Dolby Vision rides on a base codec the evidence does not name.
+                    VideoCodec.MPEG4, VideoCodec.VC1, VideoCodec.DOLBY_VISION -> StreamCodecCode.OTHER
+                },
+                container = containerCode(evidence.delivery?.value, evidence.container?.value),
+                height = evidence.dimensions?.value?.height?.let(::heightCode),
+                // The evidence has no HDR fact; only a Dolby Vision codec proves one. Never guess SDR.
+                hdr = if (codec == VideoCodec.DOLBY_VISION) StreamHdrCode.DV else null,
+            )
+        }
+
+        private fun containerCode(delivery: DeliveryType?, container: ContainerType?): StreamContainerCode? =
+            when (delivery) {
+                DeliveryType.HLS -> StreamContainerCode.HLS
+                DeliveryType.DASH -> StreamContainerCode.DASH
+                DeliveryType.RAW_TRANSPORT_STREAM -> StreamContainerCode.TS
+                DeliveryType.RTSP, DeliveryType.RTP, DeliveryType.UDP -> StreamContainerCode.OTHER
+                DeliveryType.PROGRESSIVE, DeliveryType.UNKNOWN, null -> when (container) {
+                    null, ContainerType.UNKNOWN -> null
+                    ContainerType.MPEG_TS -> StreamContainerCode.TS
+                    ContainerType.MP4, ContainerType.FMP4 -> StreamContainerCode.MP4
+                    ContainerType.MATROSKA -> StreamContainerCode.MKV
+                    ContainerType.WEBM, ContainerType.MPEG_PS, ContainerType.OGG -> StreamContainerCode.OTHER
+                }
+            }
+
+        /** Buckets tolerate encoder padding (1088, 704): sd < 700 <= hd < 1000 <= fhd < 1800 <= uhd. */
+        private fun heightCode(height: Int): StreamHeightCode = when {
+            height >= 1800 -> StreamHeightCode.UHD
+            height >= 1000 -> StreamHeightCode.FHD
+            height >= 700 -> StreamHeightCode.HD
+            else -> StreamHeightCode.SD
+        }
+    }
+}
 
 enum class HttpStatusProvenance { CONFIRMED, INFERRED_FROM_NETWORK_ERROR }
 

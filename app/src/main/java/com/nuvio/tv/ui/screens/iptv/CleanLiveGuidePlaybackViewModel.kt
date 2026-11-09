@@ -22,6 +22,8 @@ import com.nuvio.tv.playback.core.PlaybackSnapshot
 import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.ProviderSelectionId
 import com.nuvio.tv.playback.core.SessionProfile
+import com.nuvio.tv.core.analytics.PlaybackBreadcrumbTracker
+import com.nuvio.tv.playback.live.LivePlaybackBreadcrumbs
 import com.nuvio.tv.playback.core.VideoDimensions
 import com.nuvio.tv.playback.host.AndroidCleanLiveHostFactory
 import com.nuvio.tv.playback.host.AndroidCleanLiveHostInput
@@ -246,6 +248,11 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     private var attachGeneration = 0L
     private var pendingTuneContentId: ProviderSelectionId? = null
     private var lastAttachInput: GuideAttachInput? = null
+
+    // Playback breadcrumbs (app_exit was_playing, memory sampling): started on rendered output —
+    // the preview included, as surface "preview" — and stopped on every exit path: failure
+    // snapshot, rebind, release, reject, detach, leave. Promote/collapse is a surface change.
+    private val playbackBreadcrumbs = PlaybackBreadcrumbTracker()
 
     private val tuneWorker = ownerScope.launch {
         for (contentId in tuneRequests) {
@@ -804,6 +811,12 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     }
 
     private fun publishSnapshot(snapshot: PlaybackSnapshot) {
+        playbackBreadcrumbs.onPhase(
+            LivePlaybackBreadcrumbs.phaseOf(snapshot),
+            // After onCleared the viewer has left: a late frame must not reopen the viewing.
+            activeTarget?.takeUnless { clearedReleaseLoopStarted }
+                ?.let { LivePlaybackBreadcrumbs.identityOf(snapshot, it.selection, sessionProfile) },
+        )
         val target = activeTarget ?: return
         // The guide renders presentation/target only; live position ticks (500ms) embedded in
         // Ready defeated StateFlow equality and recomposed the whole (already main-thread-bound)
@@ -844,6 +857,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         val current = host ?: return true
         presentationJob?.cancelAndJoin()
         presentationJob = null
+        playbackBreadcrumbs.stop()
         pendingPlayed = null
         unbindLivePause()
         mutableState.value = CleanLiveGuidePlaybackState.Initializing
@@ -875,6 +889,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     private suspend fun releaseCreatedHost(current: CleanLiveHost) {
         presentationJob?.cancelAndJoin()
         presentationJob = null
+        playbackBreadcrumbs.stop()
         unbindLivePause()
         withContext(NonCancellable) { current.release() }
         if (host === current) host = null
@@ -900,6 +915,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             mutablePendingSelection.value = null
             presentationJob?.cancelAndJoin()
             presentationJob = null
+            playbackBreadcrumbs.stop()
             unbindLivePause()
             val current = host
             if (current != null) {
@@ -933,6 +949,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             mutablePendingSelection.value = null
             presentationJob?.cancelAndJoin()
             presentationJob = null
+            playbackBreadcrumbs.stop()
             unbindLivePause()
             val current = host
             if (current != null) {
@@ -954,6 +971,8 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     }
 
     override fun onCleared() {
+        // Leaving the guide ends the viewing even if the release barrier has to retry.
+        playbackBreadcrumbs.stop()
         if (!ownerJob.isActive || clearedReleaseLoopStarted) return
         clearedReleaseLoopStarted = true
         ownerScope.launch {
@@ -967,6 +986,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     }
 
     private fun completeRelease() {
+        playbackBreadcrumbs.stop()
         releaseCompleted = true
         tuneRequests.close()
         settledTuneRequests.close()

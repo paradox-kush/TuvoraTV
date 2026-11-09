@@ -596,8 +596,6 @@
     <string name="advanced_section_diagnostics">Teşhis</string>
     <string name="advanced_sentry_reports">Sentry çökme raporları</string>
     <string name="advanced_sentry_reports_subtitle">Güvenli bağlamla çökme ve ANR raporları gönder. Varsayılan olarak açık.</string>
-    <string name="advanced_playback_issue_reports">Oynatma sorunu raporları</string>
-    <string name="advanced_playback_issue_reports_subtitle">Oynatma sırasında, uzun yüklemelerde ve oynatma hatalarında sorun bildirme butonlarını göster</string>
     <string name="advanced_player_stats_hud">Oynatma istatistikleri katmanı</string>
     <string name="advanced_player_stats_hud_subtitle">Oynatma sırasında canlı CPU, bellek, tampon, bit hızı ve sıcaklık okumalarını açıp kapatmak için yayın bilgisine bir düğme ekler</string>
     <string name="sentry_enable_dialog_title">Çökme raporları açılsın mı?</string>

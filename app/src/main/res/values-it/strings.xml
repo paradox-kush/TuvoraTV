@@ -543,8 +543,6 @@
 <string name="advanced_section_diagnostics">Diagnostica</string>
 <string name="advanced_sentry_reports">Segnalazioni di crash Sentry</string>
 <string name="advanced_sentry_reports_subtitle">Invia segnalazioni di crash e ANR con contesto sicuro. Attivo per impostazione predefinita.</string>
-<string name="advanced_playback_issue_reports">Resoconti dei problemi di riproduzione</string>
-<string name="advanced_playback_issue_reports_subtitle">Mostra i pulsanti di segnalazione durante la riproduzione, nei caricamenti lunghi e negli errori di riproduzione</string>
 <string name="advanced_player_stats_hud">Overlay statistiche di riproduzione</string>
 <string name="advanced_player_stats_hud_subtitle">Mostra un pulsante nelle info dello stream per attivare/disattivare le letture in tempo reale di CPU, memoria, buffer, bitrate e temperatura durante la riproduzione</string>
 <string name="sentry_enable_dialog_title">Attivare le segnalazioni di crash?</string>

@@ -39,8 +39,6 @@ import com.nuvio.tv.data.local.StreamAutoPlayMode
 import com.nuvio.tv.data.mediaserver.ServerPlayback
 import com.nuvio.tv.data.mediaserver.ServerStreams
 import com.nuvio.tv.data.repository.ParentalGuideRepository
-import com.nuvio.tv.data.repository.PlaybackIssueErrorInput
-import com.nuvio.tv.data.repository.PlaybackIssueReportRepository
 import com.nuvio.tv.data.repository.SkipIntroRepository
 import com.nuvio.tv.data.repository.SkipInterval
 import com.nuvio.tv.data.repository.EpisodeMappingEntry
@@ -102,7 +100,7 @@ class PlayerRuntimeController(
     internal val cloudPlaybackProgressStore: CloudLibraryPlaybackProgressStore,
     internal val cloudPlaybackSessionStore: CloudLibraryPlaybackSessionStore,
     internal val streamBadgePresentation: com.nuvio.tv.core.streams.StreamBadgePresentation,
-    internal val playbackIssueReportRepository: PlaybackIssueReportRepository,
+    internal val telemetry: com.nuvio.tv.core.telemetry.TelemetryPort,
     internal val tvRecommendationManager: com.nuvio.tv.core.recommendations.TvRecommendationManager,
     internal val serverPlayback: ServerPlayback,
     internal val serverStreams: ServerStreams,
@@ -360,6 +358,13 @@ class PlayerRuntimeController(
     )
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
+    /**
+     * Playback breadcrumbs (app_exit was_playing, memory sampling). Started from the three
+     * first-frame paths (Exo rendered frame, tunneled first READY, mpv first progress); stopped by
+     * [releasePlayer] (every rebuild and exit) and by any error shown to the viewer, below.
+     */
+    internal val playbackBreadcrumbs = com.nuvio.tv.core.analytics.PlaybackBreadcrumbTracker()
+
     init {
         scope.launch {
             _uiState
@@ -368,6 +373,12 @@ class PlayerRuntimeController(
                 .collect { isPlaying ->
                     com.nuvio.tv.core.recommendations.TvRecommendationManager.isPlaybackActive.value = isPlaying
                 }
+        }
+        scope.launch {
+            _uiState
+                .map { it.error != null }
+                .distinctUntilChanged()
+                .collect { hasError -> if (hasError) playbackBreadcrumbs.stop() }
         }
     }
 
@@ -518,8 +529,9 @@ class PlayerRuntimeController(
     internal var initialPlaybackStarted: Boolean = false
     internal var lastPlaybackDiagnosticsForReport: LastPlaybackDiagnostics =
         LastPlaybackDiagnostics.EMPTY
-    internal var lastPlaybackIssueError: PlaybackIssueErrorInput? = null
-    internal val playbackIssueReportRequestVersion = AtomicLong(0L)
+    /** Identifier-only name of the last playback error (ExoPlayer/mpv code name); never free text. */
+    internal var lastPlaybackFailureCode: String? = null
+    internal val playbackReportSubmitter = PlaybackReportSubmitter(telemetry)
     internal val playbackAnalyticsDiagnostics = PlayerPlaybackAnalyticsDiagnostics()
     internal val loadingDiagnosticEvents: ArrayDeque<PlayerLoadingDiagnosticEvent> = ArrayDeque()
     internal val loadingDiagnosticRawEventLines: ArrayDeque<String> = ArrayDeque()

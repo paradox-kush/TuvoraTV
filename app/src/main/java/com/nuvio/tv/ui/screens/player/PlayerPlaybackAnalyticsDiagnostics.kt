@@ -756,8 +756,7 @@ internal class PlayerPlaybackAnalyticsDiagnostics {
             rawEvents = combinedRawEventLines,
             deepExoEvents = events.toList(),
             stutterSignals = events.filter { it.name.isPlaybackWarningEvent() },
-            healthSnapshots = healthSnapshots.toList(),
-            startupStages = emptyList()
+            healthSnapshots = healthSnapshots.toList()
         )
     }
 

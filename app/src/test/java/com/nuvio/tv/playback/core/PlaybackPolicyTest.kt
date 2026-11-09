@@ -233,6 +233,26 @@ class PlaybackPolicyTest {
     }
 
     @Test
+    fun `live runtime video must render a fifth of the expected frames when the rate is known`() {
+        fun metrics(frames: Long) = PlaybackEngineMetricsSnapshot(
+            generation = 7,
+            videoFramesRendered = frames,
+            videoFramesSkipped = null,
+            videoFramesDropped = null,
+            audioBuffersRendered = 99,
+            audioBuffersSkipped = null,
+            audioBuffersDropped = null,
+        )
+
+        assertEquals("unknown rate: any new frame", true, policy.renderedVideoAdvanced(metrics(10), metrics(11), live = true))
+        assertEquals(false, policy.renderedVideoAdvanced(metrics(10), metrics(10), live = true))
+        assertEquals(false, policy.renderedVideoAdvanced(metrics(10), metrics(11), live = true, frameRate = 25f))
+        assertEquals(false, policy.renderedVideoAdvanced(metrics(10), metrics(34), live = true, frameRate = 25f))
+        assertEquals(true, policy.renderedVideoAdvanced(metrics(10), metrics(35), live = true, frameRate = 25f))
+        assertEquals("VOD keeps the any-frame rule", true, policy.renderedVideoAdvanced(metrics(10), metrics(11)))
+    }
+
+    @Test
     fun `Media3 is the deterministic default primary graph`() {
         val selection = policy.selectPrimary(
             PlaybackPolicy.SelectionInput(requirements(), listOf(mpvRender, media3)),

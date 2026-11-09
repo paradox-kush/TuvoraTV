@@ -595,8 +595,6 @@
     <string name="advanced_section_diagnostics">אבחון</string>
     <string name="advanced_sentry_reports">דוחות קריסה של Sentry</string>
     <string name="advanced_sentry_reports_subtitle">שליחת דוחות קריסה ו-ANR עם הקשר בטוח. מופעל כברירת מחדל.</string>
-    <string name="advanced_playback_issue_reports">דיווחי תקלות הפעלה</string>
-    <string name="advanced_playback_issue_reports_subtitle">הצגת כפתורי דיווח במהלך הפעלה, טעינה ממושכת ושגיאות הפעלה</string>
     <string name="advanced_player_stats_hud">שכבת נתוני הפעלה</string>
     <string name="advanced_player_stats_hud_subtitle">הצגת כפתור במידע על המקור, להצגת נתוני מעבד, זיכרון, מאגר, קצב סיביות וטמפרטורה בזמן אמת במהלך ההפעלה</string>
     <string name="sentry_enable_dialog_title">להפעיל דוחות קריסה?</string>

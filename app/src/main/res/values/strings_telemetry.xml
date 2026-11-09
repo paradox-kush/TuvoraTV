@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="support_code_title">Support code</string>
+    <string name="support_code_hint">Tell us this code when you report a problem.</string>
+    <string name="report_send">Send report</string>
+    <string name="report_send_subtitle">Share what just happened with the Tuvora team. No links, logins or playlist names are included.</string>
+    <string name="report_sending">Sending…</string>
+    <string name="report_sent">Report sent. Your support code: %1$s</string>
+    <string name="report_sent_hint">Post this code in Discord so we can find your report.</string>
+    <string name="report_consent_off">Turn on Crash &amp; usage reports to send this.</string>
+    <string name="report_consent_open_settings">Open settings</string>
+    <string name="report_rate_limited">Please wait a moment before sending another report.</string>
+    <string name="report_failed">Could not send the report. Check your connection and try again.</string>
+    <string name="report_category_title">What went wrong?</string>
+    <string name="report_category_wont_play">Won\'t play</string>
+    <string name="report_category_black_screen">Black screen</string>
+    <string name="report_category_freezes">Freezes</string>
+    <string name="report_category_app_closed">App closed</string>
+    <string name="report_category_other">Something else</string>
+</resources>

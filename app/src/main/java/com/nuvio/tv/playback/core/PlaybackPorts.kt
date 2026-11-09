@@ -256,7 +256,23 @@ enum class PlaybackDiagnosticCode {
     PLAYBACK_OUTPUT_NONFATAL,
     /** A failure the engine raised itself (decoder, demux, renderer, network...). */
     ENGINE_REPORTED_FAILURE,
+
+    /** libmpv shows a frozen picture while its audio plays: reported once, playback continues. */
+    LIVE_PICTURE_STUCK,
 }
+
+/**
+ * What a live runtime freeze was and which rung answered it. Closed enums, the decoder's component
+ * name and an opaque per-session id only: no URL, host, channel or message.
+ */
+data class LiveFreezeTelemetry(
+    val kind: LiveFreezePolicy.FreezeKind,
+    val rung: LiveFreezePolicy.Action,
+    /** The video decoder component when the engine reported one (e.g. c2.mtk.avc.decoder). */
+    val decoder: String? = null,
+    /** Distinguishes two playback sessions that report the same freeze (guide preview vs fullscreen). */
+    val sessionInstance: String,
+)
 
 data class PlaybackDiagnosticEvent(
     val generation: Long,
@@ -274,6 +290,8 @@ data class PlaybackDiagnosticEvent(
     val changedFields: Set<RequirementsField>? = null,
     /** Whether the >1080p decoder budget applied when a watchdog fired — a boolean, never a size. */
     val highResolution: Boolean? = null,
+    /** Set on a live runtime freeze (video flat for a whole window). */
+    val freeze: LiveFreezeTelemetry? = null,
 )
 
 fun interface PlaybackDiagnostics {

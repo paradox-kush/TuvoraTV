@@ -590,8 +590,6 @@
     <string name="advanced_section_diagnostics">Diagnosztika</string>
     <string name="advanced_sentry_reports">Sentry összeomlási jelentések</string>
     <string name="advanced_sentry_reports_subtitle">Összeomlási és alkalmazáslefagyási (ANR) jelentések küldése biztonságosan megosztható diagnosztikai adatokkal. Alapértelmezés szerint bekapcsolva.</string>
-    <string name="advanced_playback_issue_reports">Lejátszási hibajelentések</string>
-    <string name="advanced_playback_issue_reports_subtitle">Hibajelentő gombok megjelenítése lejátszás közben, hosszú betöltésnél és lejátszási hibáknál</string>
     <string name="advanced_player_stats_hud">Lejátszási adatok a képernyőn</string>
     <string name="advanced_player_stats_hud_subtitle">A streamadatoknál lévő gombbal lejátszás közben megjelenítheted vagy elrejtheted a CPU-, memória-, puffer-, bitráta- és hőmérsékletadatokat.</string>
     <string name="sentry_enable_dialog_title">Bekapcsolod az összeomlási jelentéseket?</string>

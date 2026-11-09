@@ -253,7 +253,6 @@ fun PlayerScreen(
     val subtitleDelayResetFocusRequester = remember { FocusRequester() }
     val subtitleDelaySyncLineFocusRequester = remember { FocusRequester() }
     var subtitleTimingConsumeNextConfirmKeyUp by remember { mutableStateOf(false) }
-    var reportCodeVisible by remember { mutableStateOf(false) }
     var exitDispatched by remember { mutableStateOf(false) }
     var externalHandoffInProgress by remember { mutableStateOf(false) }
     val autoPlayEnabledForBack = playerBackTreatsSkipAsAutoPlay(
@@ -334,20 +333,6 @@ fun PlayerScreen(
                     true
                 )
             }
-        }
-    }
-
-    LaunchedEffect(uiState.playbackIssueReportStatus, uiState.playbackIssueReportId) {
-        if (uiState.playbackIssueReportStatus == PlaybackIssueReportStatus.Sent &&
-            !uiState.playbackIssueReportId.isNullOrBlank()
-        ) {
-            reportCodeVisible = true
-            viewModel.scheduleHideControls()
-            viewModel.onUserInteraction()
-            delay(5000)
-            reportCodeVisible = false
-        } else if (uiState.playbackIssueReportStatus != PlaybackIssueReportStatus.Sent) {
-            reportCodeVisible = false
         }
     }
 
@@ -1332,17 +1317,14 @@ fun PlayerScreen(
                 .zIndex(2f)
         )
 
-        if (uiState.playbackIssueReportsEnabled &&
-            uiState.showLoadingOverlay &&
+        if (uiState.showLoadingOverlay &&
             uiState.error == null &&
             uiState.loadingIssueReportVisible &&
             !postPlayRecommendationState.isVisible
         ) {
             LoadingIssueReportAction(
                 elapsedMs = uiState.loadingIssueElapsedMs,
-                reportStatus = uiState.playbackIssueReportStatus,
-                reportId = uiState.playbackIssueReportId,
-                reportError = uiState.playbackIssueReportError,
+                reportState = uiState.playbackReportState,
                 onReport = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -1434,10 +1416,8 @@ fun PlayerScreen(
                 onRetry = { viewModel.onEvent(PlayerEvent.OnRetry) }.takeIf {
                     uiState.showRetryErrorAction || PlayerLoadDeadlinePolicy.showRetry(uiState.error != null, uiState.isLive)
                 },
-                showReportAction = uiState.playbackIssueReportsEnabled,
-                reportStatus = uiState.playbackIssueReportStatus,
-                reportId = uiState.playbackIssueReportId,
-                reportError = uiState.playbackIssueReportError,
+                showReportAction = true,
+                reportState = uiState.playbackReportState,
                 onReport = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
                 onBack = exitPlayerFromError
             )
@@ -1607,7 +1587,6 @@ fun PlayerScreen(
                 playPauseFocusRequester = playPauseFocusRequester,
                 progressBarFocusRequester = progressBarFocusRequester,
                 streamInfoFocusRequester = streamInfoFocusRequester,
-                reportCodeVisible = reportCodeVisible,
                 progressBarUpFocusRequester = when {
                     skipButtonActuallyVisible -> skipIntroFocusRequester
                     uiState.postPlayMode is PostPlayMode.AutoPlay -> nextEpisodeFocusRequester
@@ -1635,7 +1614,6 @@ fun PlayerScreen(
                     viewModel.onEvent(PlayerEvent.OnToggleAspectRatio)
                 },
                 onSwitchPlayerEngine = { viewModel.onEvent(PlayerEvent.OnSwitchInternalPlayerEngine) },
-                onReportPlaybackIssue = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
                 onToggleMoreActions = {
                     if (uiState.showMoreDialog) {
                         viewModel.onEvent(PlayerEvent.OnDismissMoreDialog)
@@ -2780,14 +2758,12 @@ private fun PlayerControlsOverlay(
     onShowSpeedDialog: () -> Unit,
     onToggleAspectRatio: () -> Unit,
     onSwitchPlayerEngine: () -> Unit,
-    onReportPlaybackIssue: () -> Unit,
     onToggleMoreActions: () -> Unit,
     onOpenInExternalPlayer: (() -> Unit)?,
     onShowStreamInfo: () -> Unit,
     onResetHideTimer: () -> Unit,
     onHideControls: () -> Unit,
     onBack: () -> Unit,
-    reportCodeVisible: Boolean,
     skipButtonVisible: Boolean = false,
     subtitleReportingActive: Boolean = true,
     onSubtitleClearanceChanged: (Float) -> Unit = {},
@@ -3152,18 +3128,6 @@ private fun PlayerControlsOverlay(
                                 onDownKey = onHideControls,
                                 onFocused = onResetHideTimer
                             )
-                            if (uiState.playbackIssueReportsEnabled) {
-                                ReportControlButton(
-                                    reportId = uiState.playbackIssueReportId,
-                                    showReportId = reportCodeVisible,
-                                    onClick = onReportPlaybackIssue,
-                                    enabled = uiState.playbackIssueReportStatus != PlaybackIssueReportStatus.Sending &&
-                                        uiState.playbackIssueReportStatus != PlaybackIssueReportStatus.Sent,
-                                    upFocusRequester = progressUpTarget,
-                                    onDownKey = onHideControls,
-                                    onFocused = onResetHideTimer
-                                )
-                            }
                         }
                     }
 
@@ -3264,47 +3228,6 @@ private fun PlayerControlsTimeTextHost(viewModel: PlayerViewModel) {
         style = MaterialTheme.typography.bodyMedium,
         color = Color.White.copy(alpha = 0.9f)
     )
-}
-
-@Composable
-private fun ReportControlButton(
-    reportId: String?,
-    showReportId: Boolean,
-    onClick: () -> Unit,
-    enabled: Boolean,
-    upFocusRequester: FocusRequester,
-    onDownKey: () -> Unit,
-    onFocused: () -> Unit
-) {
-    Box(contentAlignment = Alignment.Center) {
-        ControlButton(
-            icon = Icons.Default.BugReport,
-            contentDescription = stringResource(R.string.player_report_issue),
-            onClick = onClick,
-            enabled = enabled,
-            upFocusRequester = upFocusRequester,
-            onDownKey = onDownKey,
-            onFocused = onFocused
-        )
-        AnimatedVisibility(
-            visible = showReportId && !reportId.isNullOrBlank(),
-            enter = fadeIn(animationSpec = tween(NuvioMotion.tokens.durations.fast)),
-            exit = fadeOut(animationSpec = tween(NuvioMotion.tokens.durations.fast)),
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = (-30).dp)
-        ) {
-            Text(
-                text = reportId.orEmpty(),
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-                maxLines = 1,
-                modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(5.dp))
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
-            )
-        }
-    }
 }
 
 @Composable
@@ -4022,11 +3945,19 @@ private fun SubtitleDelayOverlay(
 }
 
 @Composable
+private fun playbackReportMessage(state: PlaybackReportState): String? = when (state) {
+    PlaybackReportState.Idle -> null
+    PlaybackReportState.Sending -> stringResource(R.string.report_sending)
+    is PlaybackReportState.Sent -> stringResource(R.string.report_sent, state.displayCode)
+    PlaybackReportState.ConsentOff -> stringResource(R.string.report_consent_off)
+    is PlaybackReportState.RateLimited -> stringResource(R.string.report_rate_limited)
+    PlaybackReportState.Failed -> stringResource(R.string.report_failed)
+}
+
+@Composable
 private fun LoadingIssueReportAction(
     elapsedMs: Long,
-    reportStatus: PlaybackIssueReportStatus,
-    reportId: String?,
-    reportError: String?,
+    reportState: PlaybackReportState,
     onReport: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -4043,11 +3974,7 @@ private fun LoadingIssueReportAction(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
     ) {
-        val reportMessage = when (reportStatus) {
-            PlaybackIssueReportStatus.Sent -> stringResource(R.string.player_report_issue_sent, reportId.orEmpty())
-            PlaybackIssueReportStatus.Failed -> reportError ?: stringResource(R.string.player_report_issue_failed)
-            PlaybackIssueReportStatus.Sending -> stringResource(R.string.player_report_issue_sending)
-            PlaybackIssueReportStatus.Idle -> {
+        val reportMessage = playbackReportMessage(reportState) ?: run {
                 val elapsedSeconds = (elapsedMs / 1000L).coerceAtLeast(1L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
                 context.resources.getQuantityString(
                     R.plurals.player_report_loading_issue_prompt,
@@ -4055,7 +3982,6 @@ private fun LoadingIssueReportAction(
                     elapsedSeconds
                 )
             }
-        }
         Text(
             text = reportMessage,
             style = MaterialTheme.typography.bodyMedium,
@@ -4063,15 +3989,14 @@ private fun LoadingIssueReportAction(
             textAlign = TextAlign.Center
         )
         DialogButton(
-            text = when (reportStatus) {
-                PlaybackIssueReportStatus.Sending -> stringResource(R.string.player_report_issue_sending_button)
-                PlaybackIssueReportStatus.Sent -> stringResource(R.string.player_report_issue_sent_button)
+            text = when (reportState) {
+                PlaybackReportState.Sending -> stringResource(R.string.player_report_issue_sending_button)
+                is PlaybackReportState.Sent -> stringResource(R.string.player_report_issue_sent_button)
                 else -> stringResource(R.string.player_report_loading_issue)
             },
             onClick = onReport,
             isPrimary = false,
-            enabled = reportStatus != PlaybackIssueReportStatus.Sending &&
-                reportStatus != PlaybackIssueReportStatus.Sent,
+            enabled = reportState.canSubmit,
             modifier = Modifier.focusRequester(focusRequester)
         )
     }
@@ -4084,9 +4009,7 @@ private fun ErrorOverlay(
     onSwitchToMpv: (() -> Unit)? = null,
     onRetry: (() -> Unit)? = null,
     showReportAction: Boolean,
-    reportStatus: PlaybackIssueReportStatus,
-    reportId: String?,
-    reportError: String?,
+    reportState: PlaybackReportState,
     onReport: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -4158,19 +4081,14 @@ private fun ErrorOverlay(
 
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
 
-            val reportMessage = when (reportStatus) {
-                PlaybackIssueReportStatus.Idle -> null
-                PlaybackIssueReportStatus.Sending -> stringResource(R.string.player_report_issue_sending)
-                PlaybackIssueReportStatus.Sent -> stringResource(R.string.player_report_issue_sent, reportId.orEmpty())
-                PlaybackIssueReportStatus.Failed -> reportError ?: stringResource(R.string.player_report_issue_failed)
-            }
+            val reportMessage = playbackReportMessage(reportState)
             if (showReportAction && reportMessage != null) {
                 Text(
                     text = reportMessage,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = when (reportStatus) {
-                        PlaybackIssueReportStatus.Sent -> NuvioTheme.colors.Secondary
-                        PlaybackIssueReportStatus.Failed -> Color(0xFFFF8A80)
+                    color = when (reportState) {
+                        is PlaybackReportState.Sent -> NuvioTheme.colors.Secondary
+                        PlaybackReportState.Failed, PlaybackReportState.ConsentOff -> Color(0xFFFF8A80)
                         else -> Color.White.copy(alpha = 0.7f)
                     },
                     textAlign = TextAlign.Center,
@@ -4218,15 +4136,14 @@ private fun ErrorOverlay(
                 }
                 if (showReportAction) {
                     PlayerOverlayButton(
-                        text = when (reportStatus) {
-                            PlaybackIssueReportStatus.Sending -> stringResource(R.string.player_report_issue_sending_button)
-                            PlaybackIssueReportStatus.Sent -> stringResource(R.string.player_report_issue_sent_button)
+                        text = when (reportState) {
+                            PlaybackReportState.Sending -> stringResource(R.string.player_report_issue_sending_button)
+                            is PlaybackReportState.Sent -> stringResource(R.string.player_report_issue_sent_button)
                             else -> stringResource(R.string.player_report_issue)
                         },
                         onClick = onReport,
                         primary = false,
-                        enabled = reportStatus != PlaybackIssueReportStatus.Sending &&
-                            reportStatus != PlaybackIssueReportStatus.Sent,
+                        enabled = reportState.canSubmit,
                         modifier = Modifier
                             .focusRequester(reportFocusRequester)
                             .onFocusChanged { reportFocused = it.isFocused }

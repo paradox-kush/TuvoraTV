@@ -293,7 +293,8 @@ class MpvEngine internal constructor(
                         videoFramesRendered = metrics.value.videoRendered,
                         videoFramesSkipped = metrics.value.videoSkipped,
                         videoFramesDropped = metrics.value.videoDropped,
-                        audioBuffersRendered = null,
+                        // libmpv has no buffer counter: a count of audio clock changes stands in.
+                        audioBuffersRendered = metrics.value.audioProgress,
                         audioBuffersSkipped = null,
                         audioBuffersDropped = null,
                     ),

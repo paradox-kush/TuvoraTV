@@ -570,8 +570,6 @@
     <string name="advanced_section_diagnostics">Dijagnostika</string>
     <string name="advanced_sentry_reports">Sentry izveštaji o rušenju</string>
     <string name="advanced_sentry_reports_subtitle">Šaljite izveštaje o rušenju i ANR-u sa bezbednim kontekstom. Uključeno po podrazumevanoj vrednosti.</string>
-    <string name="advanced_playback_issue_reports">Izveštaji o problemima sa reprodukcijom</string>
-    <string name="advanced_playback_issue_reports_subtitle">Prikaži dugmad za izveštaj tokom reprodukcije, dugog učitavanja i grešaka u reprodukciji</string>
     <string name="advanced_player_stats_hud">Preklop sa statistikama reprodukcije</string>
     <string name="advanced_player_stats_hud_subtitle">Prikaži dugme u informacijama o strimu za uključivanje/isključivanje live CPU, memorije, bafera, bitrejta i termalnih očitavanja tokom reprodukcije</string>
     <string name="sentry_enable_dialog_title">Uključiti izveštaje o rušenju?</string>

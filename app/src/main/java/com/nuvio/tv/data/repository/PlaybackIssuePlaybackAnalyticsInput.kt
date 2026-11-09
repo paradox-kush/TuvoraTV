@@ -61,8 +61,7 @@ data class PlaybackIssuePlaybackAnalyticsInput(
     val rawEvents: List<String>,
     val deepExoEvents: List<PlaybackIssuePlaybackEventInput>,
     val stutterSignals: List<PlaybackIssuePlaybackEventInput>,
-    val healthSnapshots: List<PlaybackIssuePlaybackHealthSnapshotInput>,
-    val startupStages: List<PlaybackIssueLoadingEventInput>
+    val healthSnapshots: List<PlaybackIssuePlaybackHealthSnapshotInput>
 )
 
 data class PlaybackIssuePlaybackFormatInput(

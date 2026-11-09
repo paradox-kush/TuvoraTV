@@ -3,8 +3,6 @@ package com.nuvio.tv.ui.screens.player
 import android.net.Uri
 import android.os.SystemClock
 import androidx.media3.common.Player
-import com.nuvio.tv.data.repository.PlaybackIssueLoadingEventInput
-import com.nuvio.tv.data.repository.PlaybackIssueLoadingInput
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -123,7 +121,7 @@ internal fun PlayerRuntimeController.scheduleLoadingIssueReportAvailability() {
     startupLoadingReportJob = scope.launch {
         delay(LOADING_ISSUE_REPORT_DELAY_MS)
         val state = _uiState.value
-        if (state.playbackIssueReportsEnabled && !hasRenderedFirstFrame && state.error == null && state.showLoadingOverlay) {
+        if (!hasRenderedFirstFrame && state.error == null && state.showLoadingOverlay) {
             val elapsedMs = (SystemClock.elapsedRealtime() - loadingDiagnosticsStartedAtMs).coerceAtLeast(0L)
             _uiState.update {
                 it.copy(
@@ -133,52 +131,6 @@ internal fun PlayerRuntimeController.scheduleLoadingIssueReportAvailability() {
             }
         }
     }
-}
-
-internal fun PlayerRuntimeController.buildPlaybackIssueLoadingInput(reportReason: String): PlaybackIssueLoadingInput {
-    val now = SystemClock.elapsedRealtime()
-    val state = _uiState.value
-    val player = _exoPlayer
-    val elapsedMs = if (loadingDiagnosticsStartedAtMs > 0L) now - loadingDiagnosticsStartedAtMs else 0L
-    val phaseElapsedMs = if (currentLoadingPhaseStartedAtMs > 0L) now - currentLoadingPhaseStartedAtMs else 0L
-    return PlaybackIssueLoadingInput(
-        phase = currentLoadingPhase.ifBlank { "unknown" },
-        message = state.loadingMessage ?: currentLoadingMessageForReport,
-        progress = state.loadingProgress ?: currentLoadingProgressForReport,
-        elapsedMs = elapsedMs.coerceAtLeast(0L),
-        phaseElapsedMs = phaseElapsedMs.coerceAtLeast(0L),
-        reportReason = reportReason,
-        loadingOverlayVisible = state.showLoadingOverlay,
-        loadingStatusVisible = state.showPlayerLoadingStatus,
-        hasRenderedFirstFrame = hasRenderedFirstFrame,
-        exoPlayerCreated = player != null,
-        exoPlaybackState = player?.playbackState,
-        exoPlaybackStateName = player?.playbackState?.playbackStateName(),
-        exoIsLoading = player?.isLoading,
-        exoPlayWhenReady = player?.playWhenReady,
-        mpvAttached = mpvView != null,
-        startupRetryCount = startupRetryCount,
-        errorRetryCount = errorRetryCount,
-        timeoutRecoveryAttempts = timeoutRecoveryAttempts,
-        isLoadingAddonSubtitles = state.isLoadingAddonSubtitles,
-        addonSubtitlesCount = state.addonSubtitles.size,
-        isLoadingSourceStreams = state.isLoadingSourceStreams,
-        isLoadingEpisodeStreams = state.isLoadingEpisodeStreams,
-        torrentDownloadSpeed = state.torrentDownloadSpeed,
-        torrentPeers = state.torrentPeers,
-        torrentSeeds = state.torrentSeeds,
-        rawEventLines = loadingDiagnosticRawEventLines.toList(),
-        events = loadingDiagnosticEvents.map {
-            PlaybackIssueLoadingEventInput(
-                timeMs = it.timeMs,
-                elapsedMs = it.elapsedMs,
-                phase = it.phase,
-                message = it.message,
-                progress = it.progress,
-                detail = it.detail
-            )
-        }
-    )
 }
 
 private fun PlayerRuntimeController.recordLoadingDiagnosticRawEventLine(line: String) {

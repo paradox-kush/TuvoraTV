@@ -32,6 +32,12 @@ data class PlaybackIncident(
     val sequence: Long,
     val recoveryIssued: Boolean = false,
     val handoffIssued: Boolean = false,
+    /**
+     * A live reconnect showed its first frame, but the incident stays open until the picture has
+     * stayed healthy for a probation (the session counts the windows). A first frame alone proves
+     * nothing: the field freeze repeated within seconds of every reconnect's first frame.
+     */
+    val probation: Boolean = false,
 )
 
 enum class AfterRelease {
@@ -230,6 +236,11 @@ sealed interface PlaybackReducerInput {
         val failure: PlaybackFailure,
     ) : PlaybackReducerInput
 
+    /** The picture stayed healthy for the whole probation: the live incident is over. */
+    data class LiveProbationPassed(
+        val generation: Long,
+    ) : PlaybackReducerInput
+
     /** Session-owned result after resolving and comparing effective requirements. */
     data class RequirementsChangeResolved(
         val changeId: Long,
@@ -328,6 +339,13 @@ object PlaybackStateMachine {
                     ),
                     input.failure,
                 )
+            }
+        }
+        is PlaybackReducerInput.LiveProbationPassed -> {
+            if (input.generation != state.snapshot.generation || state.incident?.probation != true) {
+                unchanged(state)
+            } else {
+                transition(state.copy(incident = null))
             }
         }
         is PlaybackReducerInput.RequirementsChangeResolved -> {
@@ -1128,6 +1146,12 @@ object PlaybackStateMachine {
             return unchanged(state)
         }
         val facts = state.snapshot.videoOutputFacts
+        // A reconnect's first frame opens probation instead of ending the incident (see
+        // PlaybackIncident.probation); any other first frame is a clean start.
+        val reconnectIncident = state.incident?.takeIf {
+            state.snapshot.isReconnecting &&
+                (state.request?.contentType ?: state.launch?.contentType) == ContentType.LIVE
+        }
         return transition(
             state.copy(
                 snapshot = state.snapshot.copy(
@@ -1145,7 +1169,7 @@ object PlaybackStateMachine {
                     },
                     streamAvailability = StreamAvailability.Available,
                 ),
-                incident = null,
+                incident = reconnectIncident?.copy(recoveryIssued = false, probation = true),
             ),
             PlaybackAction.ApplyPlaybackOutput(state.snapshot.generation, facts),
         )
@@ -1244,7 +1268,8 @@ object PlaybackStateMachine {
                     isBuffering = false,
                     statusCode = null,
                 ),
-                incident = null,
+                // A rebuffer inside probation does not end the incident.
+                incident = state.incident?.takeIf { it.probation },
             ),
         )
     }

@@ -307,6 +307,61 @@ class PlaybackRequirementsResolverTest {
         assertTrue(result is PlaybackResult.Failure)
     }
 
+    @Test
+    fun `requirements rejection reports which constraint left no engine or surface`() = runTest {
+        suspend fun rejectedBy(input: PlaybackRequirementsInput): GraphRejection {
+            val failure = (resolver.resolve(input) as PlaybackResult.Failure).failure
+            assertEquals(FailureCode.NO_ELIGIBLE_GRAPH, failure.code)
+            return requireNotNull(failure.graphRejection) { "NO_ELIGIBLE_GRAPH must say why" }
+        }
+
+        val noSurface = rejectedBy(input(budget = ResourceBudget(surfaceCost = ResourceAllowance.DISALLOWED)))
+        assertEquals(GraphRejectionReason.ENGINE_OR_SURFACE, noSurface.rejectedBy)
+        // Graphs were never built on this path, so there is no candidate count to report.
+        assertNull(noSurface.candidateGraphs)
+
+        val engineSurfaceMismatch = rejectedBy(
+            input(eligibleEngines = setOf(EngineType.LIBMPV), allowedSurfaceModes = setOf(SurfaceMode.SURFACE_VIEW)),
+        )
+        assertEquals(GraphRejectionReason.ENGINE_OR_SURFACE, engineSurfaceMismatch.rejectedBy)
+
+        val drmOnMpvOnly = rejectedBy(
+            input(summary = requestSummary(hasDrm = true), eligibleEngines = setOf(EngineType.LIBMPV)),
+        )
+        assertEquals(GraphRejectionReason.DRM_OR_SCHEME, drmOnMpvOnly.rejectedBy)
+
+        val rtmpOnMedia3Only = rejectedBy(
+            input(summary = requestSummary().copy(scheme = "rtmp"), eligibleEngines = setOf(EngineType.MEDIA3)),
+        )
+        assertEquals(GraphRejectionReason.DRM_OR_SCHEME, rtmpOnMedia3Only.rejectedBy)
+
+        val pinnedWithoutFallback = rejectedBy(
+            input(
+                preferences = PlaybackPreferences.recommended()
+                    .copy(engine = EnginePreference.LIBMPV, automaticFallback = false),
+                eligibleEngines = setOf(EngineType.MEDIA3),
+            ),
+        )
+        assertEquals(GraphRejectionReason.ENGINE_PREFERENCE, pinnedWithoutFallback.rejectedBy)
+    }
+
+    @Test
+    fun `requirements rejection carries the stream fact codes`() = runTest {
+        val failure = resolver.resolve(
+            input(
+                evidence = adaptiveHls.copy(
+                    videoCodec = EvidenceFact(VideoCodec.AVC, EvidenceProvenance.MANIFEST_CONFIRMED),
+                    dimensions = EvidenceFact(VideoDimensions(1280, 720), EvidenceProvenance.MANIFEST_CONFIRMED),
+                ),
+                budget = ResourceBudget(surfaceCost = ResourceAllowance.DISALLOWED),
+            ),
+        ) as PlaybackResult.Failure
+        assertEquals(
+            StreamFactCodes(StreamCodecCode.H264, StreamContainerCode.HLS, StreamHeightCode.HD, null),
+            failure.failure.graphRejection?.stream,
+        )
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `network budget ceiling must be positive when present`() {
         ResourceBudget(networkBitrateCeiling = 0)

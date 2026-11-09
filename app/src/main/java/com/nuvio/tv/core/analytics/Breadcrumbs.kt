@@ -44,8 +44,9 @@ object Breadcrumbs {
 
     /**
      * Call when playback has actually produced output (first frame), not when a source is
-     * merely resolving — startup failures are a different signal. The guide preview is the
-     * one deliberate exception; see its call site.
+     * merely resolving — startup failures are a different signal. Every surface, the guide
+     * preview included, now reports through [PlaybackBreadcrumbTracker], which pairs each start
+     * with exactly one [playbackStopped].
      */
     fun playbackStarted(kind: String, engine: String, surface: String, container: String, nowMs: Long) {
         // Every playback surface already routes through here, so this is the one place a Stalker

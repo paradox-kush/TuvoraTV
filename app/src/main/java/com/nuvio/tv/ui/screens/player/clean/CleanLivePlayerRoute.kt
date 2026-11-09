@@ -40,6 +40,7 @@ internal fun CleanLivePlayerRoute(
     val routeState by viewModel.routeState.collectAsStateWithLifecycle()
     val picture by viewModel.picture.collectAsStateWithLifecycle()
     val livePause by viewModel.livePause.collectAsStateWithLifecycle()
+    val report by viewModel.report.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context.findActivity()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -125,6 +126,11 @@ internal fun CleanLivePlayerRoute(
         livePause = livePause,
         onSeekInWindow = { positionMs -> if (!exitGate.isStarted()) viewModel.seekInLivePause(positionMs) },
         onGoLive = { if (!exitGate.isStarted()) viewModel.goLive() },
+        reportState = report,
+        onSendReport = { category, failureCode ->
+            if (!exitGate.isStarted()) viewModel.sendReport(category, failureCode)
+        },
+        onClearReport = viewModel::clearReport,
     )
 }
 

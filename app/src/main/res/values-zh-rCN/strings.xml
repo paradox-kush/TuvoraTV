@@ -572,8 +572,6 @@
     <string name="advanced_section_diagnostics">诊断</string>
     <string name="advanced_sentry_reports">Sentry 崩溃报告</string>
     <string name="advanced_sentry_reports_subtitle">发送包含安全上下文的崩溃和 ANR 报告。默认开启。</string>
-    <string name="advanced_playback_issue_reports">播放问题报告</string>
-    <string name="advanced_playback_issue_reports_subtitle">在播放期间、长时间加载和播放错误时显示报告按钮</string>
     <string name="advanced_player_stats_hud">播放统计覆盖层</string>
     <string name="advanced_player_stats_hud_subtitle">在流信息中显示一个按钮，用于在播放期间切换实时 CPU、内存、缓冲、比特率和温度读数</string>
     <string name="sentry_enable_dialog_title">开启崩溃报告？</string>

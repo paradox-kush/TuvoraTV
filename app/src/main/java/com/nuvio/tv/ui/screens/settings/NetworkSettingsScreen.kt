@@ -406,6 +406,7 @@ fun AdvancedSettingsContent(
     val networkListState = rememberLazyListState()
     var showExperienceModeConfirmation by remember { mutableStateOf(false) }
     var showSentryDialog by remember { mutableStateOf(false) }
+    val sentryToggleFocus = remember { FocusRequester() }
     Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         state = networkListState,
@@ -544,7 +545,7 @@ fun AdvancedSettingsContent(
             }
         }
 
-        item(key = "playback_issue_reports") {
+        item(key = "diagnostics_settings") {
             SettingsGroupCard(
                 modifier = Modifier.fillMaxWidth(),
                 title = stringResource(R.string.advanced_section_diagnostics)
@@ -553,6 +554,7 @@ fun AdvancedSettingsContent(
                     title = stringResource(R.string.advanced_sentry_reports),
                     subtitle = stringResource(R.string.advanced_sentry_reports_subtitle),
                     checked = uiState.sentryEnabled,
+                    modifier = Modifier.focusRequester(sentryToggleFocus),
                     onToggle = { showSentryDialog = true }
                 )
                 // Applied immediately with no confirmation dialog — see the ViewModel for why.
@@ -566,17 +568,9 @@ fun AdvancedSettingsContent(
                         )
                     }
                 )
-                SettingsToggleRow(
-                    title = stringResource(R.string.advanced_playback_issue_reports),
-                    subtitle = stringResource(R.string.advanced_playback_issue_reports_subtitle),
-                    checked = uiState.playbackIssueReportsEnabled,
-                    onToggle = {
-                        viewModel.onEvent(
-                            AdvancedSettingsEvent.SetPlaybackIssueReportsEnabled(
-                                !uiState.playbackIssueReportsEnabled
-                            )
-                        )
-                    }
+                SettingsReportSection(
+                    flow = viewModel.reportFlow,
+                    consentToggleFocusRequester = sentryToggleFocus
                 )
                 SettingsToggleRow(
                     title = stringResource(R.string.advanced_player_stats_hud),

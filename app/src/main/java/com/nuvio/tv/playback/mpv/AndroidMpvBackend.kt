@@ -77,6 +77,8 @@ internal data class MpvMetrics(
     val videoRendered: Long?,
     val videoSkipped: Long?,
     val videoDropped: Long?,
+    /** Counts changes of the audio clock; any change (even a backward jump) is audio advancing. Null if unknown. */
+    val audioProgress: Long? = null,
 )
 
 internal interface MpvBackend {
@@ -186,6 +188,12 @@ internal class AndroidMpvBackend(
     private var lastStreamPosition = -1L
     private var firstVideoFrameSent = false
     private var firstAudioSent = false
+
+    @Volatile private var audioProgress: Long? = null
+    @Volatile private var lastAudioPts: Double? = null
+
+    /** Set when the source is reset, until the next file starts: callbacks in between belong to the old file. */
+    @Volatile private var awaitingNewFile = false
     @Volatile private var terminalEventsSuppressed = false
     private var videoWidth = 0
     private var videoHeight = 0
@@ -467,6 +475,7 @@ internal class AndroidMpvBackend(
                 videoRendered = core.long(PRESENTED_VIDEO_FRAMES),
                 videoSkipped = core.long("decoder-frame-drop-count"),
                 videoDropped = core.long("frame-drop-count"),
+                audioProgress = audioProgress,
             ),
         )
     }
@@ -602,9 +611,14 @@ internal class AndroidMpvBackend(
     }
 
     override fun property(name: String, value: Double) {
+        val staleAudio = name == "audio-pts" && awaitingNewFile
+        if (name == "audio-pts" && value.isFinite() && !staleAudio && lastAudioPts != value) {
+            lastAudioPts = value
+            audioProgress = (audioProgress ?: 0L) + 1L
+        }
         scope.launch {
             if (terminalEventsSuppressed) return@launch
-            if (name == "audio-pts" && value.isFinite() && !firstAudioSent) {
+            if (name == "audio-pts" && value.isFinite() && !staleAudio && !firstAudioSent) {
                 firstAudioSent = true
                 _events.tryEmit(MpvBackendEvent.FirstAudio)
             }
@@ -669,7 +683,10 @@ internal class AndroidMpvBackend(
     override fun event(id: Int, data: MPVNode) {
         // Synchronous, on mpv's event thread: lines of the new load may arrive before the
         // launched handler runs, and a previous load's cause must never classify this one.
-        if (id == MPV_EVENT_START_FILE) loadEvidence = MpvLoadEvidence.NONE
+        if (id == MPV_EVENT_START_FILE) {
+            loadEvidence = MpvLoadEvidence.NONE
+            awaitingNewFile = false
+        }
         val evidence = if (id == MPV_EVENT_END_FILE) loadEvidence else MpvLoadEvidence.NONE
         scope.launch {
             if (terminalEventsSuppressed) return@launch
@@ -711,6 +728,9 @@ internal class AndroidMpvBackend(
         lastStreamPosition = -1L
         firstVideoFrameSent = false
         firstAudioSent = false
+        audioProgress = null
+        lastAudioPts = null
+        awaitingNewFile = true
         videoWidth = 0
         videoHeight = 0
         videoPixelAspect = 1f

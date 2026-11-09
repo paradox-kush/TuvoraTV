@@ -2,7 +2,6 @@ package com.nuvio.tv.ui.screens.player
 
 import android.util.Log
 import com.nuvio.tv.R
-import com.nuvio.tv.data.repository.PlaybackIssueErrorInput
 import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
 import kotlinx.coroutines.delay
@@ -254,15 +253,7 @@ internal fun PlayerRuntimeController.handleMpvPlaybackError(
             "MPV_PLAYBACK_ERROR: source=$source mpvErrorCode=$mpvErrorCode " +
                 "httpStatus=${mpvHttpStatusCodeFromLog()} detail=${detailedError.take(200)}"
         )
-        lastPlaybackIssueError = PlaybackIssueErrorInput(
-            displayMessage = detailedError,
-            errorCode = mpvErrorCode,
-            errorCodeName = mpvErrorCodeName(mpvErrorCode),
-            exceptionClass = "libmpv",
-            causeClass = source,
-            causeMessage = detailedError.takeIf { it.isNotBlank() },
-            httpStatus = mpvHttpStatusCodeFromLog()
-        )
+        lastPlaybackFailureCode = mpvErrorCodeName(mpvErrorCode)
         lastPlaybackDiagnosticsForReport =
             lastPlaybackDiagnosticsForReport.copy(result = "Error: $detailedError")
 

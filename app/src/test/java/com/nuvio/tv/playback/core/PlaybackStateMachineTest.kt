@@ -638,6 +638,73 @@ class PlaybackStateMachineTest {
         assertAction<PlaybackAction.ReleaseActiveWork>(escalated)
     }
 
+    private fun reconnectedState(): PlaybackMachineState {
+        val reconnecting = PlaybackStateMachine.reduce(
+            playingState(ContentType.LIVE),
+            PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF),
+        ).state
+        return PlaybackStateMachine.reduce(reconnecting, PlaybackEvent.FirstVideoFrame(1)).state
+    }
+
+    @Test
+    fun `a reconnect first frame keeps the incident open as probation`() {
+        val state = reconnectedState()
+
+        assertEquals(PlaybackState.PLAYING, state.snapshot.state)
+        assertFalse(state.snapshot.isReconnecting)
+        assertTrue("the incident survives the first frame", state.incident?.probation == true)
+        assertFalse("a new recovery may be issued", state.incident!!.recoveryIssued)
+    }
+
+    @Test
+    fun `a first frame that was not a reconnect closes nothing because nothing was open`() {
+        assertEquals(null, playingState(ContentType.LIVE).incident)
+        assertEquals(null, playingState(ContentType.VOD).incident)
+    }
+
+    @Test
+    fun `probation passing clears the incident`() {
+        val cleared = PlaybackStateMachine.reduce(
+            reconnectedState(),
+            PlaybackReducerInput.LiveProbationPassed(1),
+        ).state
+
+        assertEquals(null, cleared.incident)
+        assertEquals(PlaybackState.PLAYING, cleared.snapshot.state)
+    }
+
+    @Test
+    fun `a handoff eligible freeze during probation hands off`() {
+        val handoff = PlaybackStateMachine.reduce(
+            reconnectedState(),
+            PlaybackEvent.Failed(1, failure(Retryability.HANDOFF_ELIGIBLE)),
+        )
+
+        assertEquals(PlaybackState.HANDING_OFF_ONCE, handoff.state.snapshot.state)
+        assertEquals(AfterRelease.HANDOFF, handoff.state.afterRelease)
+        assertTrue(handoff.state.incident!!.handoffIssued)
+    }
+
+    @Test
+    fun `a retryable freeze during probation reconnects again instead of going terminal`() {
+        val again = PlaybackStateMachine.reduce(
+            reconnectedState(),
+            PlaybackEvent.Failed(1, failure(Retryability.RETRYABLE_WITH_FRESH_REQUEST)),
+        )
+
+        assertEquals(PlaybackState.LIVE_RECONNECTING, again.state.snapshot.state)
+        assertAction<PlaybackAction.StartLiveReconnectLoop>(again)
+    }
+
+    @Test
+    fun `a rebuffer during probation does not end the incident`() {
+        val state = reconnectedState()
+        val buffering = PlaybackStateMachine.reduce(state, PlaybackEvent.BufferingStarted(1)).state
+        val ready = PlaybackStateMachine.reduce(buffering, PlaybackEvent.BufferingEnded(1)).state
+
+        assertTrue(ready.incident?.probation == true)
+    }
+
     @Test
     fun `stopped and shutdown never reopen while error must use typed Failed event`() {
         listOf(PlaybackEndReason.STOPPED, PlaybackEndReason.SHUTDOWN).forEach { reason ->

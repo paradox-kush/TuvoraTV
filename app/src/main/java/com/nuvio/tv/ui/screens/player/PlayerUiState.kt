@@ -25,13 +25,6 @@ enum class PlayerExitReason {
     StillWatchingPrompt
 }
 
-enum class PlaybackIssueReportStatus {
-    Idle,
-    Sending,
-    Sent,
-    Failed
-}
-
 sealed interface PostPlayMode {
     val nextEpisode: NextEpisodeInfo
 
@@ -88,7 +81,6 @@ data class PlayerUiState(
     val playbackSpeed: Float = 1f,
     val loadingOverlayEnabled: Boolean = true,
     val showPlayerLoadingStatus: Boolean = false,
-    val playbackIssueReportsEnabled: Boolean = false,
     val showLoadingOverlay: Boolean = true,
     val loadingMessage: String? = null,
     val loadingProgress: Float? = null,
@@ -190,9 +182,7 @@ data class PlayerUiState(
     val showSwitchToMpvErrorAction: Boolean = false,
     /** Failed-start error (B214/B217) and a catch-up replay that never started: the error dialog offers Retry. */
     val showRetryErrorAction: Boolean = false,
-    val playbackIssueReportStatus: PlaybackIssueReportStatus = PlaybackIssueReportStatus.Idle,
-    val playbackIssueReportId: String? = null,
-    val playbackIssueReportError: String? = null,
+    val playbackReportState: PlaybackReportState = PlaybackReportState.Idle,
     val pendingSeekPosition: Long? = null, // For resuming from saved progress
     // Parental guide overlay
     val parentalWarnings: List<ParentalWarning> = emptyList(),

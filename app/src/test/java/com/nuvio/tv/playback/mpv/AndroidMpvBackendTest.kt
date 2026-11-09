@@ -421,6 +421,43 @@ class AndroidMpvBackendTest {
     }
 
     @Test
+    fun `a backward audio clock jump still counts as audio advancing`() = runTest {
+        val core = FakeCore()
+        val backend = backend(core)
+        assertSuccess(backend.attachSurface(FakeLease()))
+        assertSuccess(backend.start())
+        core.observer?.property("audio-pts", 10.0)
+        runCurrent()
+        val before = (backend.metrics() as PlaybackResult.Success).value.audioProgress
+        core.observer?.property("audio-pts", 2.0)
+        runCurrent()
+        val after = (backend.metrics() as PlaybackResult.Success).value.audioProgress
+
+        assertTrue("before=$before after=$after", before != null && after != null && after > before)
+    }
+
+    @Test
+    fun `an audio clock callback from the old file after a source stop is ignored`() = runTest {
+        val core = FakeCore()
+        val backend = backend(core)
+        assertSuccess(backend.attachSurface(FakeLease()))
+        assertSuccess(backend.start())
+        core.observer?.property("audio-pts", 5.0)
+        runCurrent()
+        val stopped = async { backend.stopSource() }
+        runCurrent()
+        core.observer?.event(7, MPVNode.MapNode(mapOf("reason" to MPVNode.StringNode("stop"))))
+        runCurrent()
+        assertSuccess(stopped.await())
+
+        core.observer?.property("audio-pts", 6.0) // late callback of the file that just ended
+        core.observer?.event(6, MPVNode.None) // START_FILE of the next load
+        runCurrent()
+
+        assertEquals(null, (backend.metrics() as PlaybackResult.Success).value.audioProgress)
+    }
+
+    @Test
     fun `selected track demux fps publishes a factual frame rate`() = runTest {
         val core = FakeCore()
         val backend = backend(core)

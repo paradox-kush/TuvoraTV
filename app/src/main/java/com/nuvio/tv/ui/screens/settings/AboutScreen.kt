@@ -7,6 +7,11 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -84,6 +90,7 @@ fun AboutSettingsContent(
     initialFocusRequester: FocusRequester? = null
 ) {
     val context = LocalContext.current
+    val supportCodeViewModel: SupportCodeViewModel = hiltViewModel()
     var qrLink by remember { mutableStateOf<AboutQrLink?>(null) }
     var lastQrOrigin by remember { mutableStateOf<FocusRequester?>(null) }
     val discordFocusRequester = remember { FocusRequester() }
@@ -149,6 +156,8 @@ fun AboutSettingsContent(
                 )
 
                 Spacer(modifier = Modifier.height(NuvioTheme.spacing.xxs))
+
+                SupportCodeRow(displayCode = supportCodeViewModel.displayCode)
 
                 if (AppFeaturePolicy.inAppUpdatesEnabled) {
                     val updateViewModel: UpdateViewModel = hiltViewModel(context as ComponentActivity)
@@ -234,5 +243,47 @@ fun AboutSettingsContent(
             }
             }
         }
+    }
+}
+
+/**
+ * Read-only support code: large `XXXX-XXXX` so it can be read off a TV from the couch. Focusable
+ * (like the rows around it, so D-pad scrolling never skips it) with the same focus border.
+ */
+@Composable
+private fun SupportCodeRow(displayCode: String) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(12.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) NuvioTheme.colors.FocusRing else NuvioTheme.colors.Border,
+                shape = shape
+            )
+            .focusable()
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.support_code_title),
+            style = MaterialTheme.typography.labelMedium,
+            color = NuvioTheme.colors.TextSecondary
+        )
+        Text(
+            text = displayCode,
+            style = MaterialTheme.typography.headlineLarge,
+            color = NuvioTheme.colors.TextPrimary,
+            letterSpacing = 4.sp
+        )
+        Text(
+            text = stringResource(R.string.support_code_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = NuvioTheme.colors.TextSecondary,
+            textAlign = TextAlign.Center
+        )
     }
 }
