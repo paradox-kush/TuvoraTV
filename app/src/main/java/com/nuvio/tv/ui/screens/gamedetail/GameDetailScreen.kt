@@ -53,7 +53,9 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.nuvio.tv.core.radar.RadarTime
 import com.nuvio.tv.core.sports.detail.Side
+import com.nuvio.tv.core.sports.detail.screen.ByPeriodFit
 import com.nuvio.tv.core.sports.detail.screen.FocusKey
+import com.nuvio.tv.core.sports.detail.screen.WatchCopy
 import com.nuvio.tv.core.sports.detail.screen.GameDetailFocus
 import com.nuvio.tv.core.sports.detail.screen.GameDetailTvModel
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiState
@@ -418,7 +420,17 @@ private fun SituationCard(model: GameDetailTvModel) {
             if (model.winChance != null) Spacer(Modifier.height(10.dp))
         }
         model.winChance?.let { w ->
-            if (model.situation == null) CardTitle(if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) "Win chance" else "Win probability")
+            val foot = listOfNotNull(w.caption, w.staleLabel).joinToString("  ·  ")
+            // With no situation line the card has a title row: the credit sits at its right end (one row less height,
+            // so By Period below keeps its team rows on the fixed-height canvas).
+            val footInTitle = model.situation == null
+            if (footInTitle) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text((if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) "Win chance" else "Win probability").uppercase(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.weight(1f))
+                    if (foot.isNotEmpty()) Text(foot, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             val home = model.sides.getOrNull(0)?.tvName.orEmpty(); val away = model.sides.getOrNull(1)?.tvName.orEmpty()
             Row(Modifier.fillMaxWidth()) {
                 Text("$home ${w.homePercent}%", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.Secondary, modifier = Modifier.weight(1f))
@@ -435,8 +447,7 @@ private fun SituationCard(model: GameDetailTvModel) {
                 Spacer(Modifier.height(8.dp))
                 Text(it, fontSize = 16.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            val foot = listOfNotNull(w.caption, w.staleLabel).joinToString("  ·  ")
-            if (foot.isNotEmpty()) {
+            if (!footInTitle && foot.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 Text(foot, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -452,27 +463,36 @@ private fun ByPeriodCard(t: TvLinescore, modifier: Modifier) {
         t.columns.firstOrNull()?.all { it.isDigit() } == true -> "By inning"
         else -> "Score"
     }
-    Card(modifier) {
-        CardTitle(title)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.SpaceEvenly) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Spacer(Modifier.width(150.dp))
-                t.columns.forEachIndexed { i, c -> PeriodCell(c, header = true, current = i == t.currentIndex, strong = false) }
-                t.totalLabel?.let { Text(it, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextSecondary, textAlign = TextAlign.Center, modifier = Modifier.width(64.dp)) }
-            }
-            t.rows.forEach { r ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.width(150.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Badge(r.badgeUrl, r.label, 30.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Text(r.label, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 1)
+    // The left column is a fixed height: measure what is left and degrade (ByPeriodFit) instead of clipping a team row.
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier.fillMaxWidth()) {
+        val fit = ByPeriodFit.layout(maxHeight.value.toInt(), t.rows.size) ?: return@BoxWithConstraints
+        val roomy = fit.rowDp >= 30
+        Card(Modifier.fillMaxSize()) {
+            if (fit.titleRow) CardTitle(title)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.SpaceEvenly) {
+                if (fit.header) Row(Modifier.fillMaxWidth().height(ByPeriodFit.HEADER_DP.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(150.dp)) {
+                        // Folded title: the header row's empty label column carries it.
+                        if (!fit.titleRow) Text(title.uppercase(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1)
                     }
-                    r.cells.forEachIndexed { i, c -> PeriodCell(c, header = false, current = i == t.currentIndex, strong = false) }
-                    r.total?.let {
-                        Text(
-                            it, fontSize = if (r.leading) 28.sp else 25.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                            color = if (r.leading) NuvioTheme.colors.Secondary else NuvioTheme.colors.TextPrimary, modifier = Modifier.width(64.dp),
-                        )
+                    t.columns.forEachIndexed { i, c -> PeriodCell(c, header = true, current = i == t.currentIndex, strong = false) }
+                    t.totalLabel?.let { Text(it, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextSecondary, textAlign = TextAlign.Center, modifier = Modifier.width(64.dp)) }
+                }
+                t.rows.forEach { r ->
+                    Row(Modifier.fillMaxWidth().height(fit.rowDp.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.width(150.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Badge(r.badgeUrl, r.label, if (roomy) 30.dp else (fit.rowDp - 2).dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text(r.label, fontSize = if (roomy) 19.sp else 16.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 1)
+                        }
+                        r.cells.forEachIndexed { i, c -> PeriodCell(c, header = false, current = i == t.currentIndex, strong = false, small = !roomy) }
+                        r.total?.let {
+                            Text(
+                                it, fontSize = if (roomy) (if (r.leading) 28.sp else 25.sp) else (if (r.leading) 20.sp else 18.sp),
+                                fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 1,
+                                color = if (r.leading) NuvioTheme.colors.Secondary else NuvioTheme.colors.TextPrimary, modifier = Modifier.width(64.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -481,14 +501,14 @@ private fun ByPeriodCard(t: TvLinescore, modifier: Modifier) {
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.PeriodCell(text: String, header: Boolean, current: Boolean, strong: Boolean) {
+private fun androidx.compose.foundation.layout.RowScope.PeriodCell(text: String, header: Boolean, current: Boolean, strong: Boolean, small: Boolean = false) {
     Box(
         Modifier.weight(1f).padding(horizontal = 3.dp).clip(RoundedCornerShape(6.dp))
             .background(if (current) NuvioTheme.colors.Secondary.copy(alpha = 0.18f) else Color.Transparent).padding(vertical = 1.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text, fontSize = if (header) 14.sp else 20.sp, fontWeight = if (header || current || strong) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center,
+            text, fontSize = if (header) 14.sp else if (small) 17.sp else 20.sp, maxLines = 1, fontWeight = if (header || current || strong) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center,
             color = when { current -> NuvioTheme.colors.Secondary; header -> NuvioTheme.colors.TextSecondary; else -> NuvioTheme.colors.TextPrimary },
         )
     }
@@ -714,13 +734,8 @@ private fun SourceRow(
     val longStatus = status.length > 38
     Card {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            when (val p = watch.primary) {
-                is PrimaryAction.Play -> TvButton("▶  Play ${p.channel.name}", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary, Modifier.weight(1f, fill = false))
-                is PrimaryAction.Switch -> TvButton("⇄  Switch to ${p.channel.name}", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary, Modifier.weight(1f, fill = false))
-                PrimaryAction.AddProvider -> TvButton("Add IPTV provider", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary, Modifier.weight(1f, fill = false))
-                is PrimaryAction.Replay -> TvButton("↩  Watch replay", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary, Modifier.weight(1f, fill = false))
-                is PrimaryAction.Rematch -> TvButton(if (p.failed) "Retry" else "Find channels", true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary, Modifier.weight(1f, fill = false))
-                PrimaryAction.None -> Unit
+            WatchCopy.primaryLabel(watch.primary)?.let { label ->
+                TvButton(label, true, requesters.getValue(FocusKey.PRIMARY), { onFocused(FocusKey.PRIMARY) }, onPrimary, Modifier.weight(1f, fill = false))
             }
             if (watch.showChannels) {
                 TvButton(
@@ -742,15 +757,7 @@ private fun StatusText(text: String, modifier: Modifier) {
     Text(text, fontSize = 14.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = modifier)
 }
 
-private fun watchStatusLine(w: WatchUi): String = when (w.status) {
-    WatchStatus.FINDING -> if (w.mode == WatchMode.WATCHING && w.currentChannelName != null) "Watching ${w.currentChannelName} · finding channels…" else "Finding channels…"
-    WatchStatus.READY -> if (w.primary is PrimaryAction.Replay) "Replay from kick-off on ${(w.primary as PrimaryAction.Replay).channel.name}" else if (w.mode == WatchMode.WATCHING) "Watching ${w.currentChannelName ?: "a channel"}" else "Found on your channels"
-    WatchStatus.ALREADY_ON_IT -> "Watching this game on ${w.currentChannelName ?: "this channel"}"
-    WatchStatus.NO_CHANNELS -> "None of your channels list this game yet. Find channels searches your playlists."
-    WatchStatus.HIDDEN -> ""
-    WatchStatus.FAILED -> "Couldn't check your channels"
-    WatchStatus.NO_PROVIDER -> "Add an IPTV playlist to watch this game"
-}
+private fun watchStatusLine(w: WatchUi): String = WatchCopy.statusLine(w)
 
 /**
  * The app's TV focus vocabulary: theme focus ring + scale ([NuvioTheme.focus]) + a brightened fill. The primary action
