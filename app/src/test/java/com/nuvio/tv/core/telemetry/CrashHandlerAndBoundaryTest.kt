@@ -68,6 +68,9 @@ class CrashHandlerAndBoundaryTest {
             "LivePlaybackTelemetry.kt", "SportsHubViewModel.kt", "ProviderSetupRepository.kt", "DeviceClaimCoordinator.kt",
             "BoundedLoad.kt", "XtreamTmdbResolver.kt", "EpgTelemetry.kt", "Breadcrumbs.kt", "AudioOutputTelemetry.kt",
             "LivePlaybackFreezeReporter.kt", "AppExitReporter.kt", "PlaybackDiagnosticsAdapter.kt", "SimklLibraryService.kt",
+            // Sports game screen (merged 11-08): closed vocabulary only - sport/block/source/outcome/duration, and a
+            // preview failure reason code. Never a URL, host, channel or team name.
+            "SportsDetailTelemetry.kt", "GameDetailViewModel.kt",
         )
         assertEquals("a new direct PostHog call site appeared", known, sites)
     }
