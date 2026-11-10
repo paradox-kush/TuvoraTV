@@ -164,16 +164,7 @@ data class RadarFixture(
         }
 
     /** "Round of 32" style label from TheSportsDB's intRound conventions, or null. */
-    val roundLabel: String?
-        get() = when (round?.trim()) {
-            null, "", "0" -> null
-            "125" -> "Quarter-final"
-            "150" -> "Semi-final"
-            "160" -> "Third place"
-            "200" -> "Final"
-            "500" -> "Play-off"
-            else -> "Round $round"
-        }
+    val roundLabel: String? get() = radarRoundLabel(round)
 
     /** "2 – 1" when the API has a result for this fixture (finished/in-play), else null. */
     val scoreLabel: String?
@@ -406,4 +397,15 @@ private fun daysFromCivil(year: Int, month: Int, day: Int): Long {
     val doy = (153 * (if (month > 2) month - 3 else month + 9) + 2) / 5 + day - 1
     val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
     return era * 146097L + doe - 719468L
+}
+
+/** TheSportsDB intRound → display label; null for blank/"0" (the provider default). */
+fun radarRoundLabel(round: String?): String? = when (round?.trim()) {
+    null, "", "0" -> null
+    "125" -> "Quarter-final"
+    "150" -> "Semi-final"
+    "160" -> "Third place"
+    "200" -> "Final"
+    "500" -> "Play-off"
+    else -> "Round ${round.trim()}"
 }
