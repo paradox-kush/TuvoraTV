@@ -25,8 +25,10 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -205,6 +207,10 @@ internal class AndroidMpvBackend(
     private var bufferedDurationMs = 0L
     private var seekable = false
     private var cacheRanges: List<MpvCacheRange> = emptyList()
+
+    /** Open coalescing window for steady timeline ticks; see [timelineTicked]. Native lane only. */
+    private var timelineWindow: Job? = null
+    private var timelineDirty = false
     private var trackRevision = 0L
     private var trackReferences: Map<PlaybackTrackId, MpvTrackReference> = emptyMap()
     private var restorationApplied = false
@@ -625,15 +631,15 @@ internal class AndroidMpvBackend(
             when (name) {
                 "time-pos" -> {
                     positionMs = (value * 1_000).toLong().coerceAtLeast(0)
-                    emitTimelineFacts()
+                    timelineTicked()
                 }
                 "duration" -> {
                     durationMs = (value * 1_000).toLong().takeIf { it >= 0 }
-                    emitTimelineFacts()
+                    timelineTicked()
                 }
                 "demuxer-cache-duration" -> {
                     bufferedDurationMs = (value * 1_000).toLong().coerceAtLeast(0)
-                    emitTimelineFacts()
+                    timelineTicked()
                 }
                 "video-params/par" -> if (value.isFinite() && value > 0.0) {
                     videoPixelAspect = value.toFloat()
@@ -665,7 +671,7 @@ internal class AndroidMpvBackend(
             scope.launch {
                 if (terminalEventsSuppressed) return@launch
                 cacheRanges = ranges
-                emitTimelineFacts()
+                timelineTicked()
             }
             return
         }
@@ -735,6 +741,9 @@ internal class AndroidMpvBackend(
         videoHeight = 0
         videoPixelAspect = 1f
         lastVideoFrameRate = null
+        timelineWindow?.cancel()
+        timelineWindow = null
+        timelineDirty = false
         positionMs = 0
         durationMs = null
         bufferedDurationMs = 0
@@ -804,6 +813,30 @@ internal class AndroidMpvBackend(
                 lastVideoFrameRate = frameRate
                 _events.tryEmit(MpvBackendEvent.VideoFrameRateChanged(frameRate))
             }
+    }
+
+    /**
+     * Steady timeline movement: mpv reports `time-pos` on every video frame and moves the cache
+     * window and (on live) the duration with it. Published per frame, that stream kept the main
+     * thread ~46% busy on a 2 GB box, so it is coalesced to the pace Media3 already reports at:
+     * the first tick publishes at once, later ticks inside the window publish once when it closes
+     * (so the newest facts are never lost), and an idle timeline publishes nothing. Discrete changes
+     * (a seek, `seekable`) call [emitTimelineFacts] directly and are never delayed.
+     */
+    private fun timelineTicked() {
+        if (timelineWindow?.isActive == true) {
+            timelineDirty = true
+            return
+        }
+        emitTimelineFacts()
+        timelineWindow = scope.launch {
+            do {
+                delay(TIMELINE_FACT_INTERVAL_MS)
+                val flush = timelineDirty && !terminalEventsSuppressed
+                timelineDirty = false
+                if (flush) emitTimelineFacts()
+            } while (flush)
+        }
     }
 
     private fun emitTimelineFacts() {
@@ -919,6 +952,9 @@ internal class AndroidMpvBackend(
     private companion object {
         const val PRESENTED_VIDEO_FRAMES = "presented-video-frame-count"
         const val BYTE_PROGRESS_STEP = 256L * 1_024L
+
+        /** Same pace as the Media3 backend's timeline facts, which every snapshot consumer is built for. */
+        const val TIMELINE_FACT_INTERVAL_MS = 500L
         const val SOURCE_STOP_TIMEOUT_MS = 3_000L
 
         /** How long hard abort waits on an in-flight graceful teardown before forcing death. */

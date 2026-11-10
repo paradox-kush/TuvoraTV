@@ -20,6 +20,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -523,6 +524,66 @@ class AndroidMpvBackendTest {
             parseMpvTracks(trackList(selectedFrameRate = null, estimatedFrameRate = 60.0))
                 .selectedVideoFrameRate,
         )
+    }
+
+    /**
+     * mpv reports `time-pos` on every video frame; Media3 reports its timeline every 500 ms and every
+     * snapshot consumer (guide, fullscreen player, media session) is built for that pace. On the Onn the
+     * per-frame stream kept the main thread ~46% busy.
+     */
+    @Test
+    fun `per-frame timeline ticks are coalesced to the shared timeline pace`() = runTest {
+        val core = FakeCore()
+        val backend = backend(core)
+        assertSuccess(backend.attachSurface(FakeLease()))
+        val seen = mutableListOf<MpvBackendEvent.TimelineUpdated>()
+        val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+            backend.events.collect { if (it is MpvBackendEvent.TimelineUpdated) seen += it }
+        }
+
+        core.observer?.property("time-pos", 1.0)
+        runCurrent()
+        assertEquals("the first tick publishes at once", 1, seen.size)
+
+        repeat(20) { frame ->
+            core.observer?.property("time-pos", 1.0 + (frame + 1) * 0.02)
+            core.observer?.property("demuxer-cache-duration", 4.0 + frame)
+            core.observer?.property("duration", 60.0 + frame)
+            runCurrent()
+        }
+        assertEquals("ticks inside the window publish nothing", 1, seen.size)
+
+        advanceTimeBy(501)
+        runCurrent()
+        assertEquals("the window closes with one publish", 2, seen.size)
+        assertEquals("and it carries the newest position", 1_400L, seen.last().facts.positionMs)
+
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals("an idle timeline publishes nothing", 2, seen.size)
+        collector.cancel()
+    }
+
+    @Test
+    fun `a seek publishes its position at once inside the coalescing window`() = runTest {
+        val core = FakeCore()
+        val backend = backend(core)
+        assertSuccess(backend.attachSurface(FakeLease()))
+        assertSuccess(backend.start())
+        val seen = mutableListOf<MpvBackendEvent.TimelineUpdated>()
+        val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+            backend.events.collect { if (it is MpvBackendEvent.TimelineUpdated) seen += it }
+        }
+        core.observer?.property("time-pos", 1.0)
+        runCurrent()
+        val before = seen.size
+
+        val seek = async { backend.seekTo(30_000L) }
+        runCurrent()
+        assertSuccess(seek.await())
+        assertEquals(before + 1, seen.size)
+        assertEquals(30_000L, seen.last().facts.positionMs)
+        collector.cancel()
     }
 
     private fun TestScope.backend(
