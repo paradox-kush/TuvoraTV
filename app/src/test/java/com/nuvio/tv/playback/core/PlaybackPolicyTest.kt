@@ -342,6 +342,46 @@ class PlaybackPolicyTest {
         assertEquals(mpvRender, selection.selectedGraph())
     }
 
+    // Field regression (Onn support code 8YSK95Q6, 96 users in 30 days): Media3 refused a live tune
+    // (audio processing it cannot apply), the handoff then dropped mpv render (no GPU budget for live)
+    // and mpv direct (FULL subtitle fidelity), so every channel failed with "This device cannot play
+    // this stream". Video is priority, subtitles best-effort: the fidelity filter may rank, never empty.
+    @Test
+    fun `live handoff keeps direct mpv when full subtitle fidelity would leave nothing playable`() {
+        val selection = policy.selectHandoff(
+            requirements = requirements(
+                profile = SessionProfile.FULLSCREEN,
+                subtitlesEnabled = true,
+                subtitleFidelity = SubtitleFidelity.FULL,
+                gpuRenderingAllowed = false,
+                liveContent = true,
+            ),
+            candidates = listOf(media3, mpvDirect, mpvRender),
+            failedGraph = media3,
+        )
+
+        assertEquals(mpvDirect, selection.selectedGraph())
+    }
+
+    @Test
+    fun `full subtitle fidelity never empties primary selection`() {
+        val selection = policy.selectPrimary(
+            PlaybackPolicy.SelectionInput(
+                requirements(
+                    preferredEngineOrder = listOf(EngineType.LIBMPV),
+                    eligibleEngines = setOf(EngineType.LIBMPV),
+                    subtitlesEnabled = true,
+                    subtitleFidelity = SubtitleFidelity.FULL,
+                    gpuRenderingAllowed = false,
+                    liveContent = true,
+                ),
+                listOf(mpvDirect, mpvRender),
+            ),
+        )
+
+        assertEquals(mpvDirect, selection.selectedGraph())
+    }
+
     @Test
     fun `GPU budget can make render-only fallback ineligible`() {
         val selection = policy.selectPrimary(

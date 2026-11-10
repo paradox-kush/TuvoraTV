@@ -223,13 +223,19 @@ class MpvAdapterPlanTest {
         assertEquals(MpvDnsMode.SYSTEM, plan.dnsMode)
     }
 
+    // Selection (PlaybackPolicy) is the only authority on subtitle fidelity: it picks direct with
+    // FULL fidelity only when no render graph survived. Vetoing it here again turned that last
+    // playable graph into "This device cannot play this stream" (Onn 8YSK95Q6).
     @Test
-    fun `direct rejects full-fidelity subtitles and software decode`() {
-        assertTrue(
-            MpvAdapterPlanFactory.create(
-                start(graph = graph(GraphOutputProfile.MPV_DIRECT, DecoderMode.HARDWARE)),
-            ) is PlaybackResult.Failure,
-        )
+    fun `direct admits full-fidelity subtitles once selection chose it and disables subtitle decode`() {
+        val plan = plan(start(graph = graph(GraphOutputProfile.MPV_DIRECT, DecoderMode.HARDWARE)))
+
+        assertEquals("mediacodec_embed", plan.preInitOptions["vo"])
+        assertEquals("no", plan.preInitOptions["sid"])
+    }
+
+    @Test
+    fun `direct rejects software decode`() {
         assertTrue(
             MpvAdapterPlanFactory.create(
                 start(

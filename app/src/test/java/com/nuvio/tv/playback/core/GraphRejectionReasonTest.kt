@@ -112,13 +112,17 @@ class GraphRejectionReasonTest {
         assertEquals(GraphRejectionReason.GPU_RENDER, rejection.rejectedBy)
     }
 
+    // Was "reported as SUBTITLE_FIDELITY": that rejection WAS the field bug (Onn 8YSK95Q6) — every
+    // live channel failed. Subtitle fidelity is a soft filter now: it may rank, never reject.
     @Test
-    fun `full subtitle fidelity with only direct output is reported as SUBTITLE_FIDELITY`() {
-        val rejection = reject(
-            requirements(subtitlesEnabled = true, subtitleFidelity = SubtitleFidelity.FULL),
-            listOf(mpvDirect),
+    fun `full subtitle fidelity with only direct output still plays direct`() {
+        val selection = policy.selectPrimary(
+            PlaybackPolicy.SelectionInput(
+                requirements(subtitlesEnabled = true, subtitleFidelity = SubtitleFidelity.FULL),
+                listOf(mpvDirect),
+            ),
         )
-        assertEquals(GraphRejectionReason.SUBTITLE_FIDELITY, rejection.rejectedBy)
+        assertEquals(mpvDirect, (selection as PlaybackPolicy.Selection.Selected).graph)
     }
 
     @Test

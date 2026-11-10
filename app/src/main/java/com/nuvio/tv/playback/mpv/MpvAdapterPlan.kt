@@ -18,7 +18,6 @@ import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.ProxyMode
 import com.nuvio.tv.playback.core.RedirectPolicy
 import com.nuvio.tv.playback.core.Retryability
-import com.nuvio.tv.playback.core.SubtitleFidelity
 import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.core.TransientLoadRetryPolicy
 import com.nuvio.tv.playback.core.VodRestorationCheckpoint
@@ -91,14 +90,11 @@ internal object MpvAdapterPlanFactory {
             return unsupported(FailureCode.NO_ELIGIBLE_GRAPH)
         }
         // Product decision (2026-08-28): video is priority, subtitles are best-effort. Direct
-        // render (mediacodec_embed) cannot draw subtitles; COMPATIBLE fidelity accepts that and
-        // keeps the 1.5.8 direct live path. Only an explicit FULL fidelity demand excludes the
-        // direct graph — mirroring PlaybackPolicy's selection filter exactly, so a graph the
-        // policy selects is never vetoed here.
+        // render (mediacodec_embed) cannot draw subtitles. Subtitle fidelity is decided only by
+        // PlaybackPolicy's selection, which picks direct under FULL fidelity just when no render
+        // graph survived — so a graph the policy selects is never vetoed here (Onn 8YSK95Q6).
         if (graph.outputProfile == GraphOutputProfile.MPV_DIRECT &&
-            (graph.decoderMode == DecoderMode.SOFTWARE ||
-                (requirements.subtitlesEnabled &&
-                    requirements.subtitleFidelity == SubtitleFidelity.FULL))
+            graph.decoderMode == DecoderMode.SOFTWARE
         ) {
             return unsupported(FailureCode.NO_ELIGIBLE_GRAPH)
         }

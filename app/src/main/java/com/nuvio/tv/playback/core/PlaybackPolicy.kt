@@ -333,6 +333,10 @@ class PlaybackPolicy(
         for ((reason, keep) in filters) {
             if (remaining.isEmpty()) break
             val kept = remaining.filter(keep)
+            // Video is priority, subtitles best-effort (owner decision 2026-08-28): subtitle fidelity
+            // may steer the choice, never leave nothing to play. Without this, FULL fidelity on a box
+            // with no GPU render budget failed every live channel (Onn 8YSK95Q6, 96 users / 30 days).
+            if (reason in SOFT_FILTERS && kept.isEmpty()) continue
             val removed = remaining.size - kept.size
             if (removed > 0) {
                 removedBy[reason] = (removedBy[reason] ?: 0) + removed
@@ -436,6 +440,8 @@ class PlaybackPolicy(
 
     private companion object {
         val DEFAULT_ENGINE_ORDER = listOf(EngineType.MEDIA3, EngineType.LIBMPV)
+        /** Preferences that rank graphs but must never be the reason nothing plays. */
+        val SOFT_FILTERS = setOf(GraphRejectionReason.SUBTITLE_FIDELITY)
         val RECONNECT_DELAYS_MS = longArrayOf(0L, 1_000L, 2_000L, 5_000L, 10_000L, 20_000L)
     }
 }
