@@ -821,10 +821,19 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         // The guide renders presentation/target only; live position ticks (500ms) embedded in
         // Ready defeated StateFlow equality and recomposed the whole (already main-thread-bound)
         // guide at 2Hz for zero visual change. The published snapshot is tick-stable; rendered-
-        // frame evidence below still consumes the raw snapshot.
+        // frame evidence below still consumes the raw snapshot. mpv reports time-pos every frame
+        // and moves its live cache window (seekable start/end, duration) with it, so every
+        // timeline field is cleared, not just position — the guide reads none of them (live
+        // pause has its own flow).
         mutableState.value = CleanLiveGuidePlaybackState.Ready(
             target = target,
-            snapshot = snapshot.copy(positionMs = 0L, bufferedPositionMs = 0L),
+            snapshot = snapshot.copy(
+                positionMs = 0L,
+                bufferedPositionMs = 0L,
+                durationMs = null,
+                seekableStartMs = null,
+                seekableEndMs = null,
+            ),
             presentation = LivePlaybackUiPresenter.present(snapshot),
             sessionProfile = sessionProfile,
         )

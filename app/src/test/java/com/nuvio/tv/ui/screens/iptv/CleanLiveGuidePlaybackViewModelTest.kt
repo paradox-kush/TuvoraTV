@@ -205,6 +205,40 @@ class CleanLiveGuidePlaybackViewModelTest {
     }
 
     @Test
+    fun `mpv timeline ticks never republish the guide state`() = runTest {
+        // mpv reports time-pos every frame and its live cache window moves with it. The guide
+        // recomposes on every distinct Ready, so a per-frame timeline field there redrew the
+        // whole guide 25-60 times a second on a 2 GB Onn (1.20.1, docked preview on mpv).
+        val fixture = fixture()
+        fixture.viewModel.attach(
+            fixture.initial.contentId,
+            fixture.activity,
+            fixture.lifecycle,
+            fixture.owner,
+        )
+        fixture.firstHost.snapshotFlow.value = fixture.firstHost.snapshotFlow.value.copy(
+            state = PlaybackState.PLAYING,
+            isPlaying = true,
+            playWhenReady = true,
+        )
+        advanceUntilIdle()
+        val settled = fixture.viewModel.state.value
+
+        for (tick in 1..5) {
+            fixture.firstHost.snapshotFlow.value = fixture.firstHost.snapshotFlow.value.copy(
+                positionMs = tick * 40L,
+                bufferedPositionMs = tick * 40L + 3_000L,
+                durationMs = tick * 40L + 3_000L,
+                seekableStartMs = tick * 40L - 30_000L,
+                seekableEndMs = tick * 40L + 3_000L,
+            )
+            advanceUntilIdle()
+            assertEquals(settled, fixture.viewModel.state.value)
+        }
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
     fun `superseding generation is never attributed to the prior target`() = runTest {
         val fixture = fixture()
         fixture.viewModel.attach(
