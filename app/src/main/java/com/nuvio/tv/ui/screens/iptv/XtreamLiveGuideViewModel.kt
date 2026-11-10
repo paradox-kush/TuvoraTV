@@ -393,6 +393,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private var categoriesJob: Job? = null
     private var channelsJob: Job? = null
     private var epgFocusJob: Job? = null
+    /** A category under focus is shown once focus rests on it, not on every row passed. */
+    private val categorySettler = GuideCategorySettler(viewModelScope) { selectCategory(it) }
     /** The latest "rows follow the window" read; a newer travel step cancels the older one. */
     private var windowPublishJob: Job? = null
     private val epgRequested = mutableSetOf<Int>()
@@ -674,6 +676,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             channelsJob = null
             epgFocusJob?.cancel()
             epgFocusJob = null
+            categorySettler.cancel()
         }
         account = acc
         // Warm this account's OWN whole guide (xmltv.php), so the store rung has something to serve
@@ -839,6 +842,13 @@ class XtreamLiveGuideViewModel @Inject constructor(
      *  (Favorites/Recent/All channels) are always shown. */
     private fun filteredCategories(acc: XtreamAccount, full: List<GuideCategory>): List<GuideCategory> =
         full.filter { it.special != null || acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.id) }
+
+    /** A category row took D-pad focus. See [GuideCategorySettlePolicy]. */
+    fun onCategoryFocused(categoryId: String?) =
+        categorySettler.focus(categoryId, _uiState.value.selectedCategoryId)
+
+    /** The viewer is entering the focused category (RIGHT / OK): show it without the settle wait. */
+    fun commitFocusedCategory() = categorySettler.commitNow()
 
     fun selectCategory(categoryId: String?, force: Boolean = false) {
         val acc = account ?: return

@@ -597,7 +597,8 @@ fun LiveGuide(
                         rightFocus = channelListFocus,
                         // First category routes UP back to the active tab so the tabs stay reachable.
                         upFocus = if (index == 0) selectedTabRequester else null,
-                        onFocused = { viewModel.selectCategory(cat.id) },
+                        onFocused = { viewModel.onCategoryFocused(cat.id) },
+                        onEnter = viewModel::commitFocusedCategory,
                         // F02: MENU on a provider category offers to hide it (Favorites/Recent/All can't be hidden).
                         onMenu = if (cat.special == null) { { viewModel.hideCategory(cat) } } else null,
                         // F01: OK on "Search" opens the keyboard (focus alone never does).
@@ -1299,6 +1300,7 @@ private fun GuideCategoryRow(
     rightFocus: FocusRequester,
     upFocus: FocusRequester? = null,
     onFocused: () -> Unit,
+    onEnter: () -> Unit,
     onMenu: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
 ) {
@@ -1330,17 +1332,20 @@ private fun GuideCategoryRow(
             // focus selects via the LaunchedEffect above. Matches GuideChannelRow.
             .onFocusChanged { focused = it.isFocused }
             .onPreviewKeyEvent { event ->
+                // Focus shows a category only once it settles (GuideCategorySettlePolicy); RIGHT
+                // enters it, so it must be on screen before focus crosses into the channel list.
+                if (event.key == Key.DirectionRight && event.type == KeyEventType.KeyDown) onEnter()
                 if (onMenu == null || event.key != Key.Menu) return@onPreviewKeyEvent false
                 if (event.type == KeyEventType.KeyDown) onMenu()
                 true
             }
-            // OK enters the category, the same as RIGHT. Selection already happened on focus, so
-            // re-running it was a no-op — pressing OK on a category appeared to do nothing at all.
+            // OK enters the category, the same as RIGHT, and like RIGHT it does not wait for the
+            // settle delay.
             .clickable {
+                onEnter()
                 if (onClick != null) {
                     onClick()
                 } else {
-                    latestOnFocused()
                     runCatching { rightFocus.requestFocus() }
                 }
             }
