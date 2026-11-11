@@ -85,7 +85,9 @@ class TraktProgressService @Inject constructor(
     private val layoutPreferenceDataStore: com.nuvio.tv.data.local.LayoutPreferenceDataStore,
     private val traktEpisodeMappingService: TraktEpisodeMappingService,
     private val profileManager: ProfileManager,
-    private val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder
+    private val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder,
+    private val appForeground: com.nuvio.tv.core.lifecycle.AppForegroundTracker =
+        com.nuvio.tv.core.lifecycle.AppForegroundTracker().also { it.onActivityStarted() }
 ) {
     companion object {
         private const val TAG = "TraktProgressSvc"
@@ -1015,7 +1017,16 @@ class TraktProgressService @Inject constructor(
     private fun refreshTicker(): Flow<Unit> = flow {
         while (true) {
             delay(refreshIntervalMs)
-            emit(Unit)
+            // No account or no visible app: no request at all (B219). The signal-driven refreshes and the
+            // first fetch are separate flows and are unaffected.
+            val connected = try {
+                traktAuthService.getCurrentAuthState().isAuthenticated
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+            if (TraktRefreshTickPolicy.shouldTick(connected, appForeground.isForeground.value)) emit(Unit)
         }
     }
 

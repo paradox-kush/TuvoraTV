@@ -563,6 +563,9 @@ class AccountViewModel @Inject constructor(
         val compactRaw = raw.lineSequence().firstOrNull()?.trim().orEmpty()
         Log.w("AccountViewModel", "Raw error: $compactRaw")
 
+        // Type first: a DNS/timeout/TLS failure must not be re-read from its message text (B220).
+        AccountErrorMapper.networkResId(e)?.let { return context.getString(it) }
+
         val resId = when {
             // PIN errors (from PG RAISE EXCEPTION or any wrapper)
             message.contains("incorrect pin") || message.contains("invalid pin") || message.contains("wrong pin") -> R.string.account_error_incorrect_pin
@@ -607,8 +610,8 @@ class AccountViewModel @Inject constructor(
             message.contains("404") || message.contains("could not find") -> R.string.account_error_service_unavailable
             message.contains("400") || message.contains("bad request") -> R.string.account_error_invalid_request
 
-            // Fallback
-            else -> R.string.account_error_unexpected
+            // Fallback: HTTP status of a REST failure, then the generic message
+            else -> AccountErrorMapper.statusResId(e) ?: R.string.account_error_unexpected
         }
         return context.getString(resId)
     }

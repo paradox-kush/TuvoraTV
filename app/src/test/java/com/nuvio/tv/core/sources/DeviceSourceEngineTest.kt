@@ -389,4 +389,66 @@ class DeviceSourceEngineTest {
         runCurrent()
         assertTrue("proceeds as soon as sign-in settles", second.await())
     }
+
+    // B188: a sign-in failure and a timeout used to read the same ("Could not reach your account"), and one 12 s
+    // timeout wrapped every call, so slow-but-working calls added up to a false timeout.
+    private fun engineFailingWith(error: Exception): DeviceSourceEngine {
+        val memory = cached()
+        return DeviceSourceEngine(memory, { _, _ -> throw error }, { "id" }, { "secret" }, { 1_000L }, "android")
+    }
+
+    @Test fun signedOutIsNotReportedAsUnreachable() = runTest {
+        for (code in listOf(401, 403)) {
+            val device = engineFailingWith(com.nuvio.tv.ui.screens.account.restException(code))
+            device.refresh(1)
+            assertEquals("HTTP $code", DeviceSourceFailure.SIGNED_OUT, device.state.value.failure)
+        }
+    }
+
+    @Test fun anOrdinaryNetworkErrorIsStillUnreachable() = runTest {
+        val device = engineFailingWith(java.io.IOException("connection lost"))
+        device.refresh(1)
+        assertEquals(DeviceSourceFailure.UNREACHABLE, device.state.value.failure)
+    }
+
+    @Test fun aSlowCallIsReportedAsATimeoutNotAsUnreachable() = runTest {
+        val device = DeviceSourceEngine(cached(), { _, _ -> kotlinx.coroutines.delay(60_000); JsonNull }, { "id" }, { "secret" }, { 1_000L }, "android")
+        device.refresh(1)
+        assertEquals(DeviceSourceFailure.TIMED_OUT, device.state.value.failure)
+        assertFalse(device.state.value.busy)
+    }
+
+    @Test fun eachCallGetsItsOwnTimeoutSoSlowButWorkingCallsDoNotAddUp() = runTest {
+        // Three calls at 5 s each = 15 s: fine per call, over the old single 12 s budget.
+        val device = DeviceSourceEngine(cached(), { name, _ ->
+            kotlinx.coroutines.delay(5_000)
+            when (name) {
+                "device_sources_list" -> json.encodeToJsonElement(listOf(source))
+                "device_setups_list" -> JsonArray(emptyList())
+                "device_preferences_read" -> page()
+                else -> error(name)
+            }
+        }, { "id" }, { "secret" }, { 1_000L }, "android")
+        device.refresh(1)
+        assertEquals("ready", device.state.value.mode)
+        assertNull(device.state.value.failure)
+        assertNull("no failure message either", device.state.value.message)
+    }
+
+    @Test fun aSuccessfulRefreshClearsTheLastFailure() = runTest {
+        var fail = true
+        val device = DeviceSourceEngine(cached(), { name, _ ->
+            if (fail) throw java.io.IOException("down")
+            when (name) {
+                "device_sources_list" -> json.encodeToJsonElement(listOf(source))
+                "device_setups_list" -> JsonArray(emptyList())
+                else -> page()
+            }
+        }, { "id" }, { "secret" }, { 1_000L }, "android")
+        device.refresh(1)
+        assertEquals(DeviceSourceFailure.UNREACHABLE, device.state.value.failure)
+        fail = false
+        device.refresh(1)
+        assertNull(device.state.value.failure)
+    }
 }

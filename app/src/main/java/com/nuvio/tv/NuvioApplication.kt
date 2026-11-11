@@ -63,6 +63,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     private val analyticsConsentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Inject lateinit var startupSyncService: StartupSyncService
+    @Inject lateinit var appForegroundTracker: com.nuvio.tv.core.lifecycle.AppForegroundTracker
     @Inject lateinit var recEventLogger: com.nuvio.tv.core.rec.RecEventLogger
     @Inject lateinit var androidTvChannelSyncService: AndroidTvChannelSyncService
     @Inject lateinit var workerFactory: HiltWorkerFactory
@@ -134,6 +135,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         // Before super.onCreate(): Hilt creates injected services there, and the budget is read once.
         MemoryBudget.init(this)
         super.onCreate()
+        appForegroundTracker.register(this)
         // Calendar's optional Home "Coming up" row (off by default); registered before Home first collects changes.
         com.nuvio.tv.core.contracts.HomeSectionContributorRegistry.register(calendarComingUpContributor)
         com.nuvio.tv.data.mediaserver.ServerMediaRouting.router = com.nuvio.tv.data.mediaserver.ServerMediaRouter(serverTrust)

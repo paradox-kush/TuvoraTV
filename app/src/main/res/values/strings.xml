@@ -564,6 +564,9 @@
     <string name="account_error_not_authenticated">Please sign in first.</string>
     <string name="account_error_service_unavailable">Service unavailable. Please try again later.</string>
     <string name="account_error_invalid_request">Invalid request. Please check your input.</string>
+    <string name="device_sources_error_signed_out">You are signed out. Sign in again to sync your sources.</string>
+    <string name="device_sources_error_timed_out">Your account took too long to answer. Check your connection and retry.</string>
+    <string name="device_sources_error_unreachable">Could not reach your account. Retry.</string>
     <string name="account_error_unexpected">An unexpected error occurred.</string>
     <string name="experience_mode_switch_to_essential">Switch to Essential</string>
     <string name="experience_mode_switch_to_essential_subtitle">Hide advanced setup surfaces without changing your saved values.</string>
