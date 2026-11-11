@@ -23,7 +23,9 @@ internal object LiveReportPolicy {
 
     fun category(error: LivePlaybackUiErrorCode?, pauseProblem: LivePauseProblem? = null): ReportCategory = when (error) {
         is LivePlaybackUiErrorCode.PlaybackFailed -> when (error.reasonCode) {
-            FailureCode.SURFACE_LOST -> ReportCategory.BLACK_SCREEN
+            FailureCode.SURFACE_LOST,
+            FailureCode.SURFACE_HOST_UNAVAILABLE,
+            -> ReportCategory.BLACK_SCREEN
             FailureCode.NO_PROGRESS,
             FailureCode.LIVE_RECONNECT_EXHAUSTED,
             -> ReportCategory.FREEZES

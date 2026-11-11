@@ -166,6 +166,37 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    // B50: even a host that wrongly marks it deterministic must not teach "this engine is broken".
+    @Test
+    fun `surface host failure never records engine compatibility`() = runTest {
+        val history = FakeCompatibilityHistory()
+        val engine = FakeEngine()
+        val session = session(
+            engine = engine,
+            requestResolver = scopedResolver(CompatibilityScopeKey("surface-host")),
+            compatibilityRecording = compatibilityRecording(history),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
+        advanceUntilIdle()
+        engine.emit(
+            PlaybackEvent.Failed(
+                1,
+                PlaybackFailure(
+                    FailureCode.SURFACE_HOST_UNAVAILABLE,
+                    FailureDomain.VIDEO_RENDERER_SURFACE,
+                    FailurePhase.SURFACE_ATTACHMENT,
+                    Retryability.HANDOFF_ELIGIBLE,
+                    deterministic = true,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertTrue("no compatibility record: ${history.values}", history.values.isEmpty())
+        close(session)
+    }
+
     @Test
     fun `stale generation and released lifecycle events cannot record compatibility`() = runTest {
         val history = FakeCompatibilityHistory()
@@ -2133,7 +2164,12 @@ class PlaybackSessionTest {
         runCurrent()
         assertEquals(PlaybackState.ATTACHING_SURFACE, session.snapshot.value.state)
 
-        advanceTimeBy(3_000)
+        // B50: never while the coordinator may still be waiting on its fresh-view retry.
+        advanceTimeBy(SurfaceAttachmentBudget.ATTEMPTS * SurfaceAttachmentBudget.WAIT_MS)
+        runCurrent()
+        assertTrue(diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+
+        advanceTimeBy(SurfaceAttachmentBudget.WATCHDOG_MS - SurfaceAttachmentBudget.ATTEMPTS * SurfaceAttachmentBudget.WAIT_MS)
         runCurrent()
 
         val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }

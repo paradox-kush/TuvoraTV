@@ -699,6 +699,9 @@ data class PlaybackFailure(
     val graphRejection: GraphRejection? = null,
 )
 
+/** B50: the surface host, not the engine, failed; see [FailureCode.SURFACE_HOST_UNAVAILABLE]. */
+fun PlaybackFailure.isSurfaceHostFailure(): Boolean = code == FailureCode.SURFACE_HOST_UNAVAILABLE
+
 /**
  * The filter that left graph selection with nothing to play. A closed set so it can be sent as
  * telemetry as-is. The policy has no resolution or HDR filter, so neither appears here.
@@ -820,6 +823,12 @@ enum class FailureCode {
     VIDEO_DECODER_FAILED,
     VIDEO_RENDERER_FAILED,
     SURFACE_LOST,
+    /**
+     * B50: Android never created the host's surface, even on a freshly built view. The view tree
+     * failed, not the engine, so this never becomes an engine compatibility record and never
+     * excludes the engine from the hand-off ([isSurfaceHostFailure]).
+     */
+    SURFACE_HOST_UNAVAILABLE,
     AUDIO_OUTPUT_FAILED,
     AUDIO_DECODER_FAILED,
     AUDIO_SINK_FAILED,

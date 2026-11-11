@@ -6,7 +6,9 @@ import android.view.SurfaceView
 import android.view.TextureView
 import android.widget.FrameLayout
 import androidx.media3.exoplayer.ExoPlayer
+import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.LiveFreezeFramePolicy
+import com.nuvio.tv.playback.core.isSurfaceHostFailure
 import com.nuvio.tv.playback.core.PlaybackCommand
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.PlaybackSnapshot
@@ -485,6 +487,128 @@ class CleanLiveSurfaceCoordinatorTest {
         assertFailure(coordinator.media3SurfaceHost.acquire(SurfaceMode.SURFACE_VIEW, secure = false))
         assertEquals(41L, observedTimeout)
         assertEquals(0, owner.childCount)
+    }
+
+    // B50: the guide's first SurfaceView sometimes never gets a surface while later ones do. A
+    // fresh view is the host's own retry; the engine is not at fault and must not be blamed.
+    @Test
+    fun `Media3 surface that never arrives is retried once on a fresh view`() = runTest {
+        val owner = owner()
+        val waitedOn = mutableListOf<android.view.View>()
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.SURFACE_VIEW),
+            awaitSurfaceValidity = { view, _ ->
+                waitedOn += view
+                waitedOn.size > 1
+            },
+        )
+        start(coordinator)
+
+        val lease = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+
+        assertEquals("one retry, on a second view", 2, waitedOn.size)
+        assertTrue("the retry builds a new view", waitedOn[0] !== waitedOn[1])
+        assertEquals("the dead view is gone", 1, owner.childCount)
+        assertTrue("the lease owns the fresh view", owner.getChildAt(0) === waitedOn[1])
+        assertTrue(lease.release())
+        assertEquals(0, owner.childCount)
+    }
+
+    // B50 root cause: Compose lays an AndroidView child out from dispatchDraw, after the frame's
+    // pre-draw, and SurfaceView creates its surface only from a pre-draw that sees a non-empty
+    // frame. On an idle guide no further frame came, so the coordinator must ask for one.
+    @Test
+    fun `a surface view sized after its pre-draw asks for exactly one more frame`() = runTest {
+        val owner = InvalidationCountingOwner()
+        // Attached like the guide's owner: a detached view's posted frame work never runs.
+        org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
+            .setContentView(owner, android.view.ViewGroup.LayoutParams(512, 288))
+        var invalidationsAfterLayout = -1
+        var invalidationsAfterFrame = -1
+        var invalidationsAfterRelayout = -1
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.SURFACE_VIEW),
+            awaitSurfaceValidity = { _, _ ->
+                owner.invalidations = 0
+                owner.layoutAs(512, 288) // the 0x0 surface view gets its frame
+                invalidationsAfterLayout = owner.invalidations
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+                    .idleFor(java.time.Duration.ofMillis(100))
+                invalidationsAfterFrame = owner.invalidations
+                owner.layoutAs(640, 360)
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+                    .idleFor(java.time.Duration.ofMillis(100))
+                invalidationsAfterRelayout = owner.invalidations
+                true
+            },
+        )
+        start(coordinator)
+
+        media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+
+        assertEquals("never invalidate from inside the laying-out pass", 0, invalidationsAfterLayout)
+        assertEquals("one frame is requested once the view is sized", 1, invalidationsAfterFrame)
+        assertEquals("one-shot: a later resize does not ask again", 1, invalidationsAfterRelayout)
+    }
+
+    private class InvalidationCountingOwner : FrameLayout(RuntimeEnvironment.getApplication()) {
+        var invalidations = 0
+        override fun invalidate() {
+            invalidations++
+            super.invalidate()
+        }
+    }
+
+    @Test
+    fun `libmpv surface that never arrives is retried once on a fresh view`() = runTest {
+        val owner = owner()
+        var waits = 0
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.NATIVE_EMBED),
+            awaitSurfaceValidity = { _, _ -> ++waits > 1 },
+        )
+        start(coordinator)
+
+        val lease = mpvLease(coordinator, SurfaceMode.NATIVE_EMBED)
+
+        assertEquals(2, waits)
+        assertEquals(1, owner.childCount)
+        assertTrue(lease.release())
+    }
+
+    @Test
+    fun `a surface host that never delivers fails once as a host failure and leaves no slot`() = runTest {
+        val owner = owner()
+        var waits = 0
+        var deliver = false
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.SURFACE_VIEW, SurfaceMode.NATIVE_EMBED),
+            awaitSurfaceValidity = { _, _ ->
+                waits++
+                deliver
+            },
+        )
+        start(coordinator)
+
+        for ((engine, result) in listOf(
+            "Media3" to coordinator.media3SurfaceHost.acquire(SurfaceMode.SURFACE_VIEW, secure = false),
+            "libmpv" to coordinator.mpvSurfaceHost.acquire(SurfaceMode.NATIVE_EMBED, secure = false),
+        )) {
+            val failure = (result as? PlaybackResult.Failure)?.failure
+                ?: throw AssertionError("$engine: expected a failure, got $result")
+            assertEquals("$engine: the host failed, not the engine", FailureCode.SURFACE_HOST_UNAVAILABLE, failure.code)
+            assertTrue("$engine: classified as a surface-host failure", failure.isSurfaceHostFailure())
+            assertEquals("$engine: no slot left behind", 0, owner.childCount)
+        }
+        assertEquals("exactly two waits per acquisition", 4, waits)
+
+        deliver = true
+        val next = coordinator.media3SurfaceHost.acquire(SurfaceMode.SURFACE_VIEW, secure = false)
+        assertTrue("the coordinator is free after a host failure: $next", next is PlaybackResult.Success)
     }
 
     @Test

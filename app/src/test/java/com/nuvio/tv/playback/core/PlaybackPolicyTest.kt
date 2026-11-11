@@ -83,7 +83,7 @@ class PlaybackPolicyTest {
         val network = PlaybackNetworkRequest(readTimeoutMs = 60_000, callTimeoutMs = 12_000)
 
         assertEquals(
-            3_000L,
+            SurfaceAttachmentBudget.WATCHDOG_MS,
             policy.watchdogDelayMs(
                 PlaybackPolicy.WatchdogPhase.WAITING_FOR_SURFACE,
                 ContentType.LIVE,
@@ -138,6 +138,25 @@ class PlaybackPolicyTest {
                 ContentType.CATCH_UP,
                 network,
             ),
+        )
+    }
+
+    // B50: the coordinator's surface wait and this watchdog were both 3 s, so the watchdog fired
+    // SURFACE_LOST at the instant the coordinator gave up and blamed the engine. With the
+    // coordinator's one fresh-view retry, the watchdog must outlast every wait it can make.
+    @Test
+    fun `the surface watchdog outlasts every coordinator surface wait`() {
+        val watchdog = policy.watchdogDelayMs(
+            PlaybackPolicy.WatchdogPhase.WAITING_FOR_SURFACE,
+            ContentType.LIVE,
+            PlaybackNetworkRequest(),
+        )
+        val coordinatorWorstCase = SurfaceAttachmentBudget.ATTEMPTS * SurfaceAttachmentBudget.WAIT_MS
+
+        assertTrue("one retry is the contract", SurfaceAttachmentBudget.ATTEMPTS >= 2)
+        assertTrue(
+            "watchdog $watchdog ms must outlast $coordinatorWorstCase ms of surface waits",
+            watchdog > coordinatorWorstCase,
         )
     }
 
@@ -400,6 +419,67 @@ class PlaybackPolicyTest {
         assertTrue(rejected.failure.deterministic)
     }
 
+    // B50: on a software-decode-only box (the emulator) the guide forbade GPU render, so once Media3
+    // failed nothing was eligible and the preview ended "render path unavailable". In the guide, no GPU
+    // render is a preference: it may rank, never leave nothing to play.
+    @Test
+    fun `guide falls back to GPU render when it is the only playable graph`() {
+        val softwareMedia3 = media3.copy(id = "media3-sw", decoderMode = DecoderMode.SOFTWARE)
+        val softwareRender = mpvRender.copy(id = "mpv-render-sw", decoderMode = DecoderMode.SOFTWARE)
+        val guide = requirements(
+            profile = SessionProfile.GUIDE,
+            gpuRenderingAllowed = false,
+            softwareDecodeFallbackAllowed = true,
+            liveContent = true,
+        )
+
+        val handoff = policy.selectHandoff(guide, listOf(softwareMedia3, softwareRender), failedGraph = softwareMedia3)
+        assertEquals(softwareRender, handoff.selectedGraph())
+
+        val primary = policy.selectPrimary(
+            PlaybackPolicy.SelectionInput(guide.copy(eligibleEngines = setOf(EngineType.LIBMPV)), listOf(softwareRender)),
+        )
+        assertEquals(softwareRender, primary.selectedGraph())
+    }
+
+    @Test
+    fun `guide keeps the no GPU render preference while another graph can play`() {
+        // FULL subtitle fidelity would pick render over direct if the GPU filter were simply dropped.
+        val selection = policy.selectPrimary(
+            PlaybackPolicy.SelectionInput(
+                requirements(
+                    profile = SessionProfile.GUIDE,
+                    preferredEngineOrder = listOf(EngineType.LIBMPV),
+                    eligibleEngines = setOf(EngineType.LIBMPV),
+                    subtitlesEnabled = true,
+                    subtitleFidelity = SubtitleFidelity.FULL,
+                    gpuRenderingAllowed = false,
+                    liveContent = true,
+                ),
+                listOf(mpvRender, mpvDirect),
+            ),
+        )
+
+        assertEquals(mpvDirect, selection.selectedGraph())
+    }
+
+    @Test
+    fun `a disallowed GPU budget stays a hard limit in the guide`() {
+        val selection = policy.selectPrimary(
+            PlaybackPolicy.SelectionInput(
+                requirements(
+                    profile = SessionProfile.GUIDE,
+                    eligibleEngines = setOf(EngineType.LIBMPV),
+                    gpuRenderingAllowed = false,
+                    resourceBudget = ResourceBudget(gpuCost = ResourceAllowance.DISALLOWED),
+                ),
+                listOf(mpvRender),
+            ),
+        )
+
+        assertTrue(selection is PlaybackPolicy.Selection.Rejected)
+    }
+
     @Test
     fun `Media3 cannot claim an mpv direct output graph`() {
         val malformed = mpvDirect.copy(id = "media3-mpv-direct", engine = EngineType.MEDIA3)
@@ -607,6 +687,8 @@ class PlaybackPolicyTest {
         allowedSurfaceModes: Set<SurfaceMode> = SurfaceMode.entries.toSet(),
         liveContent: Boolean = false,
         displayModeSwitchAllowed: Boolean = profile == SessionProfile.FULLSCREEN,
+        softwareDecodeFallbackAllowed: Boolean = false,
+        resourceBudget: ResourceBudget = ResourceBudget(),
     ) = PlaybackRequirements(
         profile = profile,
         priority = if (profile == SessionProfile.GUIDE) {
@@ -623,7 +705,7 @@ class PlaybackPolicyTest {
         frameRatePreference = FrameRatePreference.OFF,
         hdrPreference = HdrPreference.AUTO,
         decoderPreference = DecoderPreference.AUTO,
-        softwareDecodeFallbackAllowed = false,
+        softwareDecodeFallbackAllowed = softwareDecodeFallbackAllowed,
         subtitleFidelity = subtitleFidelity,
         subtitlesEnabled = subtitlesEnabled,
         audioOutput = audioOutput,
@@ -634,7 +716,7 @@ class PlaybackPolicyTest {
         preferredEngineOrder = preferredEngineOrder,
         allowedSurfaceModes = allowedSurfaceModes,
         secureOutputRequired = secureOutputRequired,
-        resourceBudget = ResourceBudget(),
+        resourceBudget = resourceBudget,
         liveContent = liveContent,
     )
 

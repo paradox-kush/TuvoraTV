@@ -467,7 +467,9 @@ internal object CleanLivePlayerUiPolicy {
         FailureCode.VIDEO_DECODER_FAILED,
         FailureCode.VIDEO_RENDERER_FAILED,
         -> R.string.clean_live_error_video
-        FailureCode.SURFACE_LOST -> R.string.clean_live_error_surface
+        FailureCode.SURFACE_LOST,
+        FailureCode.SURFACE_HOST_UNAVAILABLE,
+        -> R.string.clean_live_error_surface
         FailureCode.AUDIO_OUTPUT_FAILED,
         FailureCode.AUDIO_DECODER_FAILED,
         FailureCode.AUDIO_SINK_FAILED,

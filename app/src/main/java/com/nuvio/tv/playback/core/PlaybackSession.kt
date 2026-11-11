@@ -469,8 +469,12 @@ class PlaybackSession(
         when (action) {
             is PlaybackAction.ResolveRequest -> resolve(action)
             is PlaybackAction.ResolveHandoffRequest -> resolveHandoff(action)
-            is PlaybackAction.SelectPrimaryGraph -> select(action, failedGraph = null)
-            is PlaybackAction.SelectHandoffGraph -> select(action, failedGraph = action.failedGraph)
+            is PlaybackAction.SelectPrimaryGraph -> select(action, failedGraph = null, excludedEngines = emptySet())
+            is PlaybackAction.SelectHandoffGraph -> select(
+                action,
+                failedGraph = action.failedGraph,
+                excludedEngines = action.excludedEngines,
+            )
             is PlaybackAction.AttachSurface -> attachSurface(action)
             is PlaybackAction.StartGraph -> startGraph(action)
             is PlaybackAction.SetPaused -> setPaused(action)
@@ -612,7 +616,11 @@ class PlaybackSession(
         message.accepted.complete(true)
     }
 
-    private fun select(action: PlaybackAction, failedGraph: PlaybackGraph?) {
+    private fun select(
+        action: PlaybackAction,
+        failedGraph: PlaybackGraph?,
+        excludedEngines: Set<EngineType>,
+    ) {
         val generation = action.generation
         val evidence = when (action) {
             is PlaybackAction.SelectPrimaryGraph -> action.evidence
@@ -659,6 +667,7 @@ class PlaybackSession(
                 LaneMessage.SelectionFinished(
                     generation,
                     failedGraph,
+                    excludedEngines,
                     profile,
                     selectionResult,
                     changeIdAtStart,
@@ -716,7 +725,13 @@ class PlaybackSession(
                 PlaybackPolicy.SelectionInput(effective, candidates.value, evidence = message.result.evidence),
             )
         } else {
-            policy.selectHandoff(effective, candidates.value, message.failedGraph, message.result.evidence)
+            policy.selectHandoff(
+                effective,
+                candidates.value,
+                message.failedGraph,
+                message.result.evidence,
+                excludedEngines = message.excludedEngines,
+            )
         }
         when (selection) {
             is PlaybackPolicy.Selection.Selected -> {
@@ -2401,6 +2416,8 @@ class PlaybackSession(
         data class SelectionFinished(
             val generation: Long,
             val failedGraph: PlaybackGraph?,
+            /** Engines the hand-off skips; empty for a primary selection. */
+            val excludedEngines: Set<EngineType>,
             val profile: SessionProfile,
             val result: SelectionResult,
             /** [latestRequirementsChangeId] when this selection launched; a moved id means a
