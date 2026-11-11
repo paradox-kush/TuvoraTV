@@ -32,7 +32,7 @@ internal class PlayerViewMedia3SurfaceHost(
     private inner class Lease(override val secure: Boolean) : Media3SurfaceLease {
         override val mode = SurfaceMode.SURFACE_VIEW
         private var attachedPlayer: ExoPlayer? = null
-        private var released = false
+        @Volatile private var released = false
         @Volatile private var playerTerminated = false
 
         override fun attach(player: ExoPlayer) {
@@ -56,6 +56,17 @@ internal class PlayerViewMedia3SurfaceHost(
         override fun confirmPlayerReleased() {
             // The session can acknowledge on its own lane. View cleanup stays on the UI lane.
             playerTerminated = true
+        }
+
+        override fun abandon() {
+            // The stuck player will never be called again. Mark the binding dead (the UI lane clears
+            // the view later) and report the lease released so the coordinator frees the slot; the
+            // slot's view is removed, so the stale view.player binding cannot be reached again.
+            playerTerminated = true
+            if (!released) {
+                released = true
+                onReleased()
+            }
         }
 
         override suspend fun release(): Boolean = withContext(viewDispatcher) {

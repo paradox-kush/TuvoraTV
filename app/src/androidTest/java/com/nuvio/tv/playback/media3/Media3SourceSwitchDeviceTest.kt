@@ -99,6 +99,7 @@ class Media3SourceSwitchDeviceTest {
         override fun attach(player: ExoPlayer) { player.setVideoSurface(surface); attached = true }
         override fun detach(player: ExoPlayer): Boolean { player.clearVideoSurface(); attached = false; return true }
         override fun confirmPlayerReleased() { attached = false }
+        override fun abandon() { attached = false }
         override suspend fun release() = !attached
     }
 }

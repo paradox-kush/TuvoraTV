@@ -29,6 +29,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withTimeoutOrNull
+import com.nuvio.tv.playback.core.FailureCode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -78,6 +81,151 @@ class MpvEngineTest {
         success(engine.hardAbort(1))
         assertEquals(1, backend.releaseCalls)
         assertEquals(1, backend.abortCalls)
+    }
+
+    @Test
+    fun `abandon after failed release and hard abort lets a new generation start on a new backend`() = runTest {
+        val stuck = FakeBackend().apply { releaseSucceeds = false }
+        val fresh = FakeBackend()
+        val backends = ArrayDeque(listOf(stuck, fresh))
+        var creations = 0
+        val host = CountingSurfaceHost()
+        val engine = MpvEngine(
+            backgroundScope,
+            host,
+            MpvBackendFactory {
+                creations++
+                PlaybackResult.Success(backends.removeFirst())
+            },
+        )
+        success(engine.attachSurface(1, graph()))
+        success(engine.start(start(1)))
+        assertTrue("release fails", engine.release(1) is PlaybackResult.Failure)
+        assertTrue("hard abort fails", engine.hardAbort(1) is PlaybackResult.Failure)
+        val stuckCallsBefore = stuck.totalCalls
+
+        success(engine.abandon(1))
+        success(engine.attachSurface(2, graph()))
+        success(engine.start(start(2)))
+
+        assertEquals("a second backend was built", 2, creations)
+        assertEquals("the fresh backend started", 1, fresh.startCalls)
+        assertEquals("the stuck backend is never touched again", stuckCallsBefore, stuck.totalCalls)
+        assertEquals("the abandoned lease was told", 1, host.leases.count { it.abandoned })
+        assertTrue("a later release of the abandoned lease succeeds", host.leases.first().release())
+    }
+
+    @Test
+    fun `without abandon a failed release refuses the next attach with RESOURCE_RELEASE_FAILED`() = runTest {
+        val backend = FakeBackend().apply { releaseSucceeds = false }
+        val engine = engine(backend, backgroundScope)
+        success(engine.attachSurface(1, graph()))
+        success(engine.start(start(1)))
+        assertTrue(engine.release(1) is PlaybackResult.Failure)
+
+        val refused = engine.attachSurface(2, graph())
+
+        assertEquals(
+            "the true reason is reported, not a resource budget",
+            FailureCode.RESOURCE_RELEASE_FAILED,
+            (refused as PlaybackResult.Failure).failure.code,
+        )
+    }
+
+    @Test
+    fun `cancelled release and hard abort still poison the engine with RESOURCE_RELEASE_FAILED`() = runTest {
+        val backend = FakeBackend().apply {
+            releaseHangs = true
+            hardAbortHangs = true
+        }
+        val engine = engine(backend, backgroundScope)
+        success(engine.attachSurface(1, graph()))
+        success(engine.start(start(1)))
+        assertEquals(null, withTimeoutOrNull(5_000) { engine.release(1) })
+        assertEquals(null, withTimeoutOrNull(5_000) { engine.hardAbort(1) })
+
+        val refused = engine.attachSurface(2, graph())
+
+        assertEquals(
+            "a cancelled teardown must still report the release failure",
+            FailureCode.RESOURCE_RELEASE_FAILED,
+            (refused as PlaybackResult.Failure).failure.code,
+        )
+    }
+
+    @Test
+    fun `a genuinely busy engine still reports RESOURCE_BUDGET_EXCEEDED`() = runTest {
+        val backend = FakeBackend()
+        val engine = engine(backend, backgroundScope)
+        success(engine.attachSurface(1, graph()))
+        success(engine.start(start(1)))
+
+        val refused = engine.attachSurface(2, graph())
+
+        assertEquals(
+            FailureCode.RESOURCE_BUDGET_EXCEEDED,
+            (refused as PlaybackResult.Failure).failure.code,
+        )
+    }
+
+    @Test
+    fun `abandon with a stale generation fails and keeps the player`() = runTest {
+        val backend = FakeBackend().apply { releaseSucceeds = false }
+        val engine = engine(backend, backgroundScope)
+        success(engine.attachSurface(5, graph()))
+        success(engine.start(start(5)))
+        assertTrue(engine.release(5) is PlaybackResult.Failure)
+
+        assertTrue("stale generation refused", engine.abandon(4) is PlaybackResult.Failure)
+        assertTrue("still poisoned", engine.attachSurface(6, graph()) is PlaybackResult.Failure)
+    }
+
+    @Test
+    fun `abandon on an idle engine succeeds`() = runTest {
+        val engine = engine(FakeBackend(), backgroundScope)
+        success(engine.abandon(1))
+    }
+
+    @Test
+    fun `a hard abort that never returns and times out still allows abandon`() = runTest {
+        val backend = FakeBackend().apply {
+            releaseSucceeds = false
+            hardAbortHangs = true
+        }
+        val fresh = FakeBackend()
+        val backends = ArrayDeque(listOf(backend, fresh))
+        val engine = MpvEngine(
+            backgroundScope,
+            FakeSurfaceHost(),
+            MpvBackendFactory { PlaybackResult.Success(backends.removeFirst()) },
+        )
+        success(engine.attachSurface(1, graph()))
+        success(engine.start(start(1)))
+        assertTrue(engine.release(1) is PlaybackResult.Failure)
+        val aborted = withTimeoutOrNull(5_000) { engine.hardAbort(1) }
+        assertEquals("the hard abort timed out", null, aborted)
+
+        success(engine.abandon(1))
+        success(engine.attachSurface(2, graph()))
+        success(engine.start(start(2)))
+
+        assertEquals(1, fresh.startCalls)
+    }
+
+    @Test
+    fun `release step is readable without the engine lock while a release is in flight`() = runTest {
+        val backend = FakeBackend().apply {
+            releaseHangs = true
+            step = "DETACH_SURFACE"
+        }
+        val engine = engine(backend, backgroundScope)
+        success(engine.attachSurface(1, graph()))
+        success(engine.start(start(1)))
+        val inFlight = async(start = CoroutineStart.UNDISPATCHED) { engine.release(1) }
+
+        assertEquals("DETACH_SURFACE", engine.releaseStepName())
+
+        inFlight.cancel()
     }
 
     @Test
@@ -268,9 +416,10 @@ class MpvEngineTest {
 
     private class CountingSurfaceHost : MpvSurfaceHost {
         var acquireCalls = 0
+        val leases = mutableListOf<FakeLease>()
         override suspend fun acquire(mode: SurfaceMode, secure: Boolean): PlaybackResult<MpvSurfaceLease> {
             acquireCalls++
-            return PlaybackResult.Success(FakeLease(mode, secure))
+            return PlaybackResult.Success(FakeLease(mode, secure).also { leases += it })
         }
     }
 
@@ -280,9 +429,14 @@ class MpvEngineTest {
     ) : MpvSurfaceLease {
         override val surface: Surface get() = error("Fake backend must not access Android Surface")
         private var attached = false
+        var abandoned = false
         override fun markAttached() { attached = true }
         override fun confirmDetached() { attached = false }
         override fun confirmCoreDestroyed() { attached = false }
+        override fun abandon() {
+            abandoned = true
+            attached = false
+        }
         override fun release(): Boolean = !attached
     }
 
@@ -295,6 +449,9 @@ class MpvEngineTest {
         var releaseCalls = 0
         var abortCalls = 0
         var releaseSucceeds = true
+        var releaseHangs = false
+        var hardAbortHangs = false
+        var step: String? = null
         var detachSucceeds = true
         var metrics = MpvMetrics(0, 0, 0)
         val operations = mutableListOf<String>()
@@ -328,14 +485,18 @@ class MpvEngineTest {
             operations += "stop-source"
             return PlaybackResult.Success(Unit)
         }
+        val totalCalls: Int get() = startCalls + attachCalls + releaseCalls + abortCalls + operations.size
+        override fun releaseStepName(): String? = step
         override suspend fun release(): PlaybackResult<Unit> {
             releaseCalls++
+            if (releaseHangs) awaitCancellation()
             if (!releaseSucceeds) return failure()
             lease?.confirmCoreDestroyed()
             return PlaybackResult.Success(Unit)
         }
         override suspend fun hardAbort(): PlaybackResult<Unit> {
             abortCalls++
+            if (hardAbortHangs) awaitCancellation()
             if (!releaseSucceeds) return failure()
             lease?.confirmCoreDestroyed()
             return PlaybackResult.Success(Unit)

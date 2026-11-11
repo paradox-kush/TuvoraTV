@@ -25,6 +25,12 @@ internal interface MpvSurfaceLease {
     fun markAttached()
     fun confirmDetached()
     fun confirmCoreDestroyed()
+    /**
+     * Forces the terminal released state for a player that could not be shut down and will never be
+     * called again, so [release] returns true and the host can hand out a new lease. The only
+     * caller is the engine's abandon path; it proves nothing about the old core.
+     */
+    fun abandon()
     /** Never succeeds merely because a detach request was issued. */
     fun release(): Boolean
 }
@@ -73,6 +79,10 @@ private class ProofMpvSurfaceLease(
 
     @Synchronized override fun confirmCoreDestroyed() {
         if (state != State.RELEASED) state = State.CORE_DESTROYED
+    }
+
+    @Synchronized override fun abandon() {
+        state = State.RELEASED
     }
 
     @Synchronized override fun release(): Boolean = when (state) {

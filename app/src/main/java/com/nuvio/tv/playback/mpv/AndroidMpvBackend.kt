@@ -41,6 +41,12 @@ internal enum class MpvBackendLifecycle {
     CREATED, INITIALIZED, ATTACHED, LOADING, PLAYING, IDLE, RELEASING, DEAD,
 }
 
+/**
+ * The native shutdown call a release is in. Telemetry carries only these names, so a stuck
+ * shutdown shows which call hung without any message, host or URL.
+ */
+internal enum class MpvReleaseStep { STOP, VO_NULL, DETACH_SURFACE, REMOVE_OBSERVER, DESTROY, FORCE_TERMINATE, DONE }
+
 internal enum class MpvEndReason { EOF, ERROR, STOP, QUIT, REDIRECT, UNKNOWN }
 
 internal sealed interface MpvBackendEvent {
@@ -105,6 +111,9 @@ internal interface MpvBackend {
     suspend fun stopSource(): PlaybackResult<Unit>
     suspend fun release(): PlaybackResult<Unit>
     suspend fun hardAbort(): PlaybackResult<Unit>
+
+    /** Enum name of the shutdown step in flight, for telemetry; lock-free, null when none. */
+    fun releaseStepName(): String? = null
 }
 
 private fun unsupportedMpvControl(): PlaybackResult.Failure = PlaybackResult.Failure(
@@ -186,6 +195,12 @@ internal class AndroidMpvBackend(
 
     @Volatile internal var lifecycle: MpvBackendLifecycle = MpvBackendLifecycle.CREATED
         private set
+
+    /** Set before each native shutdown call; null until a release starts. Read lock-free by telemetry. */
+    @Volatile internal var releaseStep: MpvReleaseStep? = null
+        private set
+
+    override fun releaseStepName(): String? = releaseStep?.name
     private var lease: MpvSurfaceLease? = null
     private var lastStreamPosition = -1L
     private var firstVideoFrameSent = false
@@ -539,19 +554,25 @@ internal class AndroidMpvBackend(
         terminalEventsSuppressed = true
         return scope.async {
             lifecycle = MpvBackendLifecycle.RELEASING
+            releaseStep = MpvReleaseStep.STOP
             runCatching { core.command("stop") }
             // Upstream teardown order (mpv-android BaseMPVView): stop the video output BEFORE
             // detaching the surface. Detaching while the VO still owns the surface is the
             // documented native deadlock race; `vo=null` deinitializes the VO first.
+            releaseStep = MpvReleaseStep.VO_NULL
             runCatching { core.setString("vo", "null") }
+            releaseStep = MpvReleaseStep.DETACH_SURFACE
             runCatching {
                 if (lease != null && core.detachSurfaceWithResult()) lease?.confirmDetached()
             }
+            releaseStep = MpvReleaseStep.REMOVE_OBSERVER
             runCatching { core.removeObserver(this@AndroidMpvBackend) }
+            releaseStep = MpvReleaseStep.DESTROY
             val destroyed = runCatching { core.destroyWithResult() }.getOrDefault(false)
             if (!destroyed) return@async releaseFailure(FailureCode.RESOURCE_RELEASE_FAILED)
             lease?.confirmCoreDestroyed()
             lifecycle = MpvBackendLifecycle.DEAD
+            releaseStep = MpvReleaseStep.DONE
             PlaybackResult.Success(Unit)
         }.also { releaseTask = it }
     }
@@ -568,10 +589,15 @@ internal class AndroidMpvBackend(
         // fail-closed session release is the containment, not thread recovery.
         return terminationScope.async {
             lifecycle = MpvBackendLifecycle.RELEASING
+            // Deliberately overwrites the graceful step: if forced termination also hangs, the
+            // last step in flight is FORCE_TERMINATE; the graceful one was reported by the first
+            // failure record.
+            releaseStep = MpvReleaseStep.FORCE_TERMINATE
             val terminated = runCatching { core.forceTerminateWithResult() }.getOrDefault(false)
             if (!terminated) return@async releaseFailure(FailureCode.RESOURCE_RELEASE_FAILED)
             lease?.confirmCoreDestroyed()
             lifecycle = MpvBackendLifecycle.DEAD
+            releaseStep = MpvReleaseStep.DONE
             PlaybackResult.Success(Unit)
         }.also { forceTerminationTask = it }
     }

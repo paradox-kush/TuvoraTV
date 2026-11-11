@@ -145,7 +145,12 @@ class Media3Engine internal constructor(
 
     @Volatile private var generation: Long? = null
     private var lease: Media3SurfaceLease? = null
-    private var backend: Media3Backend? = null
+    // Volatile only so releaseStepName() can read it without the lock while a release is stuck.
+    @Volatile private var backend: Media3Backend? = null
+    /** A previous generation's backend failed to shut down; cleared by a proven finish or by abandon. */
+    private var releaseFailed = false
+    /** Sticky from the backend release call until it is proven or abandoned; read lock-free. */
+    @Volatile private var releaseInFlight = false
     private var eventJob: Job? = null
     private var activeGraph: com.nuvio.tv.playback.core.PlaybackGraph? = null
     private var activeEvidence: com.nuvio.tv.playback.core.StreamEvidence? = null
@@ -162,11 +167,11 @@ class Media3Engine internal constructor(
             return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.SURFACE_LOST)
         }
         if (this.generation != null && this.generation != generation) {
-            return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.RESOURCE_BUDGET_EXCEEDED)
+            return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, busyCode())
         }
         val currentBackend = backend
         if (currentBackend != null && activeGraph != graph) {
-            return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.RESOURCE_BUDGET_EXCEEDED)
+            return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, busyCode())
         }
         if (lease != null) {
             this.generation = generation
@@ -231,15 +236,21 @@ class Media3Engine internal constructor(
         val retained = backend
         if (retained != null) {
             if (!sourceReleased || activeGraph != input.graph) {
-                return@withLock failure(FailurePhase.ENGINE_START, FailureCode.RESOURCE_BUDGET_EXCEEDED)
+                return@withLock failure(FailurePhase.ENGINE_START, busyCode())
             }
             if (!retained.canReplaceSource(plan)) {
                 // stopSource releases the provider connection but retains decoder/network factories.
                 // Format, credentials or construction settings can differ on the next channel.
                 // Keep the surface lease, but require proof of player death before creating another.
+                releaseInFlight = true
+                releaseFailed = true // before the call: survives a cancelled, never-returning release
                 when (val released = retained.release()) {
                     is PlaybackResult.Failure -> return@withLock released
-                    is PlaybackResult.Success -> currentLease.confirmPlayerReleased()
+                    is PlaybackResult.Success -> {
+                        releaseInFlight = false
+                        releaseFailed = false
+                        currentLease.confirmPlayerReleased()
+                    }
                 }
                 backend = null
                 activeRequest = null
@@ -273,8 +284,12 @@ class Media3Engine internal constructor(
                 val candidate = created.value
                 val attached = candidate.attachSurface(currentLease)
                 if (attached is PlaybackResult.Failure) {
+                    releaseInFlight = true
+                    releaseFailed = true // before the call: survives a cancelled, never-returning release
                     return@withLock when (val released = candidate.release()) {
                         is PlaybackResult.Success -> {
+                            releaseInFlight = false
+                            releaseFailed = false
                             currentLease.confirmPlayerReleased()
                             attached
                         }
@@ -305,9 +320,13 @@ class Media3Engine internal constructor(
                     is PlaybackResult.Failure -> {
                         eventJob?.cancelAndJoin()
                         eventJob = null
+                        releaseInFlight = true
+                        releaseFailed = true // before the call: survives a cancelled, never-returning release
                         when (val released = candidate.release()) {
                             is PlaybackResult.Failure -> released
                             is PlaybackResult.Success -> {
+                                releaseInFlight = false
+                                releaseFailed = false
                                 currentLease.confirmPlayerReleased()
                                 backend = null
                                 activeRequest = null
@@ -439,10 +458,12 @@ class Media3Engine internal constructor(
         }
         val current = backend
         if (current != null) {
+            releaseInFlight = true
+            releaseFailed = true // before the call: survives a cancelled, never-returning release
             val finished = if (hard) current.hardAbort() else current.release()
             when (finished) {
                 is PlaybackResult.Failure -> return@withLock finished
-                is PlaybackResult.Success -> Unit
+                is PlaybackResult.Success -> releaseFailed = false
             }
         }
         eventJob?.cancelAndJoin()
@@ -461,8 +482,43 @@ class Media3Engine internal constructor(
         activeGraph = null
         activeEvidence = null
         sourceReleased = false
+        releaseFailed = false
+        releaseInFlight = false
         PlaybackResult.Success(Unit)
     }
+
+    /**
+     * Drops a player whose shutdown never completed, WITHOUT calling into it again (a wedged
+     * ExoPlayer release would wedge the caller too). The lease is told it is abandoned so the host
+     * can hand out a new one; the old player is leaked until process death, bounded by the
+     * session's once-per-process budget. Holds the engine lock, which a cancelled release has
+     * already given back.
+     */
+    override suspend fun abandon(generation: Long): PlaybackResult<Unit> = lock.withLock {
+        val currentGeneration = this.generation
+        if (currentGeneration != null && currentGeneration != generation) {
+            return@withLock stale(FailurePhase.RELEASE)
+        }
+        // Cancel, never join: a collector parked on the stuck backend must not block the abandon.
+        eventJob?.cancel()
+        eventJob = null
+        lease?.abandon()
+        lease = null
+        backend = null
+        this.generation = null
+        activeRequest = null
+        activeGraph = null
+        activeEvidence = null
+        sourceReleased = false
+        releaseFailed = false
+        releaseInFlight = false
+        PlaybackResult.Success(Unit)
+    }
+
+    override fun releaseStepName(): String? = if (releaseInFlight) "player_release" else null
+
+    private fun busyCode() =
+        if (releaseFailed) FailureCode.RESOURCE_RELEASE_FAILED else FailureCode.RESOURCE_BUDGET_EXCEEDED
 
     override suspend fun snapshotMetrics(
         generation: Long,

@@ -44,7 +44,7 @@
     <string name="clean_live_error_audio">The device could not open the audio output.</string>
     <string name="clean_live_error_drm">The channel\'s content protection could not be opened.</string>
     <string name="clean_live_error_resources">The device does not have enough playback resources.</string>
-    <string name="clean_live_error_release">The previous playback session did not release cleanly.</string>
+    <string name="clean_live_error_release">The player could not shut down. Close Tuvora and open it again to keep watching.</string>
     <string name="clean_live_error_no_graph">This device cannot play this stream. Try another channel or change the player in Settings → Playback.</string>
     <string name="clean_live_error_no_progress">Playback stopped making progress.</string>
     <string name="clean_live_error_unknown">Live TV playback failed.</string>

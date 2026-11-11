@@ -142,6 +142,90 @@ class Media3EngineTest {
     }
 
     @Test
+    fun `abandon after failed release and hard abort lets a new generation start on a new backend`() = runTest {
+        val stuck = FakeBackend().apply { releaseSucceeds = false; hardAbortSucceeds = false }
+        val fresh = FakeBackend()
+        val backends = ArrayDeque(listOf(stuck, fresh))
+        var creations = 0
+        val host = CountingSurfaceHost()
+        val engine = Media3Engine(
+            scope = backgroundScope,
+            surfaceHost = host,
+            backendFactory = Media3BackendFactory {
+                creations++
+                PlaybackResult.Success(backends.removeFirst())
+            },
+        )
+        assertSuccess(engine.attachSurface(1, graph()))
+        assertSuccess(engine.start(start(1)))
+        assertTrue(engine.release(1) is PlaybackResult.Failure)
+        assertTrue(engine.hardAbort(1) is PlaybackResult.Failure)
+        val stuckCalls = stuck.releaseCalls + stuck.hardAbortCalls + stuck.startCalls + stuck.attachCalls
+
+        assertSuccess(engine.abandon(1))
+        assertSuccess(engine.attachSurface(2, graph()))
+        assertSuccess(engine.start(start(2)))
+
+        assertEquals("a second backend was built", 2, creations)
+        assertEquals("the fresh backend started", 1, fresh.startCalls)
+        assertEquals(
+            "the stuck backend is never touched again",
+            stuckCalls,
+            stuck.releaseCalls + stuck.hardAbortCalls + stuck.startCalls + stuck.attachCalls,
+        )
+        assertEquals("the abandoned lease was told", 1, host.leases.count { it.abandoned })
+    }
+
+    @Test
+    fun `without abandon a failed release refuses the next attach with RESOURCE_RELEASE_FAILED`() = runTest {
+        val backend = FakeBackend().apply { releaseSucceeds = false }
+        val engine = engine(backend, backgroundScope)
+        assertSuccess(engine.attachSurface(1, graph()))
+        assertSuccess(engine.start(start(1)))
+        assertTrue(engine.release(1) is PlaybackResult.Failure)
+
+        val refused = engine.attachSurface(2, graph())
+
+        assertEquals(
+            com.nuvio.tv.playback.core.FailureCode.RESOURCE_RELEASE_FAILED,
+            (refused as PlaybackResult.Failure).failure.code,
+        )
+    }
+
+    @Test
+    fun `cancelled release and hard abort still poison the engine with RESOURCE_RELEASE_FAILED`() = runTest {
+        val backend = FakeBackend().apply {
+            releaseHangs = true
+            hardAbortHangs = true
+        }
+        val engine = engine(backend, backgroundScope)
+        assertSuccess(engine.attachSurface(1, graph()))
+        assertSuccess(engine.start(start(1)))
+        assertEquals(null, kotlinx.coroutines.withTimeoutOrNull(5_000) { engine.release(1) })
+        assertEquals(null, kotlinx.coroutines.withTimeoutOrNull(5_000) { engine.hardAbort(1) })
+
+        val refused = engine.attachSurface(2, graph())
+
+        assertEquals(
+            "a cancelled teardown must still report the release failure",
+            com.nuvio.tv.playback.core.FailureCode.RESOURCE_RELEASE_FAILED,
+            (refused as PlaybackResult.Failure).failure.code,
+        )
+    }
+
+    @Test
+    fun `abandon with a stale generation fails and keeps the player`() = runTest {
+        val backend = FakeBackend().apply { releaseSucceeds = false }
+        val engine = engine(backend, backgroundScope)
+        assertSuccess(engine.attachSurface(5, graph()))
+        assertSuccess(engine.start(start(5)))
+        assertTrue(engine.release(5) is PlaybackResult.Failure)
+
+        assertTrue(engine.abandon(4) is PlaybackResult.Failure)
+        assertTrue(engine.attachSurface(6, graph()) is PlaybackResult.Failure)
+    }
+
+    @Test
     fun `partial attach failure confirms ownership only after native termination`() = runTest {
         val host = CountingSurfaceHost()
         val backend = FakeBackend().apply { attachSucceeds = false; releaseSucceeds = false }
@@ -413,12 +497,13 @@ class Media3EngineTest {
     private class CountingSurfaceHost : Media3SurfaceHost {
         var acquireCalls = 0
         var confirmations = 0
+        val leases = mutableListOf<FakeLease>()
         override suspend fun acquire(
             mode: SurfaceMode,
             secure: Boolean,
         ): PlaybackResult<Media3SurfaceLease> {
             acquireCalls++
-            return PlaybackResult.Success(FakeLease(mode, secure) { confirmations++ })
+            return PlaybackResult.Success(FakeLease(mode, secure) { confirmations++ }.also { leases += it })
         }
     }
 
@@ -428,6 +513,8 @@ class Media3EngineTest {
         private val onConfirmed: () -> Unit = {},
     ) : Media3SurfaceLease {
         private var attached = false
+        var abandoned = false
+        override fun abandon() { abandoned = true; attached = false }
         override fun attach(player: ExoPlayer) { attached = true }
         override fun detach(player: ExoPlayer): Boolean { attached = false; return true }
         override fun confirmPlayerReleased() { attached = false; onConfirmed() }
@@ -446,6 +533,8 @@ class Media3EngineTest {
         var hardAbortCalls = 0
         var releaseSucceeds = true
         var hardAbortSucceeds = true
+        var releaseHangs = false
+        var hardAbortHangs = false
         var detachSucceeds = true
         var eventOnStart: Media3BackendEvent? = null
         var lastPlan: Media3AdapterPlan? = null
@@ -505,6 +594,7 @@ class Media3EngineTest {
         }
         override suspend fun release(): PlaybackResult<Unit> {
             releaseCalls++
+            if (releaseHangs) kotlinx.coroutines.awaitCancellation()
             return if (releaseSucceeds) {
             PlaybackResult.Success(Unit)
             } else {
@@ -513,6 +603,7 @@ class Media3EngineTest {
         }
         override suspend fun hardAbort(): PlaybackResult<Unit> {
             hardAbortCalls++
+            if (hardAbortHangs) kotlinx.coroutines.awaitCancellation()
             return if (hardAbortSucceeds) PlaybackResult.Success(Unit) else PlaybackResult.Failure(surfaceFailure())
         }
         override suspend fun metrics(): PlaybackResult<Media3DecoderMetrics> =

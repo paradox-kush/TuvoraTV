@@ -438,6 +438,8 @@ internal object CleanLivePlayerUiPolicy {
         -> R.string.clean_live_error_preview_path
         PreviewUnavailableReason.ALL_PREVIEW_GRAPHS_FAILED ->
             R.string.clean_live_error_preview_exhausted
+        PreviewUnavailableReason.PLAYER_RELEASE_FAILED ->
+            R.string.clean_live_error_release
     }
 
     @StringRes

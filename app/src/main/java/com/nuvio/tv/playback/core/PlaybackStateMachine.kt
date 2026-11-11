@@ -1711,7 +1711,12 @@ object PlaybackStateMachine {
         if (state.snapshot.profile != SessionProfile.GUIDE) return state.snapshot.previewAvailability
         val reason = when (failure.domain) {
             FailureDomain.VIDEO_RENDERER_SURFACE -> PreviewUnavailableReason.GUIDE_RENDER_PATH_UNAVAILABLE
-            FailureDomain.DEVICE_RESOURCE -> PreviewUnavailableReason.GUIDE_RESOURCE_RESTRICTION
+            FailureDomain.DEVICE_RESOURCE ->
+                if (failure.code == FailureCode.RESOURCE_RELEASE_FAILED) {
+                    PreviewUnavailableReason.PLAYER_RELEASE_FAILED
+                } else {
+                    PreviewUnavailableReason.GUIDE_RESOURCE_RESTRICTION
+                }
             else -> return state.snapshot.previewAvailability
         }
         return PreviewAvailability.Unavailable(reason)

@@ -43,7 +43,10 @@ class MpvEngine internal constructor(
 
     @Volatile private var generation: Long? = null
     private var lease: MpvSurfaceLease? = null
-    private var backend: MpvBackend? = null
+    // Volatile only so releaseStepName() can read it without the lock while a release is stuck.
+    @Volatile private var backend: MpvBackend? = null
+    /** A previous generation's backend failed to shut down; cleared by a proven finish or by abandon. */
+    private var releaseFailed = false
     private var eventJob: Job? = null
     private var activeStart: PlaybackEngineStart? = null
     private var sourceReleased = false
@@ -53,11 +56,11 @@ class MpvEngine internal constructor(
             return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.SURFACE_LOST)
         }
         if (this.generation != null && this.generation != generation) {
-            return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.RESOURCE_BUDGET_EXCEEDED)
+            return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, busyCode())
         }
         val currentBackend = backend
         if (currentBackend != null && activeStart?.graph != graph) {
-            return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.RESOURCE_BUDGET_EXCEEDED)
+            return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, busyCode())
         }
         if (lease != null) {
             this.generation = generation
@@ -130,7 +133,7 @@ class MpvEngine internal constructor(
                     playbackRate = plan.playbackRate, restorationCheckpoint = plan.restorationCheckpoint) == plan
             } == true
             if (!sourceReleased || previous?.graph != input.graph || !compatible) {
-                return@withLock failure(FailurePhase.ENGINE_START, FailureCode.RESOURCE_BUDGET_EXCEEDED)
+                return@withLock failure(FailurePhase.ENGINE_START, busyCode())
             }
             when (val applied = retained.apply(plan)) {
                 is PlaybackResult.Failure -> return@withLock applied
@@ -161,8 +164,12 @@ class MpvEngine internal constructor(
                 val attached = candidate.attachSurface(currentLease)
                 if (attached is PlaybackResult.Failure) {
                     candidateEvents.cancelAndJoin()
+                    releaseFailed = true // before the call: survives a cancelled, never-returning release
                     return@withLock when (val released = candidate.release()) {
-                        is PlaybackResult.Success -> attached
+                        is PlaybackResult.Success -> {
+                            releaseFailed = false
+                            attached
+                        }
                         is PlaybackResult.Failure -> {
                             backend = candidate
                             released
@@ -178,9 +185,11 @@ class MpvEngine internal constructor(
                     is PlaybackResult.Failure -> {
                         eventJob?.cancelAndJoin()
                         eventJob = null
+                        releaseFailed = true // before the call: survives a cancelled, never-returning release
                         when (val released = candidate.release()) {
                             is PlaybackResult.Failure -> released
                             is PlaybackResult.Success -> {
+                                releaseFailed = false
                                 backend = null
                                 activeStart = null
                                 started
@@ -327,8 +336,12 @@ class MpvEngine internal constructor(
         if (currentGeneration != null && currentGeneration != generation) return@withLock stale(FailurePhase.RELEASE)
         backend?.let { current ->
             if (!hard && !sourceReleased) lease?.freezeForTransition()
+            // Marked BEFORE the call: a backend that never returns is cancelled by the session's
+            // timeout, and only a pre-set flag survives that cancellation.
+            releaseFailed = true
             val result = if (hard) current.hardAbort() else current.release()
             if (result is PlaybackResult.Failure) return@withLock result
+            releaseFailed = false
         }
         eventJob?.cancelAndJoin()
         eventJob = null
@@ -341,8 +354,37 @@ class MpvEngine internal constructor(
         this.generation = null
         activeStart = null
         sourceReleased = false
+        releaseFailed = false
         PlaybackResult.Success(Unit)
     }
+
+    /**
+     * Drops a backend whose shutdown never completed, WITHOUT calling into it again: its native
+     * thread may be wedged forever, and anything we call would wedge with it. The lease is told it
+     * is abandoned so the surface host can hand out a new one; the old core is leaked until process
+     * death (bounded by the session's once-per-process budget). Holds the engine lock, which a
+     * cancelled release/hardAbort has already given back (the backend's awaits are cancellable).
+     */
+    override suspend fun abandon(generation: Long): PlaybackResult<Unit> = lock.withLock {
+        val currentGeneration = this.generation
+        if (currentGeneration != null && currentGeneration != generation) return@withLock stale(FailurePhase.RELEASE)
+        // Cancel, never join: a collector parked on the stuck backend must not block the abandon.
+        eventJob?.cancel()
+        eventJob = null
+        lease?.abandon()
+        lease = null
+        backend = null
+        this.generation = null
+        activeStart = null
+        sourceReleased = false
+        releaseFailed = false
+        PlaybackResult.Success(Unit)
+    }
+
+    override fun releaseStepName(): String? = backend?.releaseStepName()
+
+    private fun busyCode() =
+        if (releaseFailed) FailureCode.RESOURCE_RELEASE_FAILED else FailureCode.RESOURCE_BUDGET_EXCEEDED
 
     private fun publish(generation: Long, event: MpvBackendEvent) {
         if (this.generation != generation) return

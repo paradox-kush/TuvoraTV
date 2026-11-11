@@ -710,6 +710,7 @@ class AndroidMpvBackendTest {
         override fun markAttached() { attached = true }
         override fun confirmDetached() { attached = false }
         override fun confirmCoreDestroyed() { attached = false }
+        override fun abandon() { attached = false }
         override fun release(): Boolean = !attached
     }
 

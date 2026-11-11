@@ -143,6 +143,12 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
     private val diagnostics = FormattingPlaybackDiagnostics(PostHogPlaybackDiagnosticSink)
 
     /**
+     * One per process (this factory is a singleton): a player that cannot shut down may be dropped
+     * once, then a second stuck shutdown is fatal again. Shared by the guide preview and fullscreen.
+     */
+    private val abandonedPlayerBudget = com.nuvio.tv.playback.core.AbandonedPlayerBudget()
+
+    /**
      * F13: the user's live buffer length from the legacy (user-facing) settings, read per session so
      * a change applies to the next channel. The clean preference document only imports legacy
      * settings once, so it cannot carry a setting the user keeps adjusting. Any failure means Auto.
@@ -209,6 +215,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
                 fatalTtlMs = COMPATIBILITY_TTL_MS,
             ),
             policy = PlaybackPolicy(),
+            abandonedPlayerBudget = abandonedPlayerBudget,
         )
         // The actor lane preserves this command before any Tune/Zap sent through the returned owner.
         session.dispatch(bootstrap.initialCommand())

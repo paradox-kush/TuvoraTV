@@ -181,6 +181,28 @@ interface PlaybackEngine {
      * never translated to success. Implementations must be idempotent.
      */
     suspend fun hardAbort(generation: Long): PlaybackResult<Unit>
+
+    /**
+     * Last resort after [release] and [hardAbort] both failed or timed out: drop the stuck player
+     * WITHOUT calling into it again, and free this engine (and its surface lease) so a fresh player
+     * can start. It proves nothing about the old player's resources, so the session only asks for
+     * it under [AbandonedPlayerBudget]. The default declines.
+     */
+    suspend fun abandon(generation: Long): PlaybackResult<Unit> = PlaybackResult.Failure(
+        PlaybackFailure(
+            code = FailureCode.RESOURCE_RELEASE_FAILED,
+            domain = FailureDomain.DEVICE_RESOURCE,
+            phase = FailurePhase.RELEASE,
+            retryability = Retryability.FATAL,
+            deterministic = true,
+        ),
+    )
+
+    /**
+     * Closed-enum name of the shutdown step an in-flight release is in, for telemetry. Must not
+     * suspend or take locks: it is read exactly when the release is stuck.
+     */
+    fun releaseStepName(): String? = null
 }
 
 enum class AudioFocusEvent { GAIN, LOSS_TRANSIENT, LOSS_DUCK, LOSS_PERMANENT }
@@ -245,6 +267,9 @@ enum class PlaybackDiagnosticCode {
     REQUEST_RESOLVED,
     GRAPH_SELECTED,
     ENGINE_OPERATION_FAILED,
+
+    /** Shutdown failed twice; the stuck player was dropped (once per process) so playback can continue. */
+    ADAPTER_ABANDONED_AFTER_RELEASE_FAILURE,
     RELEASE_BARRIER_STARTED,
     RELEASE_BARRIER_COMPLETED,
     LIVE_RECONNECT_ATTEMPT,
@@ -292,6 +317,8 @@ data class PlaybackDiagnosticEvent(
     val highResolution: Boolean? = null,
     /** Set on a live runtime freeze (video flat for a whole window). */
     val freeze: LiveFreezeTelemetry? = null,
+    /** Which shutdown step was in flight when release failed — the step enum name only. */
+    val releaseStep: String? = null,
 )
 
 fun interface PlaybackDiagnostics {

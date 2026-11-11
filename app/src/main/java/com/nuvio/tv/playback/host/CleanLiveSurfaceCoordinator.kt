@@ -557,6 +557,16 @@ internal class CleanLiveSurfaceCoordinator(
             slot.attached = false
         }
 
+        @Synchronized override fun abandon() {
+            // The stuck core may still hold the native window, but it will never be called again:
+            // the coordinator must stop counting this slot as attached or it stays occupied (and
+            // disposeAfterSessionRelease refuses) for the rest of the process.
+            if (state == MpvLeaseState.RELEASED) return
+            state = MpvLeaseState.RELEASED
+            slot.attached = false
+            markMpvReleased(slot)
+        }
+
         @Synchronized override fun release(): Boolean = when (state) {
             MpvLeaseState.ATTACHED -> false
             MpvLeaseState.RELEASED -> true

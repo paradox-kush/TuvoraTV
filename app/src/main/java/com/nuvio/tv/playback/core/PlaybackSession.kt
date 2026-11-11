@@ -46,6 +46,8 @@ class PlaybackSession(
     private val compatibilityRecording: CompatibilityRecordingEnvironment? = null,
     private val policy: PlaybackPolicy = PlaybackPolicy(),
     private val releaseTimeoutMs: Long = DEFAULT_RELEASE_TIMEOUT_MS,
+    /** Process-wide allowance to drop a player that cannot shut down; see [AbandonedPlayerBudget]. */
+    private val abandonedPlayerBudget: AbandonedPlayerBudget = AbandonedPlayerBudget(),
 ) {
     init {
         require(releaseTimeoutMs > 0) { "Release timeout must be positive" }
@@ -1118,13 +1120,16 @@ class PlaybackSession(
         scope.launch {
             workToCancel?.cancelAndJoin()
             val releaseResult = if (action.reason == ActiveWorkReleaseReason.REPLACE_REQUEST) {
+                var abandoned = false
                 releaseSourceUntilComplete(
                     generation = action.generation,
                     engine = engine,
                     engineGeneration = releasedGraphGeneration,
+                    onAbandoned = { abandoned = true },
                 ).also { result ->
-                    // The player and its surface stay warm for the next channel.
-                    if (result is PlaybackResult.Success && engine != null) {
+                    // The player and its surface stay warm for the next channel — unless the player
+                    // was abandoned, in which case the engine is idle and nothing is warm.
+                    if (result is PlaybackResult.Success && engine != null && !abandoned) {
                         warmEngine = engine.type
                         warmEngineGeneration = releasedGraphGeneration
                     }
@@ -1536,12 +1541,15 @@ class PlaybackSession(
             safeResult(FailurePhase.RELEASE) { engine.release(adapterGeneration) }
         }
         if (graceful is PlaybackResult.Success) return graceful
+        // Read before anything else touches the engine: a stuck release is still in its step.
+        val stuckStep = engine.releaseStepName()
         diagnostics.record(
             PlaybackDiagnosticEvent(
                 generation = generation,
                 code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
                 engine = engine.type,
                 failure = graceful?.failureOrNull() ?: releaseFailure(),
+                releaseStep = stuckStep,
             ),
         )
 
@@ -1549,24 +1557,70 @@ class PlaybackSession(
             safeResult(FailurePhase.RELEASE) { engine.hardAbort(adapterGeneration) }
         }
         if (abort is PlaybackResult.Success) return abort
+        val abortStep = engine.releaseStepName() ?: stuckStep
         diagnostics.record(
             PlaybackDiagnosticEvent(
                 generation = generation,
                 code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
                 engine = engine.type,
                 failure = abort?.failureOrNull() ?: releaseFailure(),
+                releaseStep = abortStep,
             ),
         )
         // The adapter-specific cause is diagnostic evidence. At the session boundary, the only
         // safe semantic is that resource ownership could not be proven ended. It is fatal and can
         // never authorize a handoff, reconnect, or second provider request.
-        return PlaybackResult.Failure(releaseFailure())
+        //
+        // One deliberate, owner-approved exception per process (AbandonedPlayerBudget): drop the
+        // stuck player and let a fresh one start. The fail-closed rule is relaxed here; the
+        // trade-off is that the provider may briefly see a second connection while the abandoned
+        // player's socket winds down. A second stuck shutdown stays fatal.
+        return abandonOrFail(generation, engine, adapterGeneration, abortStep)
+    }
+
+    /** Applies the once-per-process abandon after both shutdown attempts failed. */
+    private suspend fun abandonOrFail(
+        generation: Long,
+        engine: PlaybackEngine,
+        adapterGeneration: Long,
+        step: String?,
+        onAbandoned: () -> Unit = {},
+    ): PlaybackResult<Unit> {
+        if (!abandonedPlayerBudget.tryConsume()) return PlaybackResult.Failure(releaseFailure())
+        val abandoned = withTimeoutOrNull(ABANDON_TIMEOUT_MS) {
+            safeResult(FailurePhase.RELEASE) { engine.abandon(adapterGeneration) }
+        }
+        if (abandoned !is PlaybackResult.Success) {
+            diagnostics.record(
+                PlaybackDiagnosticEvent(
+                    generation = generation,
+                    code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                    engine = engine.type,
+                    failure = abandoned?.failureOrNull() ?: releaseFailure(),
+                    releaseStep = step,
+                ),
+            )
+            return PlaybackResult.Failure(releaseFailure())
+        }
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = generation,
+                code = PlaybackDiagnosticCode.ADAPTER_ABANDONED_AFTER_RELEASE_FAILURE,
+                engine = engine.type,
+                releaseStep = step,
+            ),
+        )
+        // The engine holds nothing now, exactly as after a successful full release.
+        if (warmEngine == engine.type) clearWarmEngine()
+        onAbandoned()
+        return PlaybackResult.Success(Unit)
     }
 
     private suspend fun releaseSourceUntilComplete(
         generation: Long,
         engine: PlaybackEngine?,
         engineGeneration: Long?,
+        onAbandoned: () -> Unit = {},
     ): PlaybackResult<Unit> {
         if (engine == null) return PlaybackResult.Success(Unit)
         val adapterGeneration = engineGeneration ?: generation
@@ -1576,12 +1630,14 @@ class PlaybackSession(
         }
         if (stopped is PlaybackResult.Success) return stopped
 
+        val stuckStep = engine.releaseStepName()
         diagnostics.record(
             PlaybackDiagnosticEvent(
                 generation = generation,
                 code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
                 engine = engine.type,
                 failure = stopped?.failureOrNull() ?: releaseFailure(),
+                releaseStep = stuckStep,
             ),
         )
         // A source-stop failure cannot authorize another provider connection. Destroy the retained
@@ -1589,8 +1645,20 @@ class PlaybackSession(
         val abort = withTimeoutOrNull(releaseTimeoutMs) {
             safeResult(FailurePhase.RELEASE) { engine.hardAbort(adapterGeneration) }
         }
-        return abort.takeIf { it is PlaybackResult.Success }
-            ?: PlaybackResult.Failure(releaseFailure())
+        if (abort is PlaybackResult.Success) return abort
+        val abortStep = engine.releaseStepName() ?: stuckStep
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = generation,
+                code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                engine = engine.type,
+                failure = abort?.failureOrNull() ?: releaseFailure(),
+                releaseStep = abortStep,
+            ),
+        )
+        // Same once-per-process relaxation of the fail-closed rule as the full release (see
+        // releaseAdapterUntilComplete); an abandoned engine is idle, so it is not left warm.
+        return abandonOrFail(generation, engine, adapterGeneration, abortStep, onAbandoned)
     }
 
     /**
@@ -2386,6 +2454,7 @@ class PlaybackSession(
 
     private companion object {
         const val DEFAULT_RELEASE_TIMEOUT_MS = 5_000L
+        const val ABANDON_TIMEOUT_MS = 1_000L
         const val SURFACE_RECHECK_MS = 500L
         const val MAX_TRACKED_CHANNELS = 16
         val NONFATAL_OUTPUT_STATUSES = setOf(

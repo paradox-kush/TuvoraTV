@@ -880,6 +880,9 @@ enum class PreviewUnavailableReason {
     GUIDE_RENDER_PATH_UNAVAILABLE,
     PREFERRED_ENGINE_FAILED,
     ALL_PREVIEW_GRAPHS_FAILED,
+
+    /** The player could not shut down; only closing and reopening the app recovers. */
+    PLAYER_RELEASE_FAILED,
 }
 
 sealed interface StreamAvailability {

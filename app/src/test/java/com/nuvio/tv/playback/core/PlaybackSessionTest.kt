@@ -541,6 +541,109 @@ class PlaybackSessionTest {
     }
 
     @Test
+    fun `first failed release barrier abandons the stuck player and the next channel plays`() = runTest {
+        val engine = FakeEngine().apply {
+            releaseFailuresRemaining = 1
+            hardAbortFailuresRemaining = 1
+            abandonSucceeds = true
+            stepName = "DETACH_SURFACE"
+        }
+        val recorded = mutableListOf<PlaybackDiagnosticEvent>()
+        val budget = AbandonedPlayerBudget()
+        val session = session(
+            engine,
+            diagnostics = PlaybackDiagnostics(recorded::add),
+            abandonedPlayerBudget = budget,
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals("the zap proceeded", 2, engine.startCalls)
+        assertTrue("no fatal failure", session.snapshot.value.state != PlaybackState.FAILED)
+        assertEquals("abandon was asked once", 1, engine.abandonCalls)
+        assertEquals("budget spent", 1, budget.used)
+        val abandoned = recorded.single { it.code == PlaybackDiagnosticCode.ADAPTER_ABANDONED_AFTER_RELEASE_FAILURE }
+        assertEquals("DETACH_SURFACE", abandoned.releaseStep)
+        assertTrue(
+            "the failed barrier diagnostics carry the step too",
+            recorded.filter { it.code == PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED }
+                .all { it.releaseStep == "DETACH_SURFACE" },
+        )
+        close(session)
+    }
+
+    @Test
+    fun `second failed release barrier with the budget spent stays fatal`() = runTest {
+        val engine = FakeEngine().apply {
+            releaseFailuresRemaining = 2
+            hardAbortFailuresRemaining = 2
+            abandonSucceeds = true
+        }
+        val budget = AbandonedPlayerBudget()
+        val session = session(engine, abandonedPlayerBudget = budget)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        session.dispatch(PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        assertEquals("first failure was absorbed", 1, engine.abandonCalls)
+
+        session.dispatch(PlaybackCommand.Zap(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailureCode.RESOURCE_RELEASE_FAILED, session.snapshot.value.failure?.code)
+        assertEquals("no second abandon", 1, engine.abandonCalls)
+        close(session)
+    }
+
+    @Test
+    fun `a zero budget keeps the failed release fatal and never calls abandon`() = runTest {
+        val engine = FakeEngine().apply {
+            releaseFailuresRemaining = 1
+            hardAbortFailuresRemaining = 1
+            abandonSucceeds = true
+        }
+        val session = session(engine, abandonedPlayerBudget = AbandonedPlayerBudget(maxAbandons = 0))
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailureCode.RESOURCE_RELEASE_FAILED, session.snapshot.value.failure?.code)
+        assertEquals(0, engine.abandonCalls)
+        close(session)
+    }
+
+    @Test
+    fun `an abandon the engine refuses leaves the release failure fatal`() = runTest {
+        val engine = FakeEngine().apply {
+            releaseFailuresRemaining = 1
+            hardAbortFailuresRemaining = 1
+            abandonSucceeds = false
+        }
+        val session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        session.dispatch(PlaybackCommand.Zap(secondLiveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+
+        assertEquals(1, engine.abandonCalls)
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+        assertEquals(FailureCode.RESOURCE_RELEASE_FAILED, session.snapshot.value.failure?.code)
+        close(session)
+    }
+
+    @Test
     fun `superseded deferred resolution is cancelled and cannot start a stale generation`() = runTest {
         val engine = FakeEngine()
         val first = providerSelection("first")
@@ -2840,6 +2943,7 @@ class PlaybackSessionTest {
         outputController: PlaybackOutputController = FakeOutputController,
         audioFocus: AudioFocusPort = NoopAudioFocusPort,
         clock: PlaybackClock = TestClock,
+        abandonedPlayerBudget: AbandonedPlayerBudget = AbandonedPlayerBudget(),
     ) = PlaybackSession(
         parentScope = this,
         requestResolver = requestResolver,
@@ -2866,6 +2970,7 @@ class PlaybackSessionTest {
         compatibilityRecording = compatibilityRecording,
         policy = policy,
         releaseTimeoutMs = releaseTimeoutMs,
+        abandonedPlayerBudget = abandonedPlayerBudget,
     )
 
     private suspend fun close(session: PlaybackSession) {
@@ -2901,6 +3006,10 @@ class PlaybackSessionTest {
         var releaseTimeoutsRemaining = 0
         var releaseFailuresRemaining = 0
         var hardAbortFailuresRemaining = 0
+        var abandonCalls = 0
+        val abandonGenerations = mutableListOf<Long>()
+        var abandonSucceeds = false
+        var stepName: String? = null
         var snapshotMetricsCalls = 0
         var videoFramesRendered: Long? = null
         var audioBuffersRendered: Long? = null
@@ -3039,6 +3148,18 @@ class PlaybackSessionTest {
                 )
             }
             activeConnections = 0
+            return PlaybackResult.Success(Unit)
+        }
+
+        override fun releaseStepName(): String? = stepName
+
+        override suspend fun abandon(generation: Long): PlaybackResult<Unit> {
+            abandonCalls++
+            abandonGenerations += generation
+            if (!abandonSucceeds) return super.abandon(generation)
+            // The stuck player is dropped: its provider connection is no longer ours to count.
+            activeConnections = 0
+            surface?.owner = null
             return PlaybackResult.Success(Unit)
         }
 

@@ -29,6 +29,13 @@ interface Media3SurfaceLease {
     /** Called only after affirmative player termination proves all renderer ownership ended. */
     fun confirmPlayerReleased()
 
+    /**
+     * Forces the terminal released state for a player that could not be shut down and will never be
+     * called again, so the host stops counting the surface as attached and can hand out a new
+     * lease. The only caller is the engine's abandon path; it proves nothing about the old player.
+     */
+    fun abandon()
+
     /** True only when the host no longer owns an attached player/surface relationship. */
     suspend fun release(): Boolean
 }
@@ -94,6 +101,17 @@ class ViewMedia3SurfaceHost(
             attached = false
         }
 
+        override fun abandon() {
+            val notify = synchronized(this) {
+                attached = false
+                if (released) false else {
+                    released = true
+                    true
+                }
+            }
+            if (notify) onReleasedView(view)
+        }
+
         override suspend fun release(): Boolean {
             val notify = synchronized(this) {
                 if (attached) return false
@@ -129,6 +147,17 @@ class ViewMedia3SurfaceHost(
 
         override fun confirmPlayerReleased() {
             attached = false
+        }
+
+        override fun abandon() {
+            val notify = synchronized(this) {
+                attached = false
+                if (released) false else {
+                    released = true
+                    true
+                }
+            }
+            if (notify) onReleasedView(view)
         }
 
         override suspend fun release(): Boolean {

@@ -813,6 +813,30 @@ class PlaybackStateMachineTest {
     }
 
     @Test
+    fun `guide preview that failed to release maps to the restart reason not the resource limit`() {
+        val startingGuide = startingState(ContentType.LIVE, SessionProfile.GUIDE)
+        val releaseFailure = PlaybackFailure(
+            code = FailureCode.RESOURCE_RELEASE_FAILED,
+            domain = FailureDomain.DEVICE_RESOURCE,
+            phase = FailurePhase.SURFACE_ATTACHMENT,
+            retryability = Retryability.FATAL,
+        )
+        val failed = PlaybackStateMachine.reduce(startingGuide, PlaybackEvent.Failed(1, releaseFailure))
+        assertEquals(
+            PreviewAvailability.Unavailable(PreviewUnavailableReason.PLAYER_RELEASE_FAILED),
+            failed.state.snapshot.previewAvailability,
+        )
+
+        val budgetFailure = releaseFailure.copy(code = FailureCode.RESOURCE_BUDGET_EXCEEDED)
+        val budget = PlaybackStateMachine.reduce(startingGuide, PlaybackEvent.Failed(1, budgetFailure))
+        assertEquals(
+            "a genuine resource limit keeps the old reason",
+            PreviewAvailability.Unavailable(PreviewUnavailableReason.GUIDE_RESOURCE_RESTRICTION),
+            budget.state.snapshot.previewAvailability,
+        )
+    }
+
+    @Test
     fun `all eligible graphs terminal evidence requires session policy authority`() {
         val playing = playingState(ContentType.LIVE)
         val unavailable = StreamAvailability.TerminallyUnavailable(
