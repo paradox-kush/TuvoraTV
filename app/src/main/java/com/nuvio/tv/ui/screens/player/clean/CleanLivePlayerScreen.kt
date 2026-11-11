@@ -169,8 +169,17 @@ internal fun CleanLivePlayerScreen(
         onDispose { ImmersivePlaybackGate.setImmersive(false) }
     }
     // BACK: close a panel (the dialogs answer it themselves), then hide the controls, then leave.
+    // B239/B227: in trouble (failed, reconnecting, tuning) one BACK leaves.
     BackHandler {
-        when (LiveControlsPolicy.backAction(panelOpen = panel != null, controlsVisible = controlsVisible)) {
+        when (
+            LiveControlsPolicy.backAction(
+                panelOpen = panel != null,
+                controlsVisible = controlsVisible,
+                failed = failed,
+                reconnecting = reconnecting,
+                tuning = tuning,
+            )
+        ) {
             LiveControlsPolicy.BackAction.CLOSE_PANEL -> panel = null
             LiveControlsPolicy.BackAction.HIDE_CONTROLS -> hideControls()
             LiveControlsPolicy.BackAction.EXIT -> onExitRequested()

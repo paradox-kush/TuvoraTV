@@ -448,9 +448,13 @@ fun LiveGuide(
     val liveChrome = playbackUi?.let { CleanLivePlayerUiPolicy.present(it) }
     val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected || pauseFailed
     val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null || uiState.replayRetry != null
-    // A zap retunes: the aimed channel isn't the playing one yet, or the spinner is up.
-    val liveTuning = playbackUi?.spinnerVisible == true ||
-        (uiState.focusedChannel?.let { it.contentId != playingContentId } == true)
+    // A zap retunes: the aimed channel isn't the playing one yet, or the spinner is up. Read at event time
+    // (B180: the body's uiState has the aim cleared, so it must come from the view model, not composition).
+    fun liveTuningNow(): Boolean = GuideZapTuningPolicy.tuning(
+        spinnerVisible = playbackUi?.spinnerVisible == true,
+        aimedContentId = aimedChannel()?.contentId,
+        playingContentId = playingContentId,
+    )
     fun hideControls() {
         controls.reset()
         // The buttons leave composition: focus waits behind the video for the next key.
@@ -475,9 +479,17 @@ fun LiveGuide(
     )
     LaunchedEffect(fullscreen) { if (!fullscreen) { controls.reset(); livePanel = null } }
     // F28 BACK: the channel list and the pickers answer it themselves; then hide the controls; then
-    // back to the guide.
+    // back to the guide. B239/B227: in trouble (failed, reconnecting, tuning) one BACK leaves.
     BackHandler(enabled = fullscreen) {
-        when (LiveControlsPolicy.backAction(panelOpen = false, controlsVisible = controls.visible)) {
+        when (
+            LiveControlsPolicy.backAction(
+                panelOpen = false,
+                controlsVisible = controls.visible,
+                failed = liveFailed,
+                reconnecting = liveReconnecting,
+                tuning = liveTuningNow(),
+            )
+        ) {
             LiveControlsPolicy.BackAction.HIDE_CONTROLS -> hideControls()
             else -> {
                 playbackViewModel.requestCollapse()

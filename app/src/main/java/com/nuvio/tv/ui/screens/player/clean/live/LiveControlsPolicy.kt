@@ -12,7 +12,8 @@ import com.nuvio.tv.core.contracts.LivePausePhase
  *  - UP/DOWN with the controls hidden change channel; guide LEFT opens its channel browser.
  *    Other directions reveal the controls and then move
  *    focus along them — there is no timeline, so no scrubbing;
- *  - BACK closes a panel first, then hides the controls, then leaves (to the guide);
+ *  - BACK closes a panel first, then hides the controls, then leaves (to the guide) — in trouble it
+ *    leaves at once (see [backAction]);
  *  - one auto-hide delay shared with VOD, never while paused, on an error or with a panel open.
  */
 internal object LiveControlsPolicy {
@@ -109,8 +110,21 @@ internal object LiveControlsPolicy {
 
     enum class BackAction { CLOSE_PANEL, HIDE_CONTROLS, EXIT }
 
-    fun backAction(panelOpen: Boolean, controlsVisible: Boolean): BackAction = when {
+    /**
+     * B239 / B227: in trouble (failed — a failed live pause included —, reconnecting, or tuning) the controls
+     * keep coming back: a reconnect re-reveals them and tuning never auto-hides them, so a hiding BACK never
+     * got the viewer out. In trouble BACK leaves in one press. An open panel still closes first; healthy
+     * playback and an intentional pause keep hide-then-leave.
+     */
+    fun backAction(
+        panelOpen: Boolean,
+        controlsVisible: Boolean,
+        failed: Boolean = false,
+        reconnecting: Boolean = false,
+        tuning: Boolean = false,
+    ): BackAction = when {
         panelOpen -> BackAction.CLOSE_PANEL
+        failed || reconnecting || tuning -> BackAction.EXIT
         controlsVisible -> BackAction.HIDE_CONTROLS
         else -> BackAction.EXIT
     }

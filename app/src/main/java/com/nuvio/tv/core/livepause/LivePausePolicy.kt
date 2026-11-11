@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.livepause
 
+import com.nuvio.tv.core.contracts.LivePauseWindow
 import kotlin.math.roundToLong
 
 enum class LivePauseMechanism { PROVIDER_CATCHUP, DISK_BUFFER, ENGINE_BACK_BUFFER, UNAVAILABLE }
@@ -115,6 +116,18 @@ object LivePausePolicy {
             cacheSecs = maxOf(durationFor(forward, bitrateBps) / 1000, normal.cacheSecs),
         )
     }
+
+    /**
+     * B241b: the disk buffer's window on the player's timeline, where the capture is ahead of what the player
+     * last reported. The player's timeline starts at the first piece of the local playlist it loaded; the
+     * capture's [captureTotalMs] is the length of the playlist as now written (LiveCaptureLoop / TsSegmenter:
+     * the sum of the pieces still listed). Before any trim both start at the same piece, so the capture's
+     * length is exact on the player's timeline; after a trim the player's start can only be the same or older,
+     * so the capture's length is a lower bound of the true end there. Taking the larger end therefore never
+     * runs past what is saved. Start and position stay the player's.
+     */
+    fun diskWindow(player: LivePauseWindow, captureTotalMs: Long): LivePauseWindow =
+        if (captureTotalMs > player.endMs) player.copy(endMs = captureTotalMs) else player
 
     enum class GoLiveAction { SEEK_TO_EDGE, RETUNE }
 

@@ -331,8 +331,10 @@ class LivePauseController(
 
     private suspend fun play() {
         val current = state.value
-        if (current is LivePauseState.Failed) {
-            // Play on the Failed card is "get me the picture back".
+        if (current is LivePauseState.Failed || current is LivePauseState.Preparing) {
+            // Play on the Failed card is "get me the picture back". B241a: so is Play while the buffer is still
+            // preparing (the view says paused there): cancel the pause and go live. The reset inside goLive bumps
+            // the generation, so the abandoned capture's Ready / Prepared / Window can no longer shift us.
             goLive(failedFallsBackToPlay = true)
             return
         }
@@ -458,7 +460,10 @@ class LivePauseController(
             val position = if (base == null) 0L else (base - pauseWall) + (engine.window()?.positionMs ?: 0L)
             LivePauseWindow(0L, end, position.coerceIn(0L, end))
         } else {
-            engine.window()
+            // B241b: the player may lag the capture (its view of the local playlist); the capture knows what is saved.
+            engine.window()?.let { player ->
+                if (mechanism == LivePauseMechanism.DISK_BUFFER) LivePausePolicy.diskWindow(player, captureWindow.totalMs) else player
+            }
         }
         if (window == null) {
             if (previous != null) mutableState.value = previous.copy(paused = paused)
