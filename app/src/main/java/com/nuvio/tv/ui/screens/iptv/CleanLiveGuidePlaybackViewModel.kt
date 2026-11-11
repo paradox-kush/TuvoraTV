@@ -30,6 +30,7 @@ import com.nuvio.tv.playback.host.AndroidCleanLiveHostInput
 import com.nuvio.tv.playback.host.CleanLiveHost
 import com.nuvio.tv.playback.host.CleanLiveHostFactory
 import com.nuvio.tv.playback.live.LiveChannelNavigationPort
+import com.nuvio.tv.playback.live.LiveTuneDeadlinePolicy
 import com.nuvio.tv.playback.live.LiveZapSettlePolicy
 import com.nuvio.tv.playback.live.LiveChannelSelectionPort
 import com.nuvio.tv.playback.live.LiveChannelTarget
@@ -67,6 +68,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class CleanLiveGuideFailure {
     SELECTION_UNAVAILABLE,
@@ -705,12 +707,20 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             rejectAfterRelease(created, CleanLiveGuideFailure.PROFILE_CHANGED)
             return
         }
+        // B247: a tune that never returns would hold the ownership lock forever. null == OUR deadline
+        // expired (a caller cancellation throws instead and takes the branch below).
         val acceptedGeneration = try {
-            created.tune(target.selection, sessionProfile, mediaMetadata(target))
+            withTimeoutOrNull(LiveTuneDeadlinePolicy.DEADLINE_MS) {
+                created.tune(target.selection, sessionProfile, mediaMetadata(target))
+            }
         } catch (cancelled: CancellationException) {
             releaseCreatedHost(created)
             throw cancelled
         } catch (_: Exception) {
+            rejectAfterRelease(created, CleanLiveGuideFailure.TUNE_FAILED)
+            return
+        }
+        if (acceptedGeneration == null) {
             rejectAfterRelease(created, CleanLiveGuideFailure.TUNE_FAILED)
             return
         }
@@ -739,7 +749,10 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         // The control says whether it released the live source / dropped a buffer; the view can lag it.
         val hadBuffer = livePauseControl?.onChannelChanged() ?: false
         val acceptedGeneration = try {
-            currentHost.zap(target.selection, sessionProfile, mediaMetadata(target))
+            // B247: bounded, see LiveTuneDeadlinePolicy. A wedged host is released, not kept.
+            withTimeoutOrNull(LiveTuneDeadlinePolicy.DEADLINE_MS) {
+                currentHost.zap(target.selection, sessionProfile, mediaMetadata(target))
+            }
         } catch (cancelled: CancellationException) {
             publishReady(currentHost)
             throw cancelled
@@ -749,7 +762,13 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
                 // The host may still be on the buffer that was just deleted: put the channel being left back
                 // on its live source, or fail visibly. Never leave a black screen.
                 try {
-                    currentHost.tune(previous.selection, sessionProfile, mediaMetadata(previous))
+                    val retuned = withTimeoutOrNull(LiveTuneDeadlinePolicy.DEADLINE_MS) {
+                        currentHost.tune(previous.selection, sessionProfile, mediaMetadata(previous))
+                    }
+                    if (retuned == null) {
+                        rejectAfterRelease(currentHost, CleanLiveGuideFailure.TUNE_FAILED)
+                        return
+                    }
                     // Back on live: reapply the mpv live cache plan the buffer had replaced.
                     livePauseControl?.onLiveStarted()
                 } catch (cancelled: CancellationException) {
@@ -761,6 +780,11 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
                 }
             }
             publishReady(currentHost)
+            return
+        }
+        if (acceptedGeneration == null) {
+            activeTarget = previous
+            rejectAfterRelease(currentHost, CleanLiveGuideFailure.TUNE_FAILED)
             return
         }
         if (!profileMatches(profile)) {

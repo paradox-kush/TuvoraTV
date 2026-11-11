@@ -31,7 +31,9 @@ import com.nuvio.tv.playback.live.LivePlayedHistoryPort
 import com.nuvio.tv.playback.live.LivePlayedIdentity
 import com.nuvio.tv.playback.live.LiveRelativeRequest
 import com.nuvio.tv.playback.live.LiveRelativeResult
+import com.nuvio.tv.playback.live.LiveTuneDeadlinePolicy
 import com.nuvio.tv.playback.live.LiveZapDirection
+import com.nuvio.tv.playback.live.LiveZapSettlePolicy
 import com.nuvio.tv.playback.mediasession.CleanMediaSessionMetadata
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -44,6 +46,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -537,6 +540,71 @@ class CleanLiveGuidePlaybackViewModelTest {
     }
 
     @Test
+    fun `B247 a zap that never returns fails visibly at the deadline and frees changeSessionProfile`() = runTest {
+        val fixture = fixture(ownerDispatcher = StandardTestDispatcher(testScheduler))
+        fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        fixture.firstHost.zapGate = CompletableDeferred()
+
+        fixture.viewModel.requestTune(fixture.next.contentId)
+        advanceTimeBy(LiveZapSettlePolicy.SETTLE_MS + 1)
+        runCurrent()
+        fixture.viewModel.requestPromote()
+        advanceTimeBy(LiveTuneDeadlinePolicy.DEADLINE_MS / 2)
+        assertTrue("zap is still hung", fixture.operations.last() == "zap")
+        assertTrue("profile change waits behind the hung zap", fixture.firstHost.profileChanges.isEmpty())
+
+        advanceUntilIdle()
+
+        assertEquals(
+            CleanLiveGuidePlaybackState.Rejected(CleanLiveGuideFailure.TUNE_FAILED),
+            fixture.viewModel.state.value,
+        )
+        assertEquals("wedged host released", 1, fixture.firstHost.releaseCalls)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
+    fun `B247 a tune that never returns fails visibly at the deadline and frees changeSessionProfile`() = runTest {
+        val fixture = fixture(ownerDispatcher = StandardTestDispatcher(testScheduler))
+        fixture.firstHost.tuneGate = CompletableDeferred()
+        fixture.viewModel.attachGuide(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        runCurrent()
+        fixture.viewModel.requestPromote()
+        advanceTimeBy(LiveTuneDeadlinePolicy.DEADLINE_MS / 2)
+        assertEquals(CleanLiveGuidePlaybackState.Initializing, fixture.viewModel.state.value)
+
+        advanceUntilIdle()
+
+        assertEquals(
+            CleanLiveGuidePlaybackState.Rejected(CleanLiveGuideFailure.TUNE_FAILED),
+            fixture.viewModel.state.value,
+        )
+        assertEquals("wedged host released", 1, fixture.firstHost.releaseCalls)
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
+    fun `B247 caller cancellation during a hung tune still propagates and is not reported as a timeout`() = runTest {
+        val fixture = fixture(ownerDispatcher = StandardTestDispatcher(testScheduler))
+        fixture.firstHost.tuneGate = CompletableDeferred()
+        val caller = launch {
+            fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+        }
+        runCurrent()
+        caller.cancel()
+        caller.join()
+
+        assertTrue("caller stays cancelled", caller.isCancelled)
+        assertEquals("host released on cancel", 1, fixture.firstHost.releaseCalls)
+        assertEquals(
+            "cancellation is not a Failed outcome",
+            CleanLiveGuidePlaybackState.Initializing,
+            fixture.viewModel.state.value,
+        )
+        fixture.viewModel.releaseBeforeExit()
+    }
+
+    @Test
     fun `public command failure is contained and published`() = runTest {
         val fixture = fixture(commandFailures = 1)
         fixture.viewModel.attach(
@@ -978,6 +1046,9 @@ class CleanLiveGuidePlaybackViewModelTest {
         var zapFailures = 0
         /** Number of upcoming tunes that throw. */
         var tuneFailures = 0
+        /** When set, tune / zap suspend on it (a host call that never returns). */
+        var tuneGate: CompletableDeferred<Unit>? = null
+        var zapGate: CompletableDeferred<Unit>? = null
         val zapSelections = mutableListOf<ProviderPlaybackSelection>()
         val zapProfiles = mutableListOf<SessionProfile>()
         val profileChanges = mutableListOf<SessionProfile>()
@@ -997,6 +1068,7 @@ class CleanLiveGuidePlaybackViewModelTest {
         ): Long {
             operations += "tune"
             if (tuneFailures > 0) { tuneFailures--; error("synthetic tune failure") }
+            tuneGate?.await()
             tuneTargets += selection
             tuneProfiles += profile
             return advance(profile)
@@ -1009,6 +1081,7 @@ class CleanLiveGuidePlaybackViewModelTest {
         ): Long {
             operations += "zap"
             if (zapFailures > 0) { zapFailures--; error("synthetic zap failure") }
+            zapGate?.await()
             zapSelections += selection
             zapProfiles += profile
             return advance(profile)
