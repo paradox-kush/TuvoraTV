@@ -20,6 +20,7 @@ import com.nuvio.tv.playback.core.LiveVideoFitPolicy
 import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.Retryability
+import com.nuvio.tv.playback.core.SurfaceAttachmentBudget
 import com.nuvio.tv.playback.core.SurfaceCapabilities
 import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.media3.Media3SurfaceHost
@@ -54,7 +55,7 @@ internal class CleanLiveSurfaceCoordinator(
     constructibleModes: Set<SurfaceMode>,
     secureMedia3SurfaceViewSupported: Boolean,
     private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
-    private val surfaceWaitTimeoutMs: Long = DEFAULT_SURFACE_WAIT_TIMEOUT_MS,
+    private val surfaceWaitTimeoutMs: Long = SurfaceAttachmentBudget.WAIT_MS,
     private val awaitSurfaceValidity: suspend (View, Long) -> Boolean = ::awaitAndroidSurfaceValidity,
     private val mpvSurfaceFactory: (View) -> Surface? = ::androidMpvSurface,
     private val frameCapturer: SurfaceFrameCapturer = PixelCopyFrameCapturer,
@@ -185,11 +186,13 @@ internal class CleanLiveSurfaceCoordinator(
             }
             cleanupReleasedSlot()
             if (current != null) return@withLock failure()
-            val slot = when (mode) {
-                SurfaceMode.SURFACE_VIEW -> if (media3PlayerViewEnabled) createPlayerViewSlot(secure) else createSurfaceViewSlot(mode, secure)
-                SurfaceMode.TEXTURE_VIEW -> createTextureViewSlot(mode)
-                else -> error("validated Media3 mode")
-            }
+            val slot = installValidSlot {
+                when (mode) {
+                    SurfaceMode.SURFACE_VIEW -> if (media3PlayerViewEnabled) createPlayerViewSlot(secure) else createSurfaceViewSlot(mode, secure)
+                    SurfaceMode.TEXTURE_VIEW -> createTextureViewSlot(mode)
+                    else -> error("validated Media3 mode")
+                }
+            } ?: return@withLock surfaceHostFailure()
             // A release barrier can cancel an in-flight acquisition at any suspension point
             // (the surface-validity wait especially). An installed slot that never reached a
             // lease has no owner able to release it later, so any non-success exit — failure,
@@ -197,7 +200,6 @@ internal class CleanLiveSurfaceCoordinator(
             // occupied for the rest of the process and every later tune fails SURFACE_LOST.
             var leased = false
             try {
-                if (!awaitValid(slot)) return@withLock failure()
                 val host = slot.presentation?.host(mainDispatcher) { markMedia3Released(slot) } ?: ViewMedia3SurfaceHost(
                     surfaceView = { slot.view as? SurfaceView },
                     textureView = { slot.view as? TextureView },
@@ -233,18 +235,19 @@ internal class CleanLiveSurfaceCoordinator(
             if (secure || !canAcquire(mode) || mode !in MPV_MODES) return@withLock failure()
             cleanupReleasedSlot()
             if (current != null) return@withLock failure()
-            val slot = when (mode) {
-                // Direct mediacodec embedding targets a SurfaceView native window.
-                SurfaceMode.NATIVE_EMBED -> createSurfaceViewSlot(mode, secure = false)
-                // libmpv GPU output owns a Surface wrapping a TextureView SurfaceTexture.
-                SurfaceMode.GPU_RENDER -> createTextureViewSlot(mode)
-                else -> error("validated libmpv mode")
-            }
+            val slot = installValidSlot {
+                when (mode) {
+                    // Direct mediacodec embedding targets a SurfaceView native window.
+                    SurfaceMode.NATIVE_EMBED -> createSurfaceViewSlot(mode, secure = false)
+                    // libmpv GPU output owns a Surface wrapping a TextureView SurfaceTexture.
+                    SurfaceMode.GPU_RENDER -> createTextureViewSlot(mode)
+                    else -> error("validated libmpv mode")
+                }
+            } ?: return@withLock surfaceHostFailure()
             // Same cancellation-safety contract as the Media3 path: an installed slot that never
             // became a lease must never survive this call.
             var leased = false
             try {
-                if (!awaitValid(slot)) return@withLock failure()
                 val surface = mpvSurfaceFactory(slot.view)
                 if (slot.view is TextureView) slot.ownedSurface = surface
                 if (surface == null || !surface.isValid) return@withLock failure()
@@ -399,6 +402,7 @@ internal class CleanLiveSurfaceCoordinator(
         val view = SurfaceView(owner.context).apply {
             setSecure(secure)
             holder.addCallback(surfaceCallback(token))
+            requestFrameWhenFirstSized(this)
         }
         return install(SurfaceSlot(token, mode, view))
     }
@@ -409,7 +413,41 @@ internal class CleanLiveSurfaceCoordinator(
         val surface = presentation.videoSurface
         surface.setSecure(secure)
         surface.holder.addCallback(surfaceCallback(token))
+        requestFrameWhenFirstSized(surface)
         return install(SurfaceSlot(token, SurfaceMode.SURFACE_VIEW, surface, presentation = presentation))
+    }
+
+    /**
+     * B50: a SurfaceView creates its surface only from a ViewTreeObserver pre-draw pass, and only
+     * if it already has a non-empty frame (AOSP SurfaceView.mDrawListener -> updateSurface, which
+     * returns early while !mHaveFrame). The owner lives in a Compose AndroidView, and Compose lays
+     * interop children out from AndroidComposeView.dispatchDraw — AFTER that frame's pre-draw. So
+     * the one pre-draw a new surface view gets sees it at 0x0, it is sized moments later, and on
+     * an idle screen (the guide preview) no further frame ever comes: measured on device, one
+     * pre-draw in 3 s per view and no surface. Ask for exactly one more frame the first time the
+     * view is sized without a surface; its pre-draw then creates the surface. One-shot, not a loop.
+     */
+    private fun requestFrameWhenFirstSized(surface: SurfaceView) {
+        surface.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(
+                view: View,
+                left: Int,
+                top: Int,
+                right: Int,
+                bottom: Int,
+                oldLeft: Int,
+                oldTop: Int,
+                oldRight: Int,
+                oldBottom: Int,
+            ) {
+                if (right - left <= 0 || bottom - top <= 0) return
+                view.removeOnLayoutChangeListener(this)
+                if (surface.holder.surface?.isValid == true) return
+                // Never invalidate from inside the draw pass that is laying us out; Compose may
+                // fold it into the current frame. The next frame callback is outside it.
+                owner.postOnAnimation { owner.invalidate() }
+            }
+        })
     }
 
     private fun createTextureViewSlot(mode: SurfaceMode): SurfaceSlot {
@@ -438,8 +476,29 @@ internal class CleanLiveSurfaceCoordinator(
         return slot
     }
 
-    private suspend fun awaitValid(slot: SurfaceSlot): Boolean =
-        awaitSurfaceValidity(slot.view, surfaceWaitTimeoutMs)
+    /**
+     * Installs a view from [create] and waits for Android to give it a surface. B50: a view whose
+     * surface never arrives is removed and ONE fresh view is tried ([SurfaceAttachmentBudget]);
+     * the first guide preview's SurfaceView was observed never to receive one while later views did.
+     * Null means the host never delivered and no slot remains installed. A cancellation or throw
+     * during a wait also removes the view being waited on before it propagates.
+     */
+    private suspend fun installValidSlot(create: () -> SurfaceSlot): SurfaceSlot? {
+        repeat(SurfaceAttachmentBudget.ATTEMPTS) {
+            val slot = create()
+            var valid = false
+            try {
+                valid = awaitSurfaceValidity(slot.view, surfaceWaitTimeoutMs)
+            } finally {
+                if (!valid) {
+                    slot.released = true
+                    removeControlled(slot)
+                }
+            }
+            if (valid) return slot
+        }
+        return null
+    }
 
     private fun cleanupReleasedSlot() {
         current?.takeIf { it.released }?.let(::removeControlled)
@@ -599,8 +658,17 @@ internal class CleanLiveSurfaceCoordinator(
         ),
     )
 
+    /** B50: the view tree never produced a surface; the engine is not at fault. */
+    private fun surfaceHostFailure(): PlaybackResult.Failure = PlaybackResult.Failure(
+        PlaybackFailure(
+            code = FailureCode.SURFACE_HOST_UNAVAILABLE,
+            domain = FailureDomain.VIDEO_RENDERER_SURFACE,
+            phase = FailurePhase.SURFACE_ATTACHMENT,
+            retryability = Retryability.HANDOFF_ELIGIBLE,
+        ),
+    )
+
     private companion object {
-        const val DEFAULT_SURFACE_WAIT_TIMEOUT_MS = 3_000L
         /** Freeze-frame copies are downscaled: shown for seconds, ~2 MB each at 960x540. */
         const val MAX_FREEZE_FRAME_WIDTH = 960
         const val DIMMED_ALPHA = 0.45f

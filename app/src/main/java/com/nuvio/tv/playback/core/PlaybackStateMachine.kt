@@ -100,7 +100,10 @@ sealed interface PlaybackAction {
         override val generation: Long,
         val failedGraph: PlaybackGraph,
         val failure: PlaybackFailure,
-    ) : PlaybackAction
+    ) : PlaybackAction {
+        /** B50: a surface-host failure keeps the failed engine eligible. */
+        val excludedEngines: Set<EngineType> get() = handoffExcludedEngines(failedGraph, failure)
+    }
 
     data class AttachSurface(
         override val generation: Long,
@@ -1717,10 +1720,26 @@ object PlaybackStateMachine {
                 } else {
                     PreviewUnavailableReason.GUIDE_RESOURCE_RESTRICTION
                 }
-            else -> return state.snapshot.previewAvailability
+            else -> null
         }
-        return PreviewAvailability.Unavailable(reason)
+        if (reason != null) return PreviewAvailability.Unavailable(reason)
+        // B50: the label follows the incident's FINAL failure. A failure that says nothing about the
+        // preview path clears a label an earlier failure set (e.g. renderer -> hand-off -> network
+        // timeout read "render path unavailable").
+        val current = state.snapshot.previewAvailability
+        return if (current is PreviewAvailability.Unavailable && current.reason in FAILURE_PREVIEW_REASONS) {
+            PreviewAvailability.Unknown
+        } else {
+            current
+        }
     }
+
+    /** Preview labels only [previewAfterFailure] sets; any later failure may replace them. */
+    private val FAILURE_PREVIEW_REASONS = setOf(
+        PreviewUnavailableReason.GUIDE_RENDER_PATH_UNAVAILABLE,
+        PreviewUnavailableReason.GUIDE_RESOURCE_RESTRICTION,
+        PreviewUnavailableReason.PLAYER_RELEASE_FAILED,
+    )
 
     private fun PlaybackMachineState.ensureIncident(): Pair<PlaybackMachineState, PlaybackIncident> {
         incident?.let { return this to it }

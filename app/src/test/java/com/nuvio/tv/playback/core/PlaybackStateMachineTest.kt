@@ -812,6 +812,97 @@ class PlaybackStateMachineTest {
         assertTrue(explicitTerminal.state.snapshot.streamAvailability is StreamAvailability.TerminallyUnavailable)
     }
 
+    // B50: a surface Android never created is the view tree's fault. The hand-off must keep the same
+    // engine eligible (it gets a fresh surface), and nothing may learn "this engine is broken".
+    @Test
+    fun `surface host failure hands off without excluding the engine or teaching compatibility`() {
+        val attaching = attachingState(SessionProfile.GUIDE)
+        val hostFailure = PlaybackFailure(
+            code = FailureCode.SURFACE_HOST_UNAVAILABLE,
+            domain = FailureDomain.VIDEO_RENDERER_SURFACE,
+            phase = FailurePhase.SURFACE_ATTACHMENT,
+            retryability = Retryability.HANDOFF_ELIGIBLE,
+        )
+
+        val failed = PlaybackStateMachine.reduce(attaching, PlaybackEvent.Failed(1, hostFailure))
+        assertEquals(PlaybackState.HANDING_OFF_ONCE, failed.state.snapshot.state)
+        val handoff = assertAction<PlaybackAction.SelectHandoffGraph>(completeBarrier(failed.state))
+
+        assertEquals(media3Graph, handoff.failedGraph)
+        assertFalse(
+            "a surface-host failure keeps Media3 a hand-off candidate: ${handoff.excludedEngines}",
+            EngineType.MEDIA3 in handoff.excludedEngines,
+        )
+        assertFalse(
+            "never a DETERMINISTIC_FATAL compatibility record",
+            isLearnableCompatibilityFailure(hostFailure.domain, hostFailure.code),
+        )
+        assertFalse(
+            "never a runtime-instability strike",
+            isRuntimeInstabilityFailure(hostFailure.domain, hostFailure.code),
+        )
+
+        // An engine-owned surface loss still excludes the engine that lost it.
+        val engineFailure = hostFailure.copy(code = FailureCode.SURFACE_LOST)
+        val engineHandoff = assertAction<PlaybackAction.SelectHandoffGraph>(
+            completeBarrier(PlaybackStateMachine.reduce(attaching, PlaybackEvent.Failed(1, engineFailure)).state),
+        )
+        assertEquals(setOf(EngineType.MEDIA3), engineHandoff.excludedEngines)
+    }
+
+    // B50: the guide showed "render path unavailable" for an incident whose last failure was something
+    // else entirely. The label must describe the FINAL failure of the incident.
+    @Test
+    fun `guide preview label follows the final failure of the incident`() {
+        val rendererFailure = PlaybackFailure(
+            code = FailureCode.VIDEO_RENDERER_FAILED,
+            domain = FailureDomain.VIDEO_RENDERER_SURFACE,
+            phase = FailurePhase.ENGINE_START,
+            retryability = Retryability.HANDOFF_ELIGIBLE,
+        )
+        val first = PlaybackStateMachine.reduce(
+            startingState(ContentType.LIVE, SessionProfile.GUIDE),
+            PlaybackEvent.Failed(1, rendererFailure),
+        )
+        assertEquals(
+            PreviewAvailability.Unavailable(PreviewUnavailableReason.GUIDE_RENDER_PATH_UNAVAILABLE),
+            first.state.snapshot.previewAvailability,
+        )
+        val handoff = completeBarrier(first.state)
+        assertAction<PlaybackAction.SelectHandoffGraph>(handoff)
+        val selecting = handoff.state
+
+        val selected = PlaybackStateMachine.reduce(selecting, PlaybackEvent.GraphSelected(1, mpvGraph)).state
+        val starting = PlaybackStateMachine.reduce(selected, PlaybackEvent.SurfaceAttached(1)).state
+        val networkTimeout = PlaybackPolicy().watchdogFailure(
+            PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE,
+            StreamEvidence(),
+            live = true,
+        )
+        val last = PlaybackStateMachine.reduce(starting, PlaybackEvent.Failed(1, networkTimeout))
+        assertEquals(networkTimeout, last.state.snapshot.failure)
+        assertFalse(
+            "a network timeout is not a render-path problem: ${last.state.snapshot.previewAvailability}",
+            last.state.snapshot.previewAvailability ==
+                PreviewAvailability.Unavailable(PreviewUnavailableReason.GUIDE_RENDER_PATH_UNAVAILABLE),
+        )
+
+        // The emulator path: nothing eligible after the hand-off ends the incident.
+        val noGraph = PlaybackFailure(
+            code = FailureCode.NO_ELIGIBLE_GRAPH,
+            domain = FailureDomain.UNKNOWN,
+            phase = FailurePhase.GRAPH_SELECTION,
+            retryability = Retryability.FATAL,
+            deterministic = true,
+        )
+        val exhausted = PlaybackStateMachine.reduce(selecting, PlaybackEvent.Failed(1, noGraph))
+        assertFalse(
+            "no eligible graph is not a render-path problem: ${exhausted.state.snapshot.previewAvailability}",
+            exhausted.state.snapshot.previewAvailability ==
+                PreviewAvailability.Unavailable(PreviewUnavailableReason.GUIDE_RENDER_PATH_UNAVAILABLE),
+        )
+    }
+
     @Test
     fun `guide preview that failed to release maps to the restart reason not the resource limit`() {
         val startingGuide = startingState(ContentType.LIVE, SessionProfile.GUIDE)
@@ -1260,6 +1351,19 @@ class PlaybackStateMachineTest {
         ).state
         state = PlaybackStateMachine.reduce(state, PlaybackEvent.GraphSelected(1, media3Graph)).state
         return PlaybackStateMachine.reduce(state, PlaybackEvent.SurfaceAttached(1)).state
+    }
+
+    private fun attachingState(profile: SessionProfile): PlaybackMachineState {
+        var state = PlaybackStateMachine.reduce(PlaybackMachineState(), PlaybackCommand.SurfaceAvailable).state
+        state = PlaybackStateMachine.reduce(state, PlaybackCommand.Tune(liveRequest, profile)).state
+        state = PlaybackStateMachine.reduce(
+            state,
+            PlaybackEvent.RequestResolved(1, liveRequest.summary(), StreamEvidence()),
+        ).state
+        val selected = PlaybackStateMachine.reduce(state, PlaybackEvent.GraphSelected(1, media3Graph))
+        assertEquals(PlaybackState.ATTACHING_SURFACE, selected.state.snapshot.state)
+        assertAction<PlaybackAction.AttachSurface>(selected)
+        return selected.state
     }
 
     private fun startupStates(): List<PlaybackMachineState> {

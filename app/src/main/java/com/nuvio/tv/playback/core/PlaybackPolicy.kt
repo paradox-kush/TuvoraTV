@@ -1,5 +1,27 @@
 package com.nuvio.tv.playback.core
 
+/**
+ * B50: one budget for "waiting for Android to give the host a surface". The surface coordinator
+ * waits [WAIT_MS] per view and builds at most [ATTEMPTS] views; the state machine's
+ * WAITING_FOR_SURFACE watchdog is derived from both, so it can never fire while the coordinator
+ * is still legitimately waiting (both were 3 s and raced, blaming the engine for the host's fault).
+ */
+object SurfaceAttachmentBudget {
+    const val WAIT_MS: Long = 3_000L
+    const val ATTEMPTS: Int = 2
+
+    /** Engine attach after the surface arrives (and a warm-engine release before it). */
+    const val ATTACH_MARGIN_MS: Long = 1_000L
+    const val WATCHDOG_MS: Long = WAIT_MS * ATTEMPTS + ATTACH_MARGIN_MS
+}
+
+/**
+ * B50: the engines a hand-off must skip. A surface-host failure is the view tree's fault, so the
+ * same engine stays a candidate (with a fresh surface); every other hand-off skips the failed one.
+ */
+fun handoffExcludedEngines(failedGraph: PlaybackGraph, failure: PlaybackFailure): Set<EngineType> =
+    if (failure.isSurfaceHostFailure()) emptySet() else setOf(failedGraph.engine)
+
 /** The single deterministic policy consumes already-resolved requirements, never raw platform state. */
 class PlaybackPolicy(
     private val watchdogConfiguration: WatchdogConfiguration = WatchdogConfiguration(),
@@ -31,7 +53,7 @@ class PlaybackPolicy(
         val liveReadyToFirstFrameMs: Long = 1_000L,
         val vodReadyToFirstFrameMs: Long = 2_000L,
         val runtimeVideoProgressWindowMs: Long = 5_000L,
-        val surfaceAttachmentProgressMs: Long = 3_000L,
+        val surfaceAttachmentProgressMs: Long = SurfaceAttachmentBudget.WATCHDOG_MS,
         /** Absolute live buffering bound, including slow trickle/refill without an engine error. */
         val liveRebufferMs: Long = 30_000L,
         /**
@@ -249,11 +271,12 @@ class PlaybackPolicy(
         candidates: List<PlaybackGraph>,
         failedGraph: PlaybackGraph,
         evidence: StreamEvidence? = null,
+        excludedEngines: Set<EngineType> = setOf(failedGraph.engine),
     ): Selection = select(
         SelectionInput(
             requirements = requirements,
             candidates = candidates,
-            excludedEngines = setOf(failedGraph.engine),
+            excludedEngines = excludedEngines,
             evidence = evidence,
         ),
         handoff = true,
@@ -332,7 +355,18 @@ class PlaybackPolicy(
         var rejectedBy = GraphRejectionReason.NO_CANDIDATES
         for ((reason, keep) in filters) {
             if (remaining.isEmpty()) break
-            val kept = remaining.filter(keep)
+            var kept = remaining.filter(keep)
+            // B50: in the guide, "no GPU render" is a preference (preview cost), not a ban: on a
+            // software-decode-only box it left nothing to play once Media3 failed. A disallowed GPU
+            // budget is still a hard limit, and the graph must still own a real GPU render surface.
+            if (kept.isEmpty() && reason == GraphRejectionReason.GPU_RENDER &&
+                requirements.profile == SessionProfile.GUIDE &&
+                requirements.resourceBudget.gpuCost != ResourceAllowance.DISALLOWED
+            ) {
+                kept = remaining.filter {
+                    it.outputProfile != GraphOutputProfile.MPV_RENDER || it.surfaceMode == SurfaceMode.GPU_RENDER
+                }
+            }
             // Video is priority, subtitles best-effort (owner decision 2026-08-28): subtitle fidelity
             // may steer the choice, never leave nothing to play. Without this, FULL fidelity on a box
             // with no GPU render budget failed every live channel (Onn 8YSK95Q6, 96 users / 30 days).
