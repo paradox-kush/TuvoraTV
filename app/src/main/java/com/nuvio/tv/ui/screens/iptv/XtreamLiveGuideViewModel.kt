@@ -713,6 +713,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             return
         }
         epgRequested.clear()
+        clearTravel()
         _uiState.update {
             it.copy(
                 accountId = acc.id,
@@ -1062,6 +1063,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
      * scrolling feel laggy.
      */
     fun onChannelFocused(channel: GuideChannel, index: Int = -1) {
+        noteGuideActivity()
         if (channel.contentId == _uiState.value.focusedChannelId) return
         // Moving to a different channel clears the previous channel's playback notice.
         _uiState.update { GuidePlaybackInteractionPolicy.focus(it, channel.contentId) }
@@ -1556,14 +1558,32 @@ class XtreamLiveGuideViewModel @Inject constructor(
             catchUpDays = channel?.catchUpDays ?: 0,
         )
         if (next == _uiState.value.windowStartMs) return false
+        val now = System.currentTimeMillis()
+        // Travel is an explicit fact: landing back on live clears it, anywhere else stamps it.
+        if (GuideTimeTravel.isAtLiveEdge(next, now)) clearTravel() else { travelled = true; lastActivityMs = now }
         _uiState.update { it.copy(windowStartMs = next) }
         publishVisibleWindows()
         return true
     }
 
+    /** True once the viewer moved the window off live; see [GuideTimeTravel.onClockTick]. */
+    private var travelled = false
+    private var lastActivityMs: Long? = null
+
+    /** The viewer is active in a travelled guide (focus moved): restarts the idle clock. No state update. */
+    fun noteGuideActivity() {
+        if (travelled) lastActivityMs = System.currentTimeMillis()
+    }
+
+    private fun clearTravel() {
+        travelled = false
+        lastActivityMs = null
+    }
+
     /** BACK out of the timeline, or a channel change: return the guide to now. */
     fun resetWindowToLive() {
         val live = GuideTimeTravel.liveWindowStartMs(System.currentTimeMillis())
+        clearTravel()
         if (live == _uiState.value.windowStartMs) return
         _uiState.update { it.copy(windowStartMs = live) }
         // Every row on screen comes back with it — they were showing the travelled window.
@@ -1576,10 +1596,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
      */
     fun onMinuteTick(nowMs: Long) {
         val current = _uiState.value.windowStartMs
-        val live = GuideTimeTravel.liveWindowStartMs(nowMs)
-        if (current != live && !GuideTimeTravel.isAtLiveEdge(current, nowMs - 60_000L)) return
-        if (current == live) return
-        _uiState.update { it.copy(windowStartMs = live) }
+        val next = GuideTimeTravel.onClockTick(current, travelled, lastActivityMs, nowMs)
+        if (next == current) return
+        clearTravel()
+        _uiState.update { it.copy(windowStartMs = next) }
     }
 
     /**

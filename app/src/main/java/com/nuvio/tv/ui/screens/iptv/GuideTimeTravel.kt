@@ -68,6 +68,23 @@ internal object GuideTimeTravel {
     fun isAtLiveEdge(windowStartMs: Long, nowMs: Long): Boolean =
         windowStartMs == liveWindowStartMs(nowMs)
 
+    /** How long a travelled viewer may sit with no guide activity before the guide returns to live. */
+    const val TRAVEL_IDLE_RESET_MS = 5 * 60 * 1000L
+
+    /**
+     * The window after a clock tick. A window the viewer never travelled always follows live (however
+     * stale — the tab may have been hidden across slot boundaries). A travelled one stays until the
+     * viewer has been idle [TRAVEL_IDLE_RESET_MS] since [lastActivityMs] — the last time they
+     * travelled OR moved focus in the guide while travelled — so browsing a far-off day is never
+     * interrupted, only abandoning it is.
+     */
+    fun onClockTick(windowStartMs: Long, travelled: Boolean, lastActivityMs: Long?, nowMs: Long): Long {
+        val live = liveWindowStartMs(nowMs)
+        if (!travelled) return live
+        val at = lastActivityMs ?: return live
+        return if (nowMs - at > TRAVEL_IDLE_RESET_MS) live else windowStartMs
+    }
+
     /** Whether the now-line belongs on screen: the visible window actually contains this instant. */
     fun containsNow(windowStartMs: Long, nowMs: Long): Boolean =
         nowMs >= windowStartMs && nowMs < windowStartMs + WINDOW_MS

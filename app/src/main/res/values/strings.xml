@@ -3761,6 +3761,7 @@
     <string name="iptv_guide_return_now">Return to now</string>
     <string name="iptv_guide_browsing_schedule">Browsing the schedule</string>
     <string name="iptv_guide_empty_window">No guide data for this time</string>
+    <string name="iptv_guide_search_hint">Press OK on Search to type a channel name</string>
     <string name="iptv_guide_data_unavailable">No guide data provided. Check this playlist’s EPG settings.</string>
     <string name="iptv_manage_playlists">Manage playlists</string>
     <string name="settings_p2p_enabled_summary">Enabled · select to manage P2P streaming and storage</string>

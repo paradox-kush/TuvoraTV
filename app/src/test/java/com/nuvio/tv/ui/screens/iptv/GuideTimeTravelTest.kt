@@ -166,4 +166,58 @@ class GuideTimeTravelTest {
             GuideTimeTravel.shift(back, slots = 0, nowMs = now, catchUpDays = 7),
         )
     }
+
+    // B236: "travelled" is an explicit fact, not inferred from "was off the live edge a minute ago".
+
+    @Test
+    fun `a window that was only following live rolls to live even when hours stale`() {
+        // Old inference: current != live and !isAtLiveEdge(current, now - 60s) -> return, stays stale.
+        val stale = GuideTimeTravel.liveWindowStartMs(now - 5 * hour)
+        assertEquals(
+            "a non-travelled window follows live after the tab was hidden",
+            GuideTimeTravel.liveWindowStartMs(now),
+            GuideTimeTravel.onClockTick(stale, travelled = false, lastActivityMs = null, nowMs = now),
+        )
+    }
+
+    @Test
+    fun `a travelled window stays put within the idle grace`() {
+        val back = GuideTimeTravel.liveWindowStartMs(now) - day
+        assertEquals(
+            "recent travel is not yanked",
+            back,
+            GuideTimeTravel.onClockTick(back, true, now - GuideTimeTravel.TRAVEL_IDLE_RESET_MS + 1, now),
+        )
+    }
+
+    @Test
+    fun `a travelled window idle past the grace returns to live`() {
+        val back = GuideTimeTravel.liveWindowStartMs(now) - day
+        assertEquals(
+            "idle travel resets to live",
+            GuideTimeTravel.liveWindowStartMs(now),
+            GuideTimeTravel.onClockTick(back, true, now - GuideTimeTravel.TRAVEL_IDLE_RESET_MS - 1, now),
+        )
+    }
+
+    @Test
+    fun `a travelled viewer who keeps moving focus is not returned to live`() {
+        val back = GuideTimeTravel.liveWindowStartMs(now) - day
+        // Travelled 10 minutes ago, but the last guide activity was 1 minute ago.
+        assertEquals(
+            "recent activity keeps the travelled window",
+            back,
+            GuideTimeTravel.onClockTick(back, travelled = true, lastActivityMs = now - 60_000L, nowMs = now),
+        )
+    }
+
+    @Test
+    fun `a non-travelled window already at live is unchanged`() {
+        val live = GuideTimeTravel.liveWindowStartMs(now)
+        assertEquals(
+            "already live",
+            live,
+            GuideTimeTravel.onClockTick(live, false, null, now),
+        )
+    }
 }

@@ -215,6 +215,22 @@ fun LiveGuide(
     val firstChannelFocus = remember { FocusRequester() }
     val returnToNowFocus = remember { FocusRequester() }
     val channelListState = rememberLazyListState()
+    // B238: with no remembered row, focus entering the category column lands on the entry row (the
+    // selected category, never Search by default) instead of row 0. The row must be composed for
+    // its requester to attach, so the list opens scrolled to it.
+    val categoryEntryIndex = GuideCategoryEntryPolicy.entryIndex(
+        uiState.categories.map { it.id }, uiState.selectedCategoryId,
+    )
+    val categoryEntryFocus = remember { FocusRequester() }
+    val categoryListState = rememberLazyListState(initialFirstVisibleItemIndex = categoryEntryIndex)
+    var categoriesPositioned by remember(account.id) { mutableStateOf(uiState.categories.isNotEmpty()) }
+    LaunchedEffect(uiState.categories.isNotEmpty()) {
+        // Categories that land after first composition: bring the entry row into composition once.
+        if (uiState.categories.isNotEmpty() && !categoriesPositioned) {
+            categoryListState.scrollToItem(categoryEntryIndex)
+            categoriesPositioned = true
+        }
+    }
     // Requester identity belongs to the channel, not to whichever row is currently focused.
     // Rebinding it during the Undo handoff can make LazyColumn restore its fallback row.
     val channelRowRequesters = remember(account.id) { mutableMapOf<String, FocusRequester>() }
@@ -590,16 +606,18 @@ fun LiveGuide(
         ) {
             // Category column — collapses to zero width once focus moves into the guide.
             LazyColumn(
+                state = categoryListState,
                 modifier = Modifier
                     .width(categoryColWidth)
                     .fillMaxHeight()
                     .focusRequester(categoryListFocus)
                     .guideKeyRepeatGate()
-                    .focusRestorer(),
+                    .focusRestorer(categoryEntryFocus),
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
             ) {
                 itemsIndexed(uiState.categories, key = { _, it -> it.id }) { index, cat ->
                     GuideCategoryRow(
+                        entryFocusRequester = if (index == categoryEntryIndex) categoryEntryFocus else null,
                         label = if (cat.special == GuideSpecial.SEARCH && uiState.searchQuery.isNotBlank()) {
                             "Search: \u201C${uiState.searchQuery}\u201D"
                         } else {
@@ -629,11 +647,14 @@ fun LiveGuide(
                         nowMs = nowMs,
                         inspectedProgramme = inspectedProgramme,
                         viewedTimeMs = if (awayFromNow) windowStartMs else null,
-                        emptyGuideMessage = stringResource(when {
-                            uiState.channels.isEmpty() && (uiState.selectedCategoryId == "__fav" || uiState.selectedCategoryId == "__allfav") -> R.string.iptv_guide_favorites_empty
-                            awayFromNow -> R.string.iptv_guide_empty_window
-                            else -> R.string.iptv_guide_data_unavailable
-                        }),
+                        emptyGuideMessage = stringResource(
+                            when (GuideEmptyMessagePolicy.kind(awayFromNow, uiState.selectedCategoryId, uiState.channels.isEmpty())) {
+                                GuideEmptyMessagePolicy.Kind.FAVORITES_EMPTY -> R.string.iptv_guide_favorites_empty
+                                GuideEmptyMessagePolicy.Kind.SEARCH_HINT -> R.string.iptv_guide_search_hint
+                                GuideEmptyMessagePolicy.Kind.EMPTY_WINDOW -> R.string.iptv_guide_empty_window
+                                GuideEmptyMessagePolicy.Kind.DATA_UNAVAILABLE -> R.string.iptv_guide_data_unavailable
+                            },
+                        ),
                         // A playback notice (stopped / can't open / no recording) shows here beside the
                         // channel name instead of over the channel grid, so the list stays visible.
                         playbackError = playbackError,
@@ -784,7 +805,7 @@ fun LiveGuide(
                                     }
                                 },
                                 onBackOutOfTimeline = { leaveTimelineToNow() },
-                                onProgrammeFocused = { inspectedProgramme = it },
+                                onProgrammeFocused = { inspectedProgramme = it; viewModel.noteGuideActivity() },
                                 onProgrammeClick = { programme ->
                                     when (GuideCellIntent.forProgramme(
                                         guideActionFor(programme, ch, nowMs, uiState.catchUpSupported),
@@ -1315,6 +1336,7 @@ private fun GuideCategoryRow(
     onEnter: () -> Unit,
     onMenu: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    entryFocusRequester: FocusRequester? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val latestOnFocused by rememberUpdatedState(onFocused)
@@ -1322,6 +1344,7 @@ private fun GuideCategoryRow(
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (entryFocusRequester != null) Modifier.focusRequester(entryFocusRequester) else Modifier)
             .focusProperties {
                 right = rightFocus
                 if (upFocus != null) up = upFocus
