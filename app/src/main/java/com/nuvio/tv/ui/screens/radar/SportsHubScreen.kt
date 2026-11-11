@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -699,7 +700,47 @@ private fun MatchChannelsOverlay(
                 style = MaterialTheme.typography.bodyMedium,
                 color = NuvioTheme.colors.TextSecondary,
             )
-            else -> LazyColumn(modifier = Modifier.height(360.dp)) {
+            else -> {
+            // Grouped up front (not inside the LazyColumn) so the row order is known to the focus restore.
+            // Evidence tiers keep schedule, listings, possible event feeds and competition separate. The
+            // channel's own GUIDE names the teams (Showing) > a broadcaster listing or the channel name names
+            // the match (Broadcasting) > a possible event feed > a sport/league channel that only carries the
+            // competition (Carries). Dedup by contentId first: a duplicate Compose key is a hard crash.
+            val deduped = remember(state.matches) { state.matches.distinctBy { it.channel.contentId } }
+            val showing = remember(deduped) { deduped.filter { it.confidence == MatchConfidence.CONFIRMED && it.via == RadarChannelMatcher.MatchVia.EPG } }
+            val broadcasting = remember(deduped) { deduped.filter { it.confidence == MatchConfidence.CONFIRMED && it.via != RadarChannelMatcher.MatchVia.EPG } }
+            val possible = remember(deduped) { deduped.filter { it.confidence == MatchConfidence.POSSIBLE } }
+            val carries = remember(deduped) { deduped.filter { it.confidence == MatchConfidence.LEAGUE } }
+            val rowOrder = remember(showing, broadcasting, possible, carries) {
+                (showing + broadcasting + possible + carries).map { it.channel.contentId }
+            }
+            val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+            val requesters = remember { mutableMapOf<String, FocusRequester>() }
+            var lastFocusedId by remember { mutableStateOf<String?>(null) }
+            var rowHasFocus by remember { mutableStateOf(false) }
+            var previousOrder by remember { mutableStateOf(emptyList<String>()) }
+            // Results stream in and rows move between groups; when the focused row is recomposed away, focus
+            // is lost. Put it back by channel id (ChannelFocusRestorePolicy), never by row number.
+            LaunchedEffect(rowOrder) {
+                val target = ChannelFocusRestorePolicy.target(lastFocusedId, previousOrder, rowOrder)
+                previousOrder = rowOrder
+                if (target == null || rowHasFocus) return@LaunchedEffect
+                withFrameNanos { }
+                if (rowHasFocus) return@LaunchedEffect
+                val candidates = listOfNotNull(target) + rowOrder.filter { it != target }
+                val restored = candidates.any { id ->
+                    requesters[id]?.let { runCatching { it.requestFocus() }.getOrDefault(false) } == true
+                }
+                // Nothing composed to take it (every candidate is off-screen): let the focus system pick a row.
+                if (!restored) focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Enter)
+            }
+            fun rowModifier(id: String): Modifier = Modifier
+                .focusRequester(requesters.getOrPut(id) { FocusRequester() })
+                .onFocusChanged {
+                    if (it.isFocused) { lastFocusedId = id; rowHasFocus = true }
+                    else if (lastFocusedId == id) rowHasFocus = false
+                }
+            LazyColumn(modifier = Modifier.height(360.dp)) {
                 if (state.recordings.isNotEmpty()) {
                     item(key = "recordings-title") {
                         Text(
@@ -743,16 +784,6 @@ private fun MatchChannelsOverlay(
                         )
                     }
                 }
-                // Evidence tiers keep schedule, listings, possible event feeds and competition separate.
-                    // The channel's own GUIDE names the teams
-                // (Showing) > a broadcaster listing or the channel name names the match (Broadcasting) >
-                // a sport/league channel that only carries the competition (Carries). Dedup by contentId
-                // first: a duplicate Compose key is a hard crash.
-                val deduped = state.matches.distinctBy { it.channel.contentId }
-                val showing = deduped.filter { it.confidence == MatchConfidence.CONFIRMED && it.via == RadarChannelMatcher.MatchVia.EPG }
-                val broadcasting = deduped.filter { it.confidence == MatchConfidence.CONFIRMED && it.via != RadarChannelMatcher.MatchVia.EPG }
-                val possible = deduped.filter { it.confidence == MatchConfidence.POSSIBLE }
-                    val carries = deduped.filter { it.confidence == MatchConfidence.LEAGUE }
                 val leagueLabel = fixture.league?.takeIf { it.isNotBlank() }
                 fun label(text: String, key: String) {
                     item(key = key) {
@@ -765,13 +796,13 @@ private fun MatchChannelsOverlay(
                     }
                 }
                 if ( showing.isNotEmpty()) label("SCHEDULED FOR THIS EVENT", "grp-showing")
-                channelMatchRows(showing, state.replays, onPlay, onPlayReplay)
+                channelMatchRows(showing, state.replays, onPlay, onPlayReplay, ::rowModifier)
                 if ( broadcasting.isNotEmpty()) label("LISTED BROADCASTER", "grp-broadcasting")
-                channelMatchRows(broadcasting, state.replays, onPlay, onPlayReplay)
+                channelMatchRows(broadcasting, state.replays, onPlay, onPlayReplay, ::rowModifier)
                 if (possible.isNotEmpty()) label("POSSIBLE EVENT FEEDS", "grp-possible")
-                channelMatchRows(possible, state.replays, onPlay, onPlayReplay)
+                channelMatchRows(possible, state.replays, onPlay, onPlayReplay, ::rowModifier)
                 if ( carries.isNotEmpty()) label((leagueLabel?.let { "CARRIES $it" } ?: "CARRIES THIS COMPETITION").uppercase(), "grp-carries")
-                channelMatchRows(carries, state.replays, onPlay, onPlayReplay)
+                channelMatchRows(carries, state.replays, onPlay, onPlayReplay, ::rowModifier)
                 if (state.matching) {
                     item {
                         Text(
@@ -791,6 +822,7 @@ private fun MatchChannelsOverlay(
                     )
                 }
             }
+            }
         }
     }
 }
@@ -801,9 +833,10 @@ private fun LazyListScope.channelMatchRows(
     replays: Map<String, RadarChannelMatcher.SportsReplay>,
     onPlay: (RadarChannelMatcher.ChannelMatch) -> Unit,
     onPlayReplay: (RadarChannelMatcher.SportsReplay) -> Unit,
+    rowModifier: (String) -> Modifier,
 ) {
     items(matches, key = { it.channel.contentId }) { match ->
-        FocusableRow(onClick = { onPlay(match) }) {
+        FocusableRow(onClick = { onPlay(match) }, modifier = rowModifier(match.channel.contentId)) {
             AsyncImage(
                 model = match.channel.logo,
                 contentDescription = null,
@@ -1541,12 +1574,18 @@ private fun CategoryTile(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun FocusableRow(onClick: () -> Unit, content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+private fun FocusableRow(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+) {
     var focused by remember { mutableStateOf(false) }
     // Same treatment as the live guide's rows: full Primary fill marks the D-pad cursor.
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Caller's focusRequester / onFocusChanged sit before the focus target below, so they see it.
+            .then(modifier)
             .clip(RoundedCornerShape(8.dp))
             // Same focus vocabulary as the match cards: FocusBackground fill + FocusRing border, so a focused
             // row (Follow, league rows) is unmistakable instead of a mid-grey fill.
