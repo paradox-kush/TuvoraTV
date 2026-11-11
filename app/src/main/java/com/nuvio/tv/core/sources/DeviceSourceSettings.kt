@@ -1,5 +1,7 @@
 package com.nuvio.tv.core.sources
 
+import androidx.compose.ui.res.stringResource
+import com.nuvio.tv.R
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -119,7 +121,11 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
             Column(Modifier.padding(24.dp).widthIn(max = 520.dp).verticalScroll(rememberScrollState()),verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(if (choosing && !view.ready) "Set up this TV" else "Sources on this device",style = MaterialTheme.typography.titleLarge)
                 if (view.ready) Text("${view.disk.binding?.label ?: "Local setup"} · Profile $profile")
-                val status = error ?: view.message ?: when {
+                val status = error ?: view.message ?: view.failure?.let { stringResource(when (it) {
+                    DeviceSourceFailure.SIGNED_OUT -> R.string.device_sources_error_signed_out
+                    DeviceSourceFailure.TIMED_OUT -> R.string.device_sources_error_timed_out
+                    DeviceSourceFailure.UNREACHABLE -> R.string.device_sources_error_unreachable
+                }) } ?: when {
                     view.busy -> "Syncing…"
                     view.disk.pending.isNotEmpty() -> "Saved on this device · waiting to sync"
                     else -> null

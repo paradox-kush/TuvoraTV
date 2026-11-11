@@ -74,11 +74,15 @@ data class DevicePreferenceDisk(
     val localRegistry: List<DeviceSourceDescriptor> = emptyList(),
 )
 
+/** Why the last refresh failed, so the screen can say something true (B188). Never carries a host or message. */
+enum class DeviceSourceFailure { UNREACHABLE, SIGNED_OUT, TIMED_OUT }
+
 data class DeviceSourceView(
     val disk: DevicePreferenceDisk = DevicePreferenceDisk(),
     val setups: List<DeviceSetupSummary> = emptyList(),
     val mode: String = "loading", // loading, select, ready, local, unavailable, replaced
     val message: String? = null,
+    val failure: DeviceSourceFailure? = null,
     val busy: Boolean = false,
     val revision: Long = 0,
     val availabilityEpoch: Long = 0,
@@ -305,9 +309,9 @@ class DeviceSourceEngine(
         val disk = state.value.disk
         if (!refreshSources && !forceDelta && !DevicePreferenceRefreshPolicy.hasLocalWork(
                 disk.pending.any { !it.conflict },disk.binding?.registration != null,disk.binding != null && disk.cursor == null)) return@withLock
-        publish { it.copy(busy = true, message = null) }
+        publish { it.copy(busy = true, message = null, failure = null) }
         try {
-            withTimeout(12000) {
+            run {
                 var b = state.value.disk.binding
                 val draft = b
                 if (draft?.registration != null) {
@@ -329,7 +333,7 @@ class DeviceSourceEngine(
                     commit { it.copy(binding = automatic) } // Persist identity before the network for safe retries.
                     b = registerBinding(automatic)
                 }
-                if (b == null) { publish { it.copy(mode = "select") }; return@withTimeout }
+                if (b == null) { publish { it.copy(mode = "select") }; return@run }
                 val active = checkNotNull(b)
                 var until: Long? = null
                 var more: Boolean
@@ -407,15 +411,41 @@ class DeviceSourceEngine(
         }
     }
 
+    private fun failureKind(e: Exception): DeviceSourceFailure {
+        if (e is TimeoutCancellationException) return DeviceSourceFailure.TIMED_OUT
+        var cause: Throwable? = e
+        var depth = 0
+        while (cause != null && depth++ < 8) {
+            val code = when (cause) {
+                is io.github.jan.supabase.exceptions.RestException -> cause.statusCode
+                is io.ktor.client.plugins.ResponseException -> cause.response.status.value
+                else -> null
+            }
+            if (code == 401 || code == 403) return DeviceSourceFailure.SIGNED_OUT
+            if (cause is java.net.SocketTimeoutException || cause is io.ktor.client.plugins.HttpRequestTimeoutException ||
+                cause is io.ktor.client.network.sockets.ConnectTimeoutException ||
+                cause is io.ktor.client.network.sockets.SocketTimeoutException) return DeviceSourceFailure.TIMED_OUT
+            cause = cause.cause?.takeIf { it !== cause }
+        }
+        return DeviceSourceFailure.UNREACHABLE
+    }
+
     private fun failure(e: Exception) {
         val text = e.message.orEmpty()
+        val kind = failureKind(e)
         publish { view -> when {
             "binding_replaced" in text || "setup_not_found" in text -> view.copy(mode = "replaced", message = "This setup was restored or removed elsewhere. Choose a setup again.")
             view.disk.binding == null && ("PGRST202" in text || "Could not find the function" in text) ->
                 view.copy(mode = "unavailable", message = "Device controls need a server update.")
-            else -> view.copy(mode = if (view.mode == "loading") "select" else view.mode, message = if (view.disk.pending.isNotEmpty()) "Saved on this device · waiting to sync" else "Could not reach your account. Retry.")
+            // The screen words the failure from [failure] (strings.xml); a saved-but-unsynced choice keeps its own line.
+            else -> view.copy(mode = if (view.mode == "loading") "select" else view.mode, failure = kind,
+                message = if (view.disk.pending.isNotEmpty()) "Saved on this device · waiting to sync" else null)
         } }
     }
 
-    private suspend inline fun <reified T> call(name: String, args: JsonObject): T = json.decodeFromJsonElement(rpc(name,args))
+    // One deadline per call, not one around all of them: slow-but-working calls must not add up to a timeout.
+    private suspend inline fun <reified T> call(name: String, args: JsonObject): T =
+        json.decodeFromJsonElement(withTimeout(CALL_TIMEOUT_MS) { rpc(name,args) })
+
+    private companion object { const val CALL_TIMEOUT_MS = 12_000L }
 }
