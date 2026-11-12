@@ -51,8 +51,7 @@ data class RadarUiState(
             .flatMap { fixturesByTeam[it].orEmpty() }
             .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
             .filter { fx ->
-                val start = fx.startEpochMs ?: return@filter false
-                start >= nowMs - 4 * 60 * 60 * 1000L || isLive(fx, nowMs)
+                fx.isUpcomingWindow(nowMs) || isLive(fx, nowMs)
             }
             .sortedBy { it.startEpochMs }
             .take(cap)
@@ -102,7 +101,7 @@ data class RadarUiState(
             .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
             .filter { fx ->
                 val start = fx.startEpochMs ?: return@filter false
-                start < nowMs && !isLive(fx, nowMs)
+                start < nowMs && !isLive(fx, nowMs) && !(fx.isDateOnly && fx.isUpcomingWindow(nowMs))
             }
             .sortedByDescending { it.startEpochMs }
             .take(cap)
@@ -112,8 +111,7 @@ data class RadarUiState(
             .flatMap { fixturesByLeague[it].orEmpty() }
             .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
             .filter { fx ->
-                val start = fx.startEpochMs ?: return@filter false
-                start >= nowMs - 4 * 60 * 60 * 1000L || isLive(fx, nowMs)
+                fx.isUpcomingWindow(nowMs) || isLive(fx, nowMs)
             }
             .sortedBy { it.startEpochMs }
             .take(cap)

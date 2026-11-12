@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.sports.detail.screen
 
+import com.nuvio.tv.core.radar.radarRoundLabel
 import com.nuvio.tv.core.sports.detail.BlockType
 import com.nuvio.tv.core.sports.detail.GameBlock
 import com.nuvio.tv.core.sports.detail.GameDetail
@@ -146,7 +147,7 @@ data class GameDetailTvModel(
             }
             return GameDetailTvModel(
                 title = title,
-                subtitle = listOfNotNull(d.leagueName.takeIf { it.isNotBlank() }, d.round?.let { "Round $it" }).joinToString(" · ").ifBlank { null },
+                subtitle = gameSubtitle(d.leagueName, d.round),
                 sides = sides, state = d.state, pill = pill,
                 liveLine = line ?: (d.header as? GameHeader.Event)?.session,
                 isLive = live, situation = situation, homeWinPercent = win, winChance = winChance, linescore = linescore,
@@ -262,3 +263,7 @@ data class GameDetailTvModel(
         }
     }
 }
+
+/** "NBA", "FA Cup · Round 3": league plus a round only when the provider gave a real one (UX313: "0" is its default). */
+internal fun gameSubtitle(league: String, round: String?): String? =
+    listOfNotNull(league.takeIf { it.isNotBlank() }, radarRoundLabel(round)).joinToString(" · ").ifBlank { null }

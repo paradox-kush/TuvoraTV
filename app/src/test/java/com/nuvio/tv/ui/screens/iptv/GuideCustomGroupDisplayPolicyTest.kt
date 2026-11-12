@@ -36,4 +36,10 @@ class GuideCustomGroupDisplayPolicyTest {
         assertEquals(null, GuideCustomGroupDisplayPolicy.focusAfterRefresh("news", emptyList()))
     }
 
+    @Test fun hiding_a_middle_member_focuses_the_row_that_took_its_place_not_the_first() {
+        val three = raw + GuideChannel("film", "Film HD", null, "http://fixture.invalid/film", 3, entityId = "film")
+        val shown = GuideCustomGroupDisplayPolicy.displayed(three, mapOf("sport" to ChannelOverlay(hidden = true)))
+        assertEquals("film", GuideCustomGroupDisplayPolicy.focusAfterRefresh("sport", shown, previous = three))
+    }
+
 }

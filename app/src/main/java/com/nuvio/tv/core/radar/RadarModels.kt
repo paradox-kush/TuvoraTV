@@ -152,6 +152,25 @@ data class RadarFixture(
 ) {
     val startEpochMs: Long? get() = radarTimestampToEpochMs(ts)
 
+    /**
+     * Tennis / golf / cycling rows carry a DATE only: TheSportsDB's strTime is "00:00:00" and
+     * there are no home/away teams, so `ts` is midnight UTC of the match day, not a start time
+     * (B142). Such a fixture is relevant for the whole local day, not for 4 h after midnight UTC.
+     */
+    val isDateOnly: Boolean
+        get() {
+            if (sport?.lowercase() !in DAY_LONG_SPORTS) return false
+            val time = ts?.trim()?.replace(' ', 'T')?.substringAfter('T', "")?.removeSuffix("Z").orEmpty()
+            return time.isEmpty() || time.all { it == '0' || it == ':' || it == '.' }
+        }
+
+    /** True while the fixture still belongs in "upcoming": a kick-off reads that for 4 h, a date-only day for 36 h (UTC-12..UTC+14 slack). */
+    fun isUpcomingWindow(nowMs: Long): Boolean {
+        val start = startEpochMs ?: return false
+        val holdMs = if (isDateOnly) DATE_ONLY_HOLD_MS else UPCOMING_GRACE_MS
+        return nowMs < start + holdMs
+    }
+
     /** The best available backdrop image for the spotlight hero — wide banner, else the event thumb. */
     val heroImage: String?
         get() = banner?.takeIf { it.isNotBlank() } ?: thumb?.takeIf { it.isNotBlank() }
@@ -164,16 +183,8 @@ data class RadarFixture(
         }
 
     /** "Round of 32" style label from TheSportsDB's intRound conventions, or null. */
-    val roundLabel: String?
-        get() = when (round?.trim()) {
-            null, "", "0" -> null
-            "125" -> "Quarter-final"
-            "150" -> "Semi-final"
-            "160" -> "Third place"
-            "200" -> "Final"
-            "500" -> "Play-off"
-            else -> "Round $round"
-        }
+    // Tennis' intRound is the tour week (e.g. "57"), not a knockout round: never label it.
+    val roundLabel: String? get() = if (sport.equals("Tennis", ignoreCase = true)) null else radarRoundLabel(round)
 
     /** "2 – 1" when the API has a result for this fixture (finished/in-play), else null. */
     val scoreLabel: String?
@@ -407,3 +418,18 @@ private fun daysFromCivil(year: Int, month: Int, day: Int): Long {
     val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
     return era * 146097L + doe - 719468L
 }
+
+/** TheSportsDB intRound → display label; null for blank/"0" (the provider default). */
+fun radarRoundLabel(round: String?): String? = when (round?.trim()) {
+    null, "", "0" -> null
+    "125" -> "Quarter-final"
+    "150" -> "Semi-final"
+    "160" -> "Third place"
+    "200" -> "Final"
+    "500" -> "Play-off"
+    else -> "Round ${round.trim()}"
+}
+
+private val DAY_LONG_SPORTS = setOf("tennis", "golf", "cycling")
+private const val UPCOMING_GRACE_MS = 4L * 60 * 60 * 1000
+private const val DATE_ONLY_HOLD_MS = 36L * 60 * 60 * 1000

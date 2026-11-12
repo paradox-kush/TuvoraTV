@@ -11,6 +11,9 @@ internal object GuideCustomGroupDisplayPolicy {
             overlay, honorOrder = false, withName = { row, name -> row.copy(name = name) },
         )
 
-    fun focusAfterRefresh(previousId: String?, channels: List<GuideChannel>): String? =
-        previousId?.takeIf { id -> channels.any { it.contentId == id } } ?: channels.firstOrNull()?.contentId
+    /** [previous] is the lineup the viewer was in: a removed row hands focus to its neighbour, not row 1. */
+    fun focusAfterRefresh(previousId: String?, channels: List<GuideChannel>, previous: List<GuideChannel> = emptyList()): String? =
+        previousId?.let {
+            GuideFocusRestorePolicy.afterListChange(it, previous.map { c -> c.contentId }, channels.map { c -> c.contentId })
+        } ?: channels.firstOrNull()?.contentId
 }
