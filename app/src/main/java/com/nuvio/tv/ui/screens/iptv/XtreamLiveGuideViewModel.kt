@@ -306,7 +306,16 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     val accountId = lastOverlayAccountId
                     val shown = displayChannels(accountId, raw, lastAllChannelsView)
                     if (lastRawChannels === raw && lastOverlayAccountId == accountId) {
-                        _uiState.update { st -> st.copy(channels = shown) }
+                        // UX168: a hide removes the focused row; aim the highlight at its neighbour now,
+                        // or the notice-expiry restore has no row to request and the list picks one.
+                        _uiState.update { st ->
+                            st.copy(
+                                channels = shown,
+                                focusedChannelId = GuideFocusRestorePolicy.afterListChange(
+                                    st.focusedChannelId, st.channels.map { it.contentId }, shown.map { it.contentId },
+                                ),
+                            )
+                        }
                     }
                 }
                 // The overlay pull is async, so the category column is often built before the website's
@@ -1004,7 +1013,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
             it.copy(
                 channels = channels,
                 channelsLoad = if (channels.isEmpty()) LoadStatus.Empty else LoadStatus.Loaded,
-                focusedChannelId = if (preserveFocus) GuideCustomGroupDisplayPolicy.focusAfterRefresh(it.focusedChannelId, channels)
+                focusedChannelId = if (preserveFocus) GuideCustomGroupDisplayPolicy.focusAfterRefresh(it.focusedChannelId, channels, previous = it.channels)
                     else channels.firstOrNull()?.contentId,
             )
         }
