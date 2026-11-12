@@ -3785,6 +3785,7 @@
     <string name="sub_mode_standard_sub">Basic subtitle rendering without animation support. Most compatible.</string>
     <string name="sub_mode_overlay_canvas_sub">HDR support with canvas rendering. May block UI thread.</string>
     <string name="iptv_guide_remote_hint">OK preview · OK again fullscreen · MENU or hold OK for options</string>
+    <string name="iptv_guide_remote_hint_category">OK or RIGHT to browse channels</string>
     <string name="iptv_guide_add_favorite">Add to Favorites</string>
     <string name="iptv_guide_size">Guide size</string>
     <string name="iptv_guide_size_compact">Compact</string>

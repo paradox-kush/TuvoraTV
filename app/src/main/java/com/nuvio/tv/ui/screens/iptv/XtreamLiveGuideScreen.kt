@@ -75,6 +75,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -659,6 +660,7 @@ fun LiveGuide(
                         // channel name instead of over the channel grid, so the list stays visible.
                         playbackError = playbackError,
                         errorChannelId = errorChannelId,
+                        categoryFocused = !inCategory,
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                 }
@@ -1607,10 +1609,16 @@ internal fun PreviewInfoPane(
     inspectedProgramme: XtreamProgram? = null,
     viewedTimeMs: Long? = null,
     emptyGuideMessage: String? = null,
+    categoryFocused: Boolean = false,
 ) {
     Column(
         modifier = modifier.padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.md)
     ) {
+        // B253: with the category column focused, the programme block is dimmed so it does not read as
+        // channel row 1 holding focus. The block fills the space above the hint, so the hint stays at the bottom.
+        Column(
+            Modifier.weight(1f).alpha(if (GuideRemoteHintPolicy.dimChannelInfo(categoryFocused)) 0.5f else 1f)
+        ) {
         Text(
             text = channelName ?: "",
             style = MaterialTheme.typography.labelLarge,
@@ -1710,10 +1718,16 @@ internal fun PreviewInfoPane(
                 overflow = TextOverflow.Ellipsis
             )
         }
+        }
         // Two lines: with the category column open the panel is narrow, and one line cut the hint
         // off at "hold OK to" — the part that says what holding does (seen on the emulator).
         Text(
-            text = stringResource(R.string.iptv_guide_remote_hint),
+            text = stringResource(
+                when (GuideRemoteHintPolicy.hintFor(categoryFocused)) {
+                    GuideRemoteHintPolicy.Hint.CATEGORY -> R.string.iptv_guide_remote_hint_category
+                    GuideRemoteHintPolicy.Hint.CHANNEL -> R.string.iptv_guide_remote_hint
+                }
+            ),
             style = MaterialTheme.typography.labelSmall,
             color = NuvioTheme.colors.TextSecondary.copy(alpha = 0.7f),
             maxLines = 2,
@@ -1807,6 +1821,7 @@ private fun FocusedPreviewInfoPane(
     emptyGuideMessage: String,
     playbackError: String?,
     errorChannelId: String?,
+    categoryFocused: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -1821,6 +1836,7 @@ private fun FocusedPreviewInfoPane(
         previewError = (playbackError.takeIf {
             GuidePlaybackInteractionPolicy.showFocusedError(ui.focusedChannelId, errorChannelId)
         }) ?: ui.actionError.takeIf { ui.replayRetry == null }, // a Retry notice shows its own message
+        categoryFocused = categoryFocused,
         modifier = modifier,
     )
 }
