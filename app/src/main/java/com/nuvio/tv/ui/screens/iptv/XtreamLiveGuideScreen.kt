@@ -1058,7 +1058,10 @@ fun LiveGuide(
                 actions = actions,
                 onFavorite = { returnFromMenu(); viewModel.toggleFavorite(channel) },
                 onAction = { action ->
-                    returnFromMenu()
+                    // A hide (or removing a favourite from Favorites) takes the row away: its Undo
+                    // notice owns focus, and a restore aimed at that row would steal it (UX168).
+                    if (fullscreen || GuideChannelMenuPolicy.focusReturnsToRow(action)) returnFromMenu()
+                    else channelMenuAsk = null
                     when (action) {
                         GuideChannelMenuPolicy.Action.MOVE_UP -> viewModel.moveChannel(channel, -1)
                         GuideChannelMenuPolicy.Action.MOVE_DOWN -> viewModel.moveChannel(channel, +1)
@@ -1190,10 +1193,15 @@ fun LiveGuide(
         uiState.hideNotice?.let { notice ->
             fun restoreGuideFocus() {
                 when (notice.target) {
-                    is GuideHideUndoPolicy.Target.Channel ->
-                        if (!requestFocusedChannel()) {
-                            channelListFocus.requestFocusOrFalse()
-                        }
+                    is GuideHideUndoPolicy.Target.Channel -> {
+                        // UX168: one ask from the notice enters the list through its focusRestorer,
+                        // whose remembered row is the one just hidden, so focus fell to row one. The
+                        // bounded restore loop asks again from inside the list and lands on the aim
+                        // (the row that slid up into the hidden one's place).
+                        val aimed = aimedChannel()?.entityId
+                        if (!fullscreen && aimed != null) pendingRestoreEntityId = aimed
+                        else if (!requestFocusedChannel()) channelListFocus.requestFocusOrFalse()
+                    }
                     is GuideHideUndoPolicy.Target.Group -> runCatching { categoryListFocus.requestFocus() }
                 }
             }
