@@ -112,7 +112,10 @@ internal fun GuideFullscreenControlsEffects(
     LaunchedEffect(fullscreen, liveFailed, liveReconnecting) {
         if (!fullscreen) return@LaunchedEffect
         val reveal = LiveControlsPolicy.revealForTrouble(liveFailed, liveReconnecting, controls.visible, livePanelOpen)
-        if (LiveControlsPolicy.closesPanelForFailure(liveFailed, closablePanelOpen)) onCloseForFailure()
+        if (LiveControlsPolicy.closesPanelForFailure(liveFailed, closablePanelOpen)) {
+            onCloseForFailure()
+            controls.moreOpen = false
+        }
         if (reveal) controls.show()
     }
     // F28: one auto-hide delay shared with VOD; never while paused, on an error, or with a panel open.

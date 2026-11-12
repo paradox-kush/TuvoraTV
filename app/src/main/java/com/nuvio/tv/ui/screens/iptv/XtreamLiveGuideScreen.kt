@@ -501,7 +501,6 @@ fun LiveGuide(
         onCloseForFailure = {
             channelListOpen = false
             livePanel = null
-            controls.moreOpen = false
         },
     )
     LaunchedEffect(fullscreen) { if (!fullscreen) { controls.reset(); livePanel = null } }
