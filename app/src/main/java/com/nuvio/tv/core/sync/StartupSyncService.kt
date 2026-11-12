@@ -685,6 +685,8 @@ class StartupSyncService @Inject constructor(
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to pull radar follows from remote, keeping local", e)
                 }
+            }
+
             // Watch state needs the provider credentials pulled above and the addon list,
             // which Continue Watching resolves meta through. It does not wait for the
             // library or catalog pulls.

@@ -3,6 +3,7 @@ package com.nuvio.tv.data.local
 import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.google.gson.stream.JsonReader
 import com.nuvio.tv.core.profile.ProfileManager
 import dagger.hilt.android.qualifiers.ApplicationContext
