@@ -967,9 +967,12 @@ private fun XtreamHubItem.toMetaPreview(): MetaPreview = MetaPreview(
 /**
  * B132: marks the hub header row as the one place where focus travel may switch sections. When the
  * row loses focus, the next tab landing counts as an arrival from outside ([HubSectionFocusPolicy]).
+ * The loss is confirmed on the next main-loop turn: an arrow between tabs passes through "no focus".
  */
 internal fun Modifier.hubHeaderFocusScope(headerFocus: HubHeaderFocus): Modifier =
-    onFocusChanged { if (!it.hasFocus) headerFocus.onHeaderFocusLost() }
+    onFocusChanged { headerFocus.onHeaderFocusChanged(it.hasFocus, hubHeaderMainHandler::post) }
+
+private val hubHeaderMainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
 /**
  * A section tab: OK selects it; focus selects it only when the viewer arrowed onto it along the

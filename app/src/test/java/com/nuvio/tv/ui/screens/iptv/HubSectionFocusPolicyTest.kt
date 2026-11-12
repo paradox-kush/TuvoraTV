@@ -52,6 +52,33 @@ class HubSectionFocusPolicyTest {
         )
     }
 
+    /**
+     * Integration regression (2026-11-12): an arrow between tabs reports the row as unfocused BEFORE
+     * the next tab gains focus. Reading that as "left the header" made every arrow an arrival.
+     */
+    @Test
+    fun `the row passing through no focus between two tabs is still travel`() {
+        val header = HubHeaderFocus()
+        val posted = mutableListOf<Runnable>()
+        header.onHeaderFocusChanged(true) { posted += it }
+        header.onControlFocused(XtreamSection.MOVIES, XtreamSection.MOVIES)
+        header.onHeaderFocusChanged(false) { posted += it }
+        assertEquals(
+            "RIGHT onto Series inside one focus transaction",
+            XtreamSection.SERIES,
+            header.onControlFocused(XtreamSection.SERIES, XtreamSection.MOVIES),
+        )
+        header.onHeaderFocusChanged(true) { posted += it }
+        posted.forEach(Runnable::run)
+        posted.clear()
+        header.onHeaderFocusChanged(false) { posted += it }
+        posted.forEach(Runnable::run)
+        assertNull(
+            "a loss still unfocused on the next turn is a real exit",
+            header.onControlFocused(XtreamSection.LIVE, XtreamSection.MOVIES),
+        )
+    }
+
     @Test
     fun `travel that starts on Search and goes onto a tab switches`() {
         val header = HubHeaderFocus()

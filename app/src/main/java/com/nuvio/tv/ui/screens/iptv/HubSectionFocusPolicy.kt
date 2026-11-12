@@ -23,6 +23,17 @@ internal object HubSectionFocusPolicy {
  */
 internal class HubHeaderFocus {
     private var focusInHeader = false
+    private var rowHasFocus = false
+
+    /**
+     * The header row's aggregate focus changed. A move between two header controls reports "no focus"
+     * BEFORE the next control gains it (same focus transaction), so a loss only counts once [post] runs
+     * on the next main-loop turn and the row still holds nothing.
+     */
+    fun onHeaderFocusChanged(hasFocus: Boolean, post: (Runnable) -> Unit) {
+        rowHasFocus = hasFocus
+        if (!hasFocus) post(Runnable { if (!rowHasFocus) onHeaderFocusLost() })
+    }
 
     /** The header row no longer holds focus (it moved to the content, a dialog, or another screen). */
     fun onHeaderFocusLost() {
