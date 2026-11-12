@@ -291,7 +291,7 @@ class M3UParserCatchUpTest {
 
     @Test
     fun `B135 EXTGRP before or after EXTINF names the group of the next entry`() {
-        val e = parseAll(EXTGRP.reader().buffered())
+        val e = parse(EXTGRP)
         assertEquals("no channel may be dropped", 4, e.size)
         assertEquals("EXTGRP before EXTINF", "Sports", e[0].group)
         assertEquals("EXTGRP between EXTINF and URL", "Movies Folder", e[1].group)
@@ -299,7 +299,7 @@ class M3UParserCatchUpTest {
 
     @Test
     fun `B135 group-title wins over EXTGRP and EXTGRP does not leak to the next entry`() {
-        val e = parseAll(EXTGRP.reader().buffered())
+        val e = parse(EXTGRP)
         assertEquals("group-title wins", "News", e[2].group)
         assertNull("EXTGRP applies to one entry only", e[3].group)
     }
