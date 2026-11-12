@@ -71,8 +71,29 @@ internal fun PlayerRuntimeController.prefetchAutoSyncIndex(
 ) {
     AutoSyncPreferences.ensureLoaded(context)
     if (!AutoSyncPreferences.isEnabled(context)) return
+    if (!autoSyncMayProbe(url)) return
     EmbeddedSubtitleTimelineLoader.prefetch(scope, url, headers)
 }
+
+/**
+ * Fork: AutoSync range-reads the stream itself. Never on IPTV / own-source / matched-IPTV / catch-up /
+ * live links — the read can burn a single-use Stalker link or take a one-connection panel's slot
+ * ([com.nuvio.tv.core.player.AutoSyncSourcePolicy]).
+ */
+internal fun PlayerRuntimeController.autoSyncMayProbe(url: String): Boolean =
+    com.nuvio.tv.core.player.AutoSyncSourcePolicy.mayProbe(
+        url = url,
+        iptvId = iptvClassifier?.refreshableIptvId(listOf(currentVideoId, contentId)),
+        contentId = contentId,
+        videoId = currentVideoId,
+        contentType = contentType,
+        isCatchUp = navigationArgs.isCatchUp,
+        isMatchedIptvSource = com.nuvio.tv.core.contracts.OwnSourcePolicy.isOwnStreamLabel(currentAddonName),
+        isPanelHost = { host ->
+            com.nuvio.tv.core.contracts.PlaybackTrustHosts.isPanelHost(host) ||
+                com.nuvio.tv.core.contracts.PlaybackTrustHosts.isMediaServerHost(host)
+        },
+    )
 
 /** The user picked [subtitle]: check only that subtitle, never swap in another one. */
 internal fun PlayerRuntimeController.runSelectedAutomaticSubtitleSync(subtitle: Subtitle) =
@@ -90,6 +111,7 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
     AutoSyncPreferences.ensureLoaded(context)
     if (!AutoSyncPreferences.isEnabled(context)) return
     if (selectedSubtitle.lang.isBlank()) return
+    if (!autoSyncMayProbe(currentStreamUrl)) return
     if (!currentStreamUrl.startsWith("http://", ignoreCase = true) &&
         !currentStreamUrl.startsWith("https://", ignoreCase = true)
     ) {

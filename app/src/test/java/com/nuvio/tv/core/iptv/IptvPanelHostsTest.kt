@@ -45,4 +45,13 @@ class IptvPanelHostsTest {
         IptvPanelHosts.setAccounts(listOf(account("http://two.example.com")))
         assertFalse(IptvPanelHosts.isPanelHost("one.example.com"))
     }
+
+    @Test
+    fun playlistNamesIdentifyMatchedIptvStreamLabels() {
+        IptvPanelHosts.setAccounts(listOf(account("http://one.example.com").copy(name = " My Stalker ")))
+        assertTrue("a matched IPTV stream carries the playlist name as addonName", IptvPanelHosts.isAccountName("My Stalker"))
+        assertFalse("an add-on label is not a playlist", IptvPanelHosts.isAccountName("Torrentio"))
+        IptvPanelHosts.setAccounts(emptyList())
+        assertFalse("names are swapped wholesale", IptvPanelHosts.isAccountName("My Stalker"))
+    }
 }

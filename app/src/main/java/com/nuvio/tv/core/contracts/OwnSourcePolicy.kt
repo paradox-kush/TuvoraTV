@@ -24,6 +24,7 @@ object OwnSourcePolicy {
     private val scrobbleExclusions = NamedRegistry<(String) -> Boolean>("tracking-scrobble exclusion")
     private val telemetryRewriters = NamedRegistry<(id: String, salt: String) -> String?>("telemetry-id rewriter")
     private val linkCacheExclusions = NamedRegistry<(String) -> Boolean>("link-cache exclusion")
+    private val streamLabelPredicates = NamedRegistry<(String) -> Boolean>("own stream-label predicate")
 
     fun registerContentIdPredicate(name: String, predicate: (String) -> Boolean) =
         contentIdPredicates.register(name, predicate)
@@ -40,6 +41,14 @@ object OwnSourcePolicy {
     /** A source whose minted play links must never be stored for reuse (they are minted per play and may carry a token). */
     fun registerLinkCacheExclusion(name: String, predicate: (String) -> Boolean) =
         linkCacheExclusions.register(name, predicate)
+
+    /**
+     * A stream whose add-on label ([com.nuvio.tv.domain.model.Stream.addonName]) names an own source even though it
+     * plays under a public id: IPTV's TMDB-matched copies carry the playlist's display name. Their links are minted
+     * per play (single-use / short-TTL), so nothing may probe them or re-fetch them in a loop.
+     */
+    fun registerStreamLabelPredicate(name: String, predicate: (String) -> Boolean) =
+        streamLabelPredicates.register(name, predicate)
 
     /** [rewriter] returns null for "not mine". */
     fun registerTelemetryRewriter(name: String, rewriter: (id: String, salt: String) -> String?) =
@@ -59,6 +68,12 @@ object OwnSourcePolicy {
         return subtitleScoped.all.any { it(trimmed) }
     }
 
+    /** True when [addonName] is the label of a stream an own source handed out (e.g. a matched IPTV copy). */
+    fun isOwnStreamLabel(addonName: String?): Boolean {
+        val label = addonName?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        return streamLabelPredicates.all.any { it(label) }
+    }
+
     fun isNeverCachedLinkId(id: String?): Boolean =
         id != null && linkCacheExclusions.all.any { it(id) }
 
@@ -76,5 +91,6 @@ object OwnSourcePolicy {
         scrobbleExclusions.resetForTest()
         telemetryRewriters.resetForTest()
         linkCacheExclusions.resetForTest()
+        streamLabelPredicates.resetForTest()
     }
 }

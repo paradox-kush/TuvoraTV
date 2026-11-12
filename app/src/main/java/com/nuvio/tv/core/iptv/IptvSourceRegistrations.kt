@@ -22,5 +22,7 @@ object IptvSourceRegistrations {
         com.nuvio.tv.core.contracts.PlaybackTrustHosts.registerPanelHostPredicate(NAME, IptvPanelHosts::isPanelHost)
         OwnSourcePolicy.registerContentIdPredicate(NAME) { id -> CONTENT_ID_PREFIXES.any { id.startsWith(it) } }
         OwnSourcePolicy.registerSubtitleScopedPredicate(NAME) { id -> id.startsWith(PROVIDER_SCOPED_PREFIX) }
+        // TMDB-matched IPTV copies carry the playlist's display name as addonName (refreshMatchedIptvStreamUrl).
+        OwnSourcePolicy.registerStreamLabelPredicate(NAME, IptvPanelHosts::isAccountName)
     }
 }

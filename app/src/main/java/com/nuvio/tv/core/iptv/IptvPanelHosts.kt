@@ -13,6 +13,10 @@ object IptvPanelHosts {
     @Volatile
     private var accountHosts: Set<String> = emptySet()
 
+    /** Playlist display names: a TMDB-matched IPTV stream carries one as its addonName. */
+    @Volatile
+    private var accountNames: Set<String> = emptySet()
+
     private val noted: MutableMap<String, Boolean> = Collections.synchronizedMap(
         object : LinkedHashMap<String, Boolean>(64, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean = size > MAX_NOTED
@@ -28,9 +32,17 @@ object IptvPanelHosts {
         }
     }
 
+    /** Pure: every non-blank display name of [accounts] (trimmed), the label a matched IPTV stream carries. */
+    fun namesOf(accounts: List<XtreamAccount>): Set<String> =
+        accounts.mapNotNull { it.name.trim().takeIf(String::isNotEmpty) }.toSet()
+
     fun setAccounts(accounts: List<XtreamAccount>) {
         accountHosts = hostsOf(accounts)
+        accountNames = namesOf(accounts)
     }
+
+    /** True when [label] is one of the user's playlist names, i.e. a stream the matched IPTV lane handed out. */
+    fun isAccountName(label: String): Boolean = label.trim() in accountNames
 
     /** Records the host of a stream URL an IPTV lane handed to the player. */
     fun note(url: String?) {
@@ -45,6 +57,7 @@ object IptvPanelHosts {
 
     internal fun clearForTest() {
         accountHosts = emptySet()
+        accountNames = emptySet()
         noted.clear()
     }
 
