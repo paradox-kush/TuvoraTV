@@ -82,4 +82,65 @@ class GuideCategorySettleTest {
         advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS * 2)
         assertEquals(emptyList<String?>(), selected)
     }
+
+    // B254: leaving the category column (UP through Search to the tabs) used to leave the settle
+    // job running, so Search was selected 200 ms after the viewer had already gone.
+    @Test
+    fun `cancel when focus leaves the column drops the pending switch`() = runTest {
+        val selected = mutableListOf<String?>()
+        val settler = GuideCategorySettler(this) { selected += it }
+        settler.focus("b", selectedId = "a")
+        settler.cancel()
+        advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS * 2)
+        assertEquals(emptyList<String?>(), selected)
+    }
+
+    @Test
+    fun `a commit before the focus-loss cancel still selects`() = runTest {
+        // RIGHT commits in the key handler, before focus crosses into the channel list and the
+        // column reports focus lost; the cancel that follows must find nothing left to drop.
+        val selected = mutableListOf<String?>()
+        val settler = GuideCategorySettler(this) { selected += it }
+        settler.focus("b", selectedId = "a")
+        settler.commitNow()
+        settler.cancel()
+        advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS * 2)
+        assertEquals(listOf<String?>("b"), selected)
+    }
+
+    @Test
+    fun `policy - Search with a blank query never selects on focus`() {
+        val search = XtreamLiveGuideViewModel.SEARCH_ID
+        assertEquals("empty", false, GuideCategorySettlePolicy.selectsOnFocus(search, ""))
+        assertEquals("spaces", false, GuideCategorySettlePolicy.selectsOnFocus(search, "  "))
+    }
+
+    @Test
+    fun `policy - Search with a query and every other category select on focus`() {
+        val search = XtreamLiveGuideViewModel.SEARCH_ID
+        assertEquals("search with query", true, GuideCategorySettlePolicy.selectsOnFocus(search, "bbc"))
+        assertEquals("other category", true, GuideCategorySettlePolicy.selectsOnFocus("cat1", ""))
+    }
+
+    @Test
+    fun `focusing blank Search leaves the shown category and drops any pending switch`() = runTest {
+        val selected = mutableListOf<String?>()
+        val settler = GuideCategorySettler(this) { selected += it }
+        settler.focus("b", selectedId = "a")
+        settler.focus(XtreamLiveGuideViewModel.SEARCH_ID, selectedId = "a", searchQuery = "")
+        advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS * 2)
+        assertEquals(emptyList<String?>(), selected)
+        // RIGHT from blank Search has nothing to commit: the shown category stays.
+        settler.commitNow()
+        assertEquals(emptyList<String?>(), selected)
+    }
+
+    @Test
+    fun `focusing Search with a query still shows its results`() = runTest {
+        val selected = mutableListOf<String?>()
+        val settler = GuideCategorySettler(this) { selected += it }
+        settler.focus(XtreamLiveGuideViewModel.SEARCH_ID, selectedId = "a", searchQuery = "bbc")
+        advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS + 1)
+        assertEquals(listOf<String?>(XtreamLiveGuideViewModel.SEARCH_ID), selected)
+    }
 }

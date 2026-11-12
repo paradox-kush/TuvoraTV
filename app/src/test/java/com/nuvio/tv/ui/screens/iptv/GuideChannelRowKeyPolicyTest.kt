@@ -18,7 +18,14 @@ class GuideChannelRowKeyPolicyTest {
         lockFocus: Boolean = false,
         timelineActive: Boolean = false,
         canExitCategory: Boolean = true,
-    ) = GuideChannelRowKeyPolicy.actionFor(key, isKeyDown, rowFocused, lockFocus, timelineActive, canExitCategory)
+        isFirstRow: Boolean = false,
+        awayFromNow: Boolean = false,
+        hasTabTarget: Boolean = true,
+        repeatCount: Int = 0,
+    ) = GuideChannelRowKeyPolicy.actionFor(
+        key, isKeyDown, rowFocused, lockFocus, timelineActive, canExitCategory,
+        isFirstRow = isFirstRow, awayFromNow = awayFromNow, hasTabTarget = hasTabTarget, repeatCount = repeatCount,
+    )
 
     @Test
     fun `MENU on a focused channel row hides the channel`() {
@@ -57,5 +64,39 @@ class GuideChannelRowKeyPolicyTest {
         assertEquals("enter", Action.PASS, action(Key.Enter))
         assertEquals("up", Action.PASS, action(Key.DirectionUp))
         assertEquals("down", Action.PASS, action(Key.DirectionDown))
+    }
+
+    // B254: UP from the first channel row did nothing, so the only way to the tabs was LEFT and up
+    // through every category (landing on Search).
+    @Test
+    fun `fresh UP on the first row goes to the tabs`() {
+        assertEquals("first row", Action.FOCUS_TABS, action(Key.DirectionUp, isFirstRow = true))
+    }
+
+    @Test
+    fun `a held UP on the first row stays put instead of flying into the tabs`() {
+        assertEquals("repeat", Action.CONSUME, action(Key.DirectionUp, isFirstRow = true, repeatCount = 1))
+    }
+
+    @Test
+    fun `UP on other rows is plain list movement`() {
+        assertEquals("not first", Action.PASS, action(Key.DirectionUp, isFirstRow = false))
+        assertEquals("not first repeat", Action.PASS, action(Key.DirectionUp, isFirstRow = false, repeatCount = 3))
+    }
+
+    @Test
+    fun `UP on the first row in travelled time keeps going to return-to-now`() {
+        assertEquals("away", Action.PASS, action(Key.DirectionUp, isFirstRow = true, awayFromNow = true))
+    }
+
+    @Test
+    fun `UP on the first row with no tab target is left alone`() {
+        assertEquals("no tabs", Action.PASS, action(Key.DirectionUp, isFirstRow = true, hasTabTarget = false))
+    }
+
+    @Test
+    fun `UP is never taken in fullscreen or from a timeline cell`() {
+        assertEquals("fullscreen", Action.PASS, action(Key.DirectionUp, isFirstRow = true, lockFocus = true))
+        assertEquals("timeline", Action.PASS, action(Key.DirectionUp, isFirstRow = true, timelineActive = true))
     }
 }

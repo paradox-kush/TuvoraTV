@@ -20,6 +20,15 @@ object GuideCategorySettlePolicy {
      */
     const val SETTLE_MS = 200L
 
+    /**
+     * B254: Search with no query has nothing to show, so resting on it (or passing it on the way up
+     * to the tabs) must not blank the guide. It still opens the dialog on OK, and a submitted query
+     * selects it directly; only the focus-alone path is refused.
+     */
+    fun selectsOnFocus(focusedId: String?, searchQuery: String): Boolean =
+        focusedId != XtreamLiveGuideViewModel.SEARCH_ID || searchQuery.isNotBlank()
+
+
     /** How long to wait before showing [focusedId]. The category already shown never waits. */
     fun delayMs(focusedId: String?, selectedId: String?): Long =
         if (focusedId == selectedId) 0L else SETTLE_MS
@@ -37,9 +46,10 @@ class GuideCategorySettler(
     private var pendingId: String? = null
     private var hasPending = false
 
-    /** [focusedId] took focus while [selectedId] is the category on screen. */
-    fun focus(focusedId: String?, selectedId: String?) {
+    /** [focusedId] took focus while [selectedId] is the category on screen. [searchQuery] is the current search text. */
+    fun focus(focusedId: String?, selectedId: String?, searchQuery: String = "") {
         cancel()
+        if (!GuideCategorySettlePolicy.selectsOnFocus(focusedId, searchQuery)) return
         val wait = GuideCategorySettlePolicy.delayMs(focusedId, selectedId)
         if (wait <= 0L) {
             select(focusedId)

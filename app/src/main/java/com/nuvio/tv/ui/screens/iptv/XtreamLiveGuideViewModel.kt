@@ -846,7 +846,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     /** A category row took D-pad focus. See [GuideCategorySettlePolicy]. */
     fun onCategoryFocused(categoryId: String?) =
-        categorySettler.focus(categoryId, _uiState.value.selectedCategoryId)
+        categorySettler.focus(categoryId, _uiState.value.selectedCategoryId, _uiState.value.searchQuery)
+
+    /**
+     * B254: focus left the category column (UP to the tabs, or into the channels). A switch still
+     * pending would land after the viewer has gone. RIGHT/OK already committed theirs in the key
+     * handler, before focus moved, so this only drops a category merely passed over.
+     */
+    fun onCategoryColumnFocusLost() = categorySettler.cancel()
 
     /** The viewer is entering the focused category (RIGHT / OK): show it without the settle wait. */
     fun commitFocusedCategory() = categorySettler.commitNow()

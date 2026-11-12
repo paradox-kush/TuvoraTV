@@ -612,6 +612,8 @@ fun LiveGuide(
                     .width(categoryColWidth)
                     .fillMaxHeight()
                     .focusRequester(categoryListFocus)
+                    // B254: leaving the column drops a switch still pending for a category only passed.
+                    .onFocusChanged { if (!it.hasFocus) viewModel.onCategoryColumnFocusLost() }
                     .guideKeyRepeatGate()
                     .focusRestorer(categoryEntryFocus),
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
@@ -743,6 +745,8 @@ fun LiveGuide(
                                 entryFocusRequester = if (index == 0) firstChannelFocus else null,
                                 clampUp = index == 0,
                                 upFocusRequester = if (awayFromNow && index == 0) returnToNowFocus else null,
+                                // B254: UP from row one reaches the tabs without the trip through Search.
+                                onUpToTabs = selectedTabRequester?.let { tab -> { tab.requestFocus() } },
                                 layout = guideLayout,
                                 number = index + 1,
                                 name = ch.name,
@@ -1415,6 +1419,7 @@ internal fun GuideChannelRow(
     lockFocus: Boolean,
     clampUp: Boolean = false,
     upFocusRequester: FocusRequester? = null,
+    onUpToTabs: (() -> Unit)? = null,
     onFocused: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -1504,6 +1509,10 @@ internal fun GuideChannelRow(
                         lockFocus = lockFocus,
                         timelineActive = timelineActive,
                         canExitCategory = onExitCategory != null,
+                        isFirstRow = clampUp,
+                        awayFromNow = upFocusRequester != null,
+                        hasTabTarget = onUpToTabs != null,
+                        repeatCount = event.nativeKeyEvent.repeatCount,
                     )
                 ) {
                     GuideChannelRowKeyPolicy.Action.PASS -> false
@@ -1515,6 +1524,7 @@ internal fun GuideChannelRow(
                     GuideChannelRowKeyPolicy.Action.EXIT_CATEGORY -> { onExitCategory?.invoke(); true }
                     // The caller opens channel actions; hide remains an explicit menu choice.
                     GuideChannelRowKeyPolicy.Action.OPEN_CHANNEL_MENU -> { onHide(); true }
+                    GuideChannelRowKeyPolicy.Action.FOCUS_TABS -> { onUpToTabs?.invoke(); true }
                 }
             }
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
