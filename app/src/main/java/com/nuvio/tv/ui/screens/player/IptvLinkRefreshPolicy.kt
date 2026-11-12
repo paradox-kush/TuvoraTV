@@ -44,3 +44,14 @@ internal object IptvLinkRefreshPolicy {
         return if (addonName.isNullOrBlank()) null else Lane.Matched
     }
 }
+
+/**
+ * Who refreshes an expired link (sync 15): upstream's add-on re-fetch
+ * ([tryRefreshExpiredLinkAfterError]) only for add-on/debrid sources. IPTV ids, catch-up replays and
+ * any stream the fork's IPTV re-mint has already handled stay with [IptvLinkRefreshPolicy] — a
+ * Stalker mint yields a new URL each time, so upstream's per-URL guard cannot stop a mint loop.
+ */
+internal object ExpiredLinkRefreshOwnership {
+    fun addonRefreshAllowed(iptvId: String?, isCatchUp: Boolean, iptvRefreshAttempted: Boolean): Boolean =
+        iptvId == null && !isCatchUp && !iptvRefreshAttempted
+}

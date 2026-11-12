@@ -32,6 +32,13 @@ internal data class CachedSourceIdentity(
 internal fun PlayerRuntimeController.tryRefreshExpiredLinkAfterError(errorMessage: String): Boolean {
     val failedUrl = currentStreamUrl
     if (failedUrl.isBlank() || failedUrl.startsWith("torrent://")) return false
+    // Fork: IPTV links are re-minted by IptvLinkRefreshPolicy only (no add-on re-fetch, no mint loop).
+    if (!ExpiredLinkRefreshOwnership.addonRefreshAllowed(
+            iptvId = iptvClassifier?.refreshableIptvId(listOf(currentVideoId, contentId)),
+            isCatchUp = navigationArgs.isCatchUp,
+            iptvRefreshAttempted = hasAttemptedIptvLinkRefresh
+        )
+    ) return false
     val fromLinkCache = failedUrl == linkCacheSourceUrl
     if (!fromLinkCache && !failedUrl.hasLikelyExpiringPlaybackCredentials()) return false
     if (failedUrl == linkRefreshAttemptedUrl) return false
