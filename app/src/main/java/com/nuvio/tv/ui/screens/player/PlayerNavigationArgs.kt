@@ -45,7 +45,8 @@ internal data class PlayerNavigationArgs(
      */
     val isCatchUp: Boolean = false,
     val catchUpStartMs: Long? = null,
-    val catchUpEndMs: Long? = null
+    val catchUpEndMs: Long? = null,
+    val fromLinkCache: Boolean = false
 ) {
     val torrentTrackers: List<String>
         get() {
@@ -110,7 +111,8 @@ internal data class PlayerNavigationArgs(
                 audioDelayLanguage = decodedOrNull("audioDelayLanguage"),
                 isCatchUp = savedStateHandle.get<String>("isCatchUp")?.toBooleanStrictOrNull() == true,
                 catchUpStartMs = savedStateHandle.get<String>("catchUpStartMs")?.toLongOrNull(),
-                catchUpEndMs = savedStateHandle.get<String>("catchUpEndMs")?.toLongOrNull()
+                catchUpEndMs = savedStateHandle.get<String>("catchUpEndMs")?.toLongOrNull(),
+                fromLinkCache = savedStateHandle.get<String>("fromLinkCache")?.toBooleanStrictOrNull() == true
             )
         }
     }

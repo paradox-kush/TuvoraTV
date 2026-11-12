@@ -18,6 +18,7 @@ import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.ui.SubtitleView
 import com.nuvio.tv.R
 import com.nuvio.tv.domain.model.Subtitle
+import com.nuvio.tv.ui.screens.player.autosync.AutoSyncLibassSubtitles
 import com.nuvio.tv.ui.screens.player.autosync.AutoSyncSyncedSubtitle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -101,6 +102,7 @@ internal fun PlayerRuntimeController.stopSidecarAddonSubtitle(clearView: Boolean
     activeSidecarSubtitleKey = null
     activeSidecarGeneration = 0L
     AutoSyncSyncedSubtitle.clear() // AutoSync hook
+    AutoSyncLibassSubtitles.clear(_exoPlayer?.getAssHandlerCompat()) // AutoSync hook
     sidecarTimedCues = emptyList()
     lastSidecarCueSignature = null
     if (clearView) {
@@ -283,7 +285,7 @@ internal fun PlayerRuntimeController.renderSidecarCuesAtCurrentPosition() {
 }
 
 private fun PlayerRuntimeController.showSidecarCues(view: SubtitleView, cues: List<Cue>) {
-    view.setCues(cues)
+    view.setCues(presentExoCues(cues))
     subtitleCueTracker.update(cues)
 }
 
