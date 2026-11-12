@@ -24,4 +24,12 @@ object SidebarVisibilityPolicy {
      */
     fun showSidebar(routeHasSidebar: Boolean, immersivePlayback: Boolean): Boolean =
         routeHasSidebar && !immersivePlayback
+
+    /**
+     * Whether a root destination reserves the expanded rail's width (legacy sidebar). Applied per
+     * root destination since sync 15 (upstream), so it must not depend on the route — only on the
+     * collapse setting and on a player owning the screen within the IPTV/Sports hub route.
+     */
+    fun rootContentInsetVisible(sidebarCollapsed: Boolean, immersivePlayback: Boolean): Boolean =
+        !sidebarCollapsed && !immersivePlayback
 }

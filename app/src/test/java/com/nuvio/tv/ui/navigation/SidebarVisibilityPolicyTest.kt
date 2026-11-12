@@ -50,4 +50,32 @@ class SidebarVisibilityPolicyTest {
             SidebarVisibilityPolicy.showSidebar(routeHasSidebar = false, immersivePlayback = true)
         )
     }
+
+    // Sync 15: upstream moved the legacy sidebar inset from the NavHost container onto each root
+    // destination, keyed only on the collapse setting. The IPTV/Sports hubs are root destinations
+    // whose live preview goes fullscreen within the route, so the inset must also stand down there.
+
+    @Test
+    fun `root content keeps the rail inset while browsing with an expanded rail`() {
+        assertTrue(
+            "an expanded rail on a root screen reserves its width",
+            SidebarVisibilityPolicy.rootContentInsetVisible(sidebarCollapsed = false, immersivePlayback = false)
+        )
+    }
+
+    @Test
+    fun `root content drops the rail inset for a fullscreen live channel`() {
+        assertFalse(
+            "a fullscreen live channel on the IPTV/Sports hub must fill the screen edge to edge",
+            SidebarVisibilityPolicy.rootContentInsetVisible(sidebarCollapsed = false, immersivePlayback = true)
+        )
+    }
+
+    @Test
+    fun `root content has no rail inset when the rail is collapsed`() {
+        assertFalse(
+            "a collapsed rail reserves no width",
+            SidebarVisibilityPolicy.rootContentInsetVisible(sidebarCollapsed = true, immersivePlayback = false)
+        )
+    }
 }

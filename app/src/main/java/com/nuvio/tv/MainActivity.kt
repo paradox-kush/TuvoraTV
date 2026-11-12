@@ -1765,10 +1765,15 @@ private fun LegacySidebarScaffold(
         // Applied per root destination (not on the NavHost container) so it only changes
         // with the collapse setting, never during a navigation transition.
         val rootContentInset by animateDpAsState(
-            targetValue = if (sidebarCollapsed) {
-                NuvioTheme.spacing.none
-            } else {
+            targetValue = if (
+                com.nuvio.tv.ui.navigation.SidebarVisibilityPolicy.rootContentInsetVisible(
+                    sidebarCollapsed = sidebarCollapsed,
+                    immersivePlayback = immersivePlayback
+                )
+            ) {
                 NuvioLayout.tokens.sidebarContentOffset
+            } else {
+                NuvioTheme.spacing.none
             },
             animationSpec = tween(NuvioMotion.tokens.durations.medium),
             label = "rootContentInset"
