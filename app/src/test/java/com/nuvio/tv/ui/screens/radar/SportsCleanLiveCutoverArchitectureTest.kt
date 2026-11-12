@@ -35,7 +35,7 @@ class SportsCleanLiveCutoverArchitectureTest {
     fun `Sports screen and navigation carry stable identity into shared clean dispatcher`() {
         val screenContract = screen.substringAfter("fun SportsHubScreen(")
             .substringBefore("viewModel: SportsHubViewModel")
-        val sportsRoute = navigation.substringAfter("composable(Screen.SportsHub.route)")
+        val sportsRoute = navigation.substringAfter("rootComposable(Screen.SportsHub.route)")
             .substringBefore("composable(Screen.ManageProfiles.route)")
         val liveCallback = sportsRoute.substringAfter("onPlayChannel =")
             .substringBefore("onAddProvider =")

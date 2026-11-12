@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.player
 
 import android.net.Uri
 import android.util.Log
+import com.nuvio.tv.core.diagnostics.LogRedaction
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
@@ -47,7 +48,7 @@ internal class HlsParameterSetInitDataSource(
         val rewritten = resultWithin(CHECK_TIMEOUT_MS) {
             HlsParameterSetInit.withParameterSetInit(body.toString(Charsets.UTF_8), baseUri, ::fetchSegmentHead)
         }
-        if (rewritten != null) Log.i(TAG, "Added an SPS/PPS init segment to $baseUri")
+        if (rewritten != null) Log.i(TAG, "Added an SPS/PPS init segment to ${LogRedaction.url(baseUri)}")
         val served = rewritten?.toByteArray(Charsets.UTF_8) ?: body
         playlist = served
         return served.size.toLong()
@@ -93,7 +94,7 @@ internal class HlsParameterSetInitDataSource(
             }
             head.toByteArray()
         } catch (e: java.io.IOException) {
-            Log.w(TAG, "Could not read the start of $uri", e)
+            Log.w(TAG, "Could not read the start of ${LogRedaction.url(uri.toString())}: ${LogRedaction.text(e.message)}")
             null
         } finally {
             runCatching { source.close() }

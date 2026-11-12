@@ -87,12 +87,12 @@ class CleanLiveIngressCutoverArchitectureTest {
     }
 
     private fun searchDetailCallback(): String = source
-        .substringAfter("composable(Screen.Search.route)")
+        .substringAfter("rootComposable(Screen.Search.route)")
         .substringAfter("onNavigateToDetail =")
         .substringBefore("onNavigateToSeeAll =")
 
     private fun libraryDetailCallback(): String = source
-        .substringAfter("composable(Screen.Library.route)")
+        .substringAfter("rootComposable(Screen.Library.route)")
         .substringAfter("onNavigateToDetail =")
         .substringBefore("onCloudPlaybackResolved =")
 
