@@ -89,6 +89,7 @@ object M3UParser {
         extInfLine: String,
         url: String,
         headerCatchUp: Map<String, String> = emptyMap(),
+        extGrp: String? = null,
     ): M3UEntry? {
         if (!extInfLine.startsWith("#EXTINF")) return null
         // Display name = everything after the LAST comma that isn't inside a quoted attribute.
@@ -107,7 +108,7 @@ object M3UParser {
             tvgId = attrs["tvg-id"]?.takeIf { it.isNotBlank() },
             tvgName = tvgName,
             logo = attrs["tvg-logo"]?.takeIf { it.isNotBlank() && it != "https://image.tmdb.org/t/p/w600_and_h900_bestv2" },
-            group = attrs["group-title"]?.takeIf { it.isNotBlank() },
+            group = attrs["group-title"]?.takeIf { it.isNotBlank() } ?: extGrp,
             url = url,
             kind = kind,
             ext = ext,
@@ -174,6 +175,7 @@ object M3UParser {
         onEntry: (M3UEntry) -> Unit
     ) {
         var pendingExtInf: String? = null
+        var pendingExtGrp: String? = null // B135: `#EXTGRP:` folder for the next entry only; group-title wins
         var headerSeen = false
         var headerCatchUp: Map<String, String> = emptyMap()
         var line = reader.readLine()
@@ -186,10 +188,13 @@ object M3UParser {
                     tvgUrlOf(trimmed)?.let(onHeaderTvgUrl)
                     headerCatchUp = headerCatchUpOf(trimmed)
                 }
+                trimmed.startsWith("#EXTGRP:", ignoreCase = true) ->
+                    pendingExtGrp = trimmed.substring("#EXTGRP:".length).trim().ifBlank { null }
                 trimmed.startsWith("#") || trimmed.isEmpty() -> { /* directive / blank */ }
                 pendingExtInf != null -> {
-                    val entry = parseExtInf(pendingExtInf, trimmed, headerCatchUp)
+                    val entry = parseExtInf(pendingExtInf, trimmed, headerCatchUp, pendingExtGrp)
                     pendingExtInf = null
+                    pendingExtGrp = null
                     if (entry != null && entry.name.isNotBlank()) onEntry(entry)
                 }
                 else -> { /* stray URL with no #EXTINF */ }

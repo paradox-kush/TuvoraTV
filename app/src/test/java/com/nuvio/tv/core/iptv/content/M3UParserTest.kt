@@ -272,4 +272,35 @@ class M3UParserCatchUpTest {
         val e = parse("#EXTM3U Catchup=\"shift\" CATCHUP-DAYS=\"2\"\n#EXTINF:-1,A\nhttp://h/a.ts").single()
         assertEquals(M3uCatchUpInfo(M3uCatchUpType.SHIFT, null, 2), e.catchUp)
     }
+
+    // B135: EPGenius-style exports put the folder in `#EXTGRP:` instead of (or as well as) group-title.
+    private val EXTGRP = """
+        #EXTM3U
+        #EXTGRP:Sports
+        #EXTINF:-1 tvg-id="a",Alpha
+        http://host/live/u/p/1.ts
+        #EXTINF:-1 tvg-id="b",Bravo
+        #EXTGRP:Movies Folder
+        http://host/live/u/p/2.ts
+        #EXTGRP:Ignored Because Title Wins
+        #EXTINF:-1 tvg-id="c" group-title="News",Charlie
+        http://host/live/u/p/3.ts
+        #EXTINF:-1 tvg-id="d",Delta
+        http://host/live/u/p/4.ts
+    """.trimIndent()
+
+    @Test
+    fun `B135 EXTGRP before or after EXTINF names the group of the next entry`() {
+        val e = parseAll(EXTGRP.reader().buffered())
+        assertEquals("no channel may be dropped", 4, e.size)
+        assertEquals("EXTGRP before EXTINF", "Sports", e[0].group)
+        assertEquals("EXTGRP between EXTINF and URL", "Movies Folder", e[1].group)
+    }
+
+    @Test
+    fun `B135 group-title wins over EXTGRP and EXTGRP does not leak to the next entry`() {
+        val e = parseAll(EXTGRP.reader().buffered())
+        assertEquals("group-title wins", "News", e[2].group)
+        assertNull("EXTGRP applies to one entry only", e[3].group)
+    }
 }
