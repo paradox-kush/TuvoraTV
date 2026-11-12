@@ -37,7 +37,7 @@ class SubtitleHashProbePolicyTest {
     fun iptvPanelHostIsNeverProbed() {
         assertFalse(
             "a user's IPTV panel host must not be range-read for a hash",
-            SubtitleHashProbePolicy.mayProbe("http://panel.example:8080/movie/u/p/1.mp4", "tt1", "tt1", false) { it == "panel.example" }
+            SubtitleHashProbePolicy.mayProbe("http://panel.example:8080/movie/u/p/1.mp4", "tt1", "tt1", false, isPanelHost = { it == "panel.example" })
         )
     }
 
