@@ -5,7 +5,8 @@ import org.junit.Test
 
 class GuidePlaybackInteractionPolicyTest {
     @Test fun `moving focus clears a channel action notice without clearing playback state`() {
-        val state = LiveGuideUiState(focusedChannelId = "old", actionError = "No recording")
+        val listed = listOf("old", "new").map { GuideChannel(it, it, null, "", 1, entityId = it) }
+        val state = LiveGuideUiState(channels = listed, focusedChannelId = "old", actionError = "No recording")
         val next = GuidePlaybackInteractionPolicy.focus(state, "new")
         assertEquals("new", next.focusedChannelId)
         assertNull(next.actionError)
@@ -34,5 +35,13 @@ class GuidePlaybackInteractionPolicyTest {
     @Test fun `terminal playback error covers the retained video frame`() {
         assertTrue(GuidePlaybackInteractionPolicy.coverFailedFrame(true))
         assertFalse(GuidePlaybackInteractionPolicy.coverFailedFrame(false))
+    }
+    @Test fun `focus on a row that is no longer listed does not re-aim the guide`() {
+        // UX168: the hidden row's late focus callback re-aimed the guide at a channel that had left the
+        // list, so the notice-expiry restore had nothing to request and fell back to row one.
+        val channels = listOf("a", "c").map { GuideChannel(it, it.uppercase(), null, "http://fixture.invalid/$it", 1, entityId = it) }
+        val state = LiveGuideUiState(channels = channels, focusedChannelId = "c")
+        assertEquals("a removed row keeps the neighbour aim", "c", GuidePlaybackInteractionPolicy.focus(state, "b").focusedChannelId)
+        assertEquals("a listed row takes the aim", "a", GuidePlaybackInteractionPolicy.focus(state, "a").focusedChannelId)
     }
 }

@@ -40,7 +40,8 @@ class GuideReplayNoticePolicyTest {
 
     @Test fun `moving focus drops Retry with the message`() {
         val shown = GuideReplayNoticePolicy.refused(idle, "x", channel, programme)
-        val next = GuidePlaybackInteractionPolicy.focus(shown, "other")
+        val other = GuideChannel("other", "Other", null, "", 6)
+        val next = GuidePlaybackInteractionPolicy.focus(shown.copy(channels = listOf(channel, other)), "other")
         assertNull("message", next.actionError)
         assertNull("retry", next.replayRetry)
     }
