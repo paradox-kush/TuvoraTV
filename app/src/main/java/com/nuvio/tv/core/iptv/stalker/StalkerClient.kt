@@ -910,9 +910,8 @@ class StalkerClient @Inject constructor(
             val status = (error as? com.nuvio.tv.core.iptv.HttpStatusException)?.status
             Log.w(TAG, "create_link failed: ${error::class.simpleName}, HTTP=$status")
             // UX340: the portal never answered (refused, unreachable, DNS, timeout) — say so, by type only.
-            if (com.nuvio.tv.core.iptv.classifyPanelThrowable(error) ==
-                com.nuvio.tv.core.iptv.PanelRequestOutcome.CONNECTION_FAILURE
-            ) {
+            // UX345: so did the breaker's fast-fail, which only happens while the portal is not answering.
+            if (com.nuvio.tv.core.iptv.isProviderUnreachable(error)) {
                 lastResolveErrorInternal = UNREACHABLE_MESSAGE
             }
             return null

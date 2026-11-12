@@ -93,7 +93,9 @@ class IptvProviderPlaybackResolverFactory internal constructor(
     private val activeServer: (XtreamAccount) -> XtreamAccount = { it },
     private val panelClock: com.nuvio.tv.core.iptv.PanelClockSource = com.nuvio.tv.core.iptv.PanelClockSource.NONE,
     private val m3uChannels: ProviderM3uCatchUpLookup = ProviderM3uCatchUpLookup { _, _ -> null },
-) : ProviderPlaybackResolverFactory {
+    /** UX345: clears the panel breaker for every server of the playlist (the guard's Retry contract). */
+    private val breakerReset: (XtreamAccount) -> Unit = com.nuvio.tv.core.iptv.IptvPanelGuard::resetForAccount,
+) : ProviderPlaybackResolverFactory, com.nuvio.tv.playback.core.ProviderUserRetryPort {
 
     @Inject
     constructor(
@@ -134,6 +136,21 @@ class IptvProviderPlaybackResolverFactory internal constructor(
             }
         },
     )
+
+    /**
+     * UX345: the provider died, the reconnect's create_link failed twice and opened the panel breaker
+     * for 30 s; the viewer restarted nothing, the provider came back, and the FIRST Retry was refused
+     * by the breaker without contacting the portal ("Live TV playback failed."), while a later press
+     * (after the window) worked. A viewer's Retry means "contact the provider now", exactly like every
+     * other Retry affordance, so it clears the breaker of the playlist it is about to mint from.
+     */
+    override suspend fun beforeUserRetry(
+        profileId: PlaybackProfileId,
+        selection: com.nuvio.tv.playback.core.ProviderPlaybackSelection,
+    ) {
+        val account = accountLookups.create(profileId).find(selection.accountId.value) ?: return
+        breakerReset(account)
+    }
 
     override fun create(profileId: PlaybackProfileId): ProviderPlaybackResolver =
         IptvProviderPlaybackResolver(
@@ -555,6 +572,11 @@ internal object ProviderLinkFailurePolicy {
         var depth = 0
         while (cause != null && depth < 8) {
             when (cause) {
+                // UX345: the open breaker refused without contacting the provider — because the
+                // provider has not been answering. Same sentence as a refused connection.
+                is com.nuvio.tv.core.iptv.PanelHostFastFailException,
+                is com.nuvio.tv.core.iptv.PanelHostFastFailIOException,
+                -> return ProviderLinkFailureReason.UNREACHABLE
                 is java.net.SocketTimeoutException -> return ProviderLinkFailureReason.TIMED_OUT
                 is java.net.ConnectException,
                 is java.net.NoRouteToHostException,

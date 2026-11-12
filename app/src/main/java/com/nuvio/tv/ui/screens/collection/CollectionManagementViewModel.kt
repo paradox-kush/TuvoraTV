@@ -276,15 +276,19 @@ class CollectionManagementViewModel @Inject constructor(
                 }
                 if (content == null) {
                     _uiState.update {
-                        it.copy(
-                            isLoadingImport = false,
-                            importError = context.getString(R.string.collections_import_file_not_found_downloads)
-                        )
+                        it.copy(isLoadingImport = false, importError = fileUnreadableNotice(context))
                     }
                     return@launch
                 }
                 _uiState.update { it.copy(importText = content, isLoadingImport = false) }
                 validateJson(content)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (denied: SecurityException) {
+                // B09: storage the app may not read is the same answer as "not visible", not a raw error.
+                _uiState.update { it.copy(isLoadingImport = false, importError = fileUnreadableNotice(context)) }
+            } catch (denied: java.io.FileNotFoundException) {
+                _uiState.update { it.copy(isLoadingImport = false, importError = fileUnreadableNotice(context)) }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -298,6 +302,15 @@ class CollectionManagementViewModel @Inject constructor(
             }
         }
     }
+
+    /** B09: say what this TV can actually read, instead of "not found — export first". */
+    private fun fileUnreadableNotice(context: android.content.Context): String =
+        when (CollectionFileImportPolicy.noticeFor(android.os.Build.VERSION.SDK_INT)) {
+            CollectionFileImportPolicy.Notice.ONLY_OWN_EXPORT_READABLE ->
+                context.getString(R.string.collections_import_file_own_export_only)
+            CollectionFileImportPolicy.Notice.FILE_IMPORT_UNAVAILABLE ->
+                context.getString(R.string.collections_import_file_unavailable)
+        }
 
     fun getExportJson(): String {
         return collectionsDataStore.exportToJson(_uiState.value.collections)

@@ -94,6 +94,17 @@ internal fun classifyPanelThrowable(t: Throwable): PanelRequestOutcome = when (t
 }
 
 /**
+ * UX340/UX345: should a failed provider request read to the viewer as "couldn't reach the provider"?
+ * True for a real connection failure and — unlike [classifyPanelThrowable], which must keep our own
+ * refusal out of the breaker's evidence — for the breaker's fast-fail, which only happens because the
+ * provider has not been answering. Type only: never the message (it can name the host).
+ */
+internal fun isProviderUnreachable(t: Throwable): Boolean =
+    t is PanelHostFastFailException ||
+        t is PanelHostFastFailIOException ||
+        (t !is CancellationException && classifyPanelThrowable(t) == PanelRequestOutcome.CONNECTION_FAILURE)
+
+/**
  * Admission-checks one panel transport attempt against this guard, then reports how it ended.
  *
  * - Refused admission throws the policy's own [PanelHostFastFailException] BEFORE any transport

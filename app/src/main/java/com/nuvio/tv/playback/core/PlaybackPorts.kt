@@ -38,6 +38,20 @@ fun interface ProviderPlaybackResolverFactory {
     fun create(profileId: PlaybackProfileId): ProviderPlaybackResolver
 }
 
+/**
+ * UX345: told just before the VIEWER's Retry restarts a failed provider selection, so the provider
+ * side can drop anything that would refuse that retry without contacting the provider (the panel
+ * breaker that opened while the provider was down). Automatic recovery never calls it: only a user
+ * action means "contact this provider now". Must not throw; must not mint a link.
+ */
+fun interface ProviderUserRetryPort {
+    suspend fun beforeUserRetry(profileId: PlaybackProfileId, selection: ProviderPlaybackSelection)
+
+    companion object {
+        val NONE: ProviderUserRetryPort = ProviderUserRetryPort { _, _ -> }
+    }
+}
+
 data class PlaybackEnvironmentSnapshot(
     val runtimeCapabilities: RuntimeCapabilities,
     val resourceBudget: ResourceBudget = ResourceBudget(),

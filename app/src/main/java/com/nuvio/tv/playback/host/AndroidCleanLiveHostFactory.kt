@@ -91,6 +91,8 @@ internal fun interface CleanLiveHostFactory {
 /** Production Android composition shared by fullscreen now and the clean guide host later. */
 internal class AndroidCleanLiveHostFactory @Inject constructor(
     private val sessionFactory: ProductionPlaybackSessionFactory,
+    /** UX345: the viewer's Retry clears the provider's panel breaker before the re-mint. */
+    private val userRetry: com.nuvio.tv.playback.core.ProviderUserRetryPort,
 ) : CleanLiveHostFactory {
     override suspend fun create(input: AndroidCleanLiveHostInput): CleanLiveHost {
         val surfaces = withContext(Dispatchers.Main.immediate) {
@@ -111,6 +113,7 @@ internal class AndroidCleanLiveHostFactory @Inject constructor(
             outputController = AndroidPlaybackOutputController(input.activity),
             lifecycle = AndroidPlaybackLifecyclePort(input.lifecycle),
             previewViewport = input.previewViewport,
+            userRetry = userRetry,
         )
         return AndroidCleanLiveHost(host)
     }

@@ -16,6 +16,7 @@ import com.nuvio.tv.playback.core.ExternalSubtitleResolver
 import com.nuvio.tv.playback.core.PlaybackSnapshot
 import com.nuvio.tv.playback.core.PlaybackState
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
+import com.nuvio.tv.playback.core.ProviderUserRetryPort
 import com.nuvio.tv.playback.core.ResourceBudget
 import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.core.VideoDimensions
@@ -67,8 +68,14 @@ internal class CleanLivePlaybackHost private constructor(
     private val releaseAuthority: ReleaseAuthority,
     private val quality: PlaybackQualityAccumulator,
     private val qualityReporter: PlaybackQualityReporter,
+    private val preferenceProfileId: PlaybackProfileId,
+    private val userRetry: ProviderUserRetryPort,
 ) {
     private val commandMutex = Mutex()
+
+    /** UX345: the provider selection the session is on, for the viewer's Retry. Null on VOD / local buffer. */
+    @Volatile
+    private var providerSelection: ProviderPlaybackSelection? = null
 
     @Volatile
     private var released = false
@@ -106,6 +113,7 @@ internal class CleanLivePlaybackHost private constructor(
         require(request.contentType == ContentType.VOD) {
             "Clean VOD playback host accepts VOD requests only"
         }
+        providerSelection = null
         controller.tune(request, profile, startPositionMs)
     }
 
@@ -117,6 +125,7 @@ internal class CleanLivePlaybackHost private constructor(
     suspend fun tuneLocalBuffer(playlistUri: String, metadata: CleanMediaSessionMetadata): Long =
         acceptCommand(metadata) {
             require(playlistUri.startsWith("file:")) { "Local buffer must be a file URI" }
+            providerSelection = null
             controller.tune(
                 PlaybackRequest(url = playlistUri, contentType = ContentType.VOD),
                 SessionProfile.FULLSCREEN,
@@ -131,6 +140,7 @@ internal class CleanLivePlaybackHost private constructor(
         metadata: CleanMediaSessionMetadata,
     ): Long = acceptCommand(metadata) {
         require(selection.contentType == ContentType.CATCH_UP) { "Catch-up host command needs a catch-up selection" }
+        providerSelection = selection
         controller.tune(selection, profile)
     }
 
@@ -144,6 +154,19 @@ internal class CleanLivePlaybackHost private constructor(
             val prior = snapshot.value
             val restarts = prior.state == PlaybackState.FAILED || prior.state == PlaybackState.STOPPED
             withContext(NonCancellable) {
+                // UX345: the viewer's Retry must reach the provider: let it drop the panel breaker that
+                // opened while the provider was down. Only when the reducer will really restart, and
+                // never allowed to stop the Retry itself.
+                val selection = providerSelection
+                if (restarts && selection != null) {
+                    try {
+                        // Bounded: an account lookup that never returns must not hold the Retry.
+                        kotlinx.coroutines.withTimeoutOrNull(USER_RETRY_PREPARE_MS) {
+                            userRetry.beforeUserRetry(preferenceProfileId, selection)
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
                 controller.retry()
                 if (restarts) {
                     // Retry restarts the request and bumps the generation. Awaiting that bump
@@ -217,7 +240,10 @@ internal class CleanLivePlaybackHost private constructor(
         dispatch: suspend () -> Unit,
     ): Long {
         requireLive(selection)
-        return acceptCommand(metadata, dispatch)
+        return acceptCommand(metadata) {
+            providerSelection = selection
+            dispatch()
+        }
     }
 
     private suspend fun acceptCommand(
@@ -300,6 +326,7 @@ internal class CleanLivePlaybackHost private constructor(
             mediaSessionFactory: CleanMediaSessionOwnerFactory = productionMediaSessionFactory,
             qualityReporter: PlaybackQualityReporter = PostHogPlaybackQualityReporter,
             clockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+            userRetry: ProviderUserRetryPort = ProviderUserRetryPort.NONE,
         ): CleanLivePlaybackHost {
             val parentJob = parentScope.coroutineContext[Job]
             val hostJob = SupervisorJob(parentJob)
@@ -393,6 +420,8 @@ internal class CleanLivePlaybackHost private constructor(
                 releaseAuthority = authority,
                 quality = quality,
                 qualityReporter = qualityReporter,
+                preferenceProfileId = preferenceProfileId,
+                userRetry = userRetry,
             )
         }
 
@@ -413,5 +442,8 @@ internal class CleanLivePlaybackHost private constructor(
         }
     }
 }
+
+/** UX345: how long the viewer's Retry waits for the provider side to drop its breaker. */
+private const val USER_RETRY_PREPARE_MS = 2_000L
 
 /** Freeze-frame refresh while real video plays: a held frame is at most this old. */

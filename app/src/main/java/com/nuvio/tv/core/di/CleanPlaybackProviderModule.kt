@@ -29,6 +29,13 @@ abstract class CleanPlaybackProviderModule {
         implementation: IptvProviderPlaybackResolverFactory,
     ): ProviderPlaybackResolverFactory
 
+    /** UX345: the same singleton clears the panel breaker before a viewer's live Retry. */
+    @Binds
+    @Singleton
+    abstract fun bindProviderUserRetryPort(
+        implementation: IptvProviderPlaybackResolverFactory,
+    ): com.nuvio.tv.playback.core.ProviderUserRetryPort
+
     @Binds
     @Singleton
     internal abstract fun bindLivePauseControlFactory(

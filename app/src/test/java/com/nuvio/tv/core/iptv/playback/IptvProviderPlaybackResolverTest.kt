@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.iptv.playback
 
 import com.nuvio.tv.core.iptv.CatchUpDialectWalk
+import com.nuvio.tv.core.iptv.guardedPanelRequest
 import com.nuvio.tv.core.iptv.M3uCatchUpInfo
 import com.nuvio.tv.core.iptv.M3uCatchUpType
 import com.nuvio.tv.core.iptv.PanelClockSource
@@ -60,6 +61,69 @@ class IptvProviderPlaybackResolverTest {
         assertTrue(resolved is PlaybackResult.Success)
         assertEquals(listOf(captured), capturedProfiles)
         assertFalse(captured.toString().contains(captured.value))
+    }
+
+    /**
+     * Regression (UX345, TV emulator 2026-11-12, mock Stalker restarted): while the portal was down the
+     * reconnect's create_link failures opened the panel breaker for 30 s. The provider came back and the
+     * viewer's FIRST Retry was refused by the breaker without contacting the portal, failing as the
+     * generic "Live TV playback failed."; a second press after the window worked. A viewer's Retry must
+     * reach the portal: it clears the breaker of the playlist it mints from (production default reset).
+     */
+    @Test
+    fun `the viewer's Retry clears the panel breaker so the first re-mint reaches the portal`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        val guard = com.nuvio.tv.core.iptv.IptvPanelGuard.guard
+        val origin = requireNotNull(com.nuvio.tv.core.iptv.IptvPanelGuard.panelOriginUrlOf(account))
+        val portalCalls = mutableListOf<Int>()
+        try {
+            // The provider died: two counted connection failures open the breaker.
+            repeat(2) {
+                val admitted = guard.admit(origin) as com.nuvio.tv.core.iptv.PanelAdmission.Allowed
+                guard.report(admitted, com.nuvio.tv.core.iptv.PanelRequestOutcome.CONNECTION_FAILURE)
+            }
+            assertTrue(
+                "precondition: the breaker is open",
+                guard.admit(origin) is com.nuvio.tv.core.iptv.PanelAdmission.FastFail,
+            )
+            val factory = IptvProviderPlaybackResolverFactory(
+                accountLookups = ProviderAccountLookupFactory { ProviderAccountLookup { id -> account.takeIf { it.id == id } } },
+                // The transport the real Stalker session uses: admitted by the breaker, then the portal.
+                links = ProviderLinkSource { _, _, streamId, _ ->
+                    guard.guardedPanelRequest(origin) {
+                        portalCalls += streamId
+                        ProviderLinkResult.Resolved("http://media.invalid/live/$streamId.ts")
+                    }
+                },
+                winnerMemory = Memory(),
+            )
+            val profile = PlaybackProfileId("17")
+            val selection = selection(account, ProviderSourceType.STALKER, ContentType.LIVE)
+
+            // The provider is back; the viewer presses Retry once.
+            factory.beforeUserRetry(profile, selection)
+            val result = factory.create(profile).resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL))
+
+            assertEquals("the first Retry reached the portal", listOf(42), portalCalls)
+            assertTrue("and played: $result", result is PlaybackResult.Success)
+        } finally {
+            com.nuvio.tv.core.iptv.IptvPanelGuard.resetForAccount(account)
+        }
+    }
+
+    /** UX345: an automatic path refused by the open breaker reads as "provider unreachable", not unknown. */
+    @Test
+    fun `a breaker fast-fail is the provider being unreachable, not an unknown failure`() {
+        val fastFail = com.nuvio.tv.core.iptv.PanelHostFastFailException("http://portal.invalid", 1L)
+        assertEquals("fast-fail", ProviderLinkFailureReason.UNREACHABLE, ProviderLinkFailurePolicy.reasonOfError(fastFail))
+        assertEquals(
+            "fast-fail in IOException clothing",
+            ProviderLinkFailureReason.UNREACHABLE,
+            ProviderLinkFailurePolicy.reasonOfError(com.nuvio.tv.core.iptv.PanelHostFastFailIOException(fastFail)),
+        )
+        assertTrue("Stalker tags it too", com.nuvio.tv.core.iptv.isProviderUnreachable(fastFail))
+        assertTrue("and a refused connection", com.nuvio.tv.core.iptv.isProviderUnreachable(java.net.ConnectException("x")))
+        assertFalse("a reset is not unreachable", com.nuvio.tv.core.iptv.isProviderUnreachable(java.net.SocketException("reset")))
     }
 
     @Test

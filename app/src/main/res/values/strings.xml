@@ -2668,6 +2668,10 @@
     <string name="collections_import_no_data">No data to import</string>
     <string name="collections_import_invalid_or_empty">Invalid format or empty collections</string>
     <string name="collections_import_file_not_found_downloads">File not found in Downloads.\nExport collections first to create it.</string>
+    <!-- B09: Android 10+ lets an app read only the Downloads files it created itself. -->
+    <string name="collections_import_file_own_export_only">Couldn\'t open nuvio-collections.json.\nThis TV only lets Tuvora read a copy it exported here itself. A file copied into Downloads from a phone, computer or browser can\'t be opened. Use From URL instead.</string>
+    <!-- B09: below Android 10 the app holds no storage permission at all. -->
+    <string name="collections_import_file_unavailable">This TV doesn\'t let Tuvora read files from Downloads.\nUse From URL instead.</string>
     <string name="collections_import_failed_read_file">Failed to read file: %1$s</string>
     <string name="collections_cancel">Cancel</string>
     <string name="collections_mode_paste">Paste JSON</string>

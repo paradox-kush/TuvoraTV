@@ -175,6 +175,41 @@ class CleanLivePlaybackHostTest {
         fixture.parentJob.cancel()
     }
 
+    /**
+     * Regression (UX345): the viewer's Retry of a failed live channel must tell the provider side
+     * BEFORE the session re-mints, so a breaker that opened while the provider was down cannot refuse
+     * the first Retry. A Retry with nothing to restart (still playing) tells nobody.
+     */
+    @Test
+    fun `a viewer's Retry of a failed channel tells the provider before the retry runs`() = runTest {
+        val fixture = fixture()
+        val host = fixture.create()
+        val metadata = CleanMediaSessionMetadata.fromIngress(
+            redactedContentFingerprint = "ab12ab12ab12ab12",
+            title = "Live News",
+        )
+        host.tune(liveSelection("one"), SessionProfile.FULLSCREEN, metadata)
+
+        host.retry()   // still playing: the reducer would not restart, nothing to clear
+        assertEquals("no restart, no provider call", emptyList<String>(), fixture.userRetries)
+
+        fixture.snapshot.value = fixture.snapshot.value.copy(state = PlaybackState.FAILED)
+        val retry = async { host.retry() }
+        runCurrent()
+        val told = fixture.userRetries.toList()
+        val operations = fixture.operations.toList()
+        // Release the retry's NonCancellable generation wait BEFORE asserting: a failed assertion
+        // with the wait still pending hangs runTest instead of failing (seen on the red run).
+        fixture.snapshot.value = fixture.snapshot.value.copy(generation = fixture.snapshot.value.generation + 1)
+        retry.await()
+        assertEquals("told once, for the channel on screen", listOf("profile:account-one"), told)
+        val retryIndex = operations.indexOfLast { it == "command:Retry" }
+        assertTrue("the retry ran", retryIndex > 0)
+        assertEquals("before the Retry command", "userRetry", operations[retryIndex - 1])
+        host.release()
+        fixture.parentJob.cancel()
+    }
+
     @Test
     fun `media session is the only release authority and concurrent release is idempotent`() = runTest {
         val fixture = fixture()
@@ -358,6 +393,7 @@ class CleanLivePlaybackHostTest {
         val snapshot = MutableStateFlow(PlaybackSnapshot())
         val commands = mutableListOf<PlaybackCommand>()
         val operations = mutableListOf<String>()
+        val userRetries = mutableListOf<String>()
         var sessionReleaseCount = 0
         val releaseOrder = mutableListOf<String>()
         val mediaOwner = mockk<CleanMediaSessionOwner>(relaxed = true)
@@ -415,6 +451,10 @@ class CleanLivePlaybackHostTest {
             applicationLooper = Looper.getMainLooper(),
             applicationDispatcher = Dispatchers.Unconfined,
             qualityReporter = com.nuvio.tv.playback.wiring.PlaybackQualityReporter { qualityReports += it },
+            userRetry = com.nuvio.tv.playback.core.ProviderUserRetryPort { profile, selection ->
+                userRetries += "${profile.value}:${selection.accountId.value}"
+                operations += "userRetry"
+            },
             mediaSessionFactory = CleanMediaSessionOwnerFactory { _, _, _, _, _ ->
                 if (mediaSessionCreationFails) error("synthetic creation failure")
                 mediaOwner
