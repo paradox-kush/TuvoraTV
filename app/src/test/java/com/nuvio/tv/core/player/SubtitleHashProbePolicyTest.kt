@@ -92,4 +92,34 @@ class SubtitleHashProbePolicyTest {
             SubtitleHashProbePolicy.mayProbe("https://cdn.example/replay.ts", "m3u:abc", "m3u:abc", live, notPanel)
         )
     }
+
+    @Test
+    fun matchedIptvCopyUnderAPublicIdIsNeverProbed() {
+        assertFalse(
+            "B255: a TMDB-matched IPTV copy (public tt id, own-source stream label) must not be range-read",
+            SubtitleHashProbePolicy.mayProbe(
+                "https://cdn.example/a.mkv", "tt1", "tt1", false, notPanel, isMatchedIptvSource = true
+            )
+        )
+    }
+
+    @Test
+    fun refreshableIptvIdIsNeverProbed() {
+        assertFalse(
+            "B255: an id the IPTV refresh lane owns must not be range-read",
+            SubtitleHashProbePolicy.mayProbe(
+                "https://cdn.example/a.mkv", "tt1", "tt1", false, notPanel, iptvId = "stalker:acct:1"
+            )
+        )
+    }
+
+    @Test
+    fun ordinaryAddonStreamStillProbedWhenNotMatchedIptv() {
+        assertTrue(
+            "no iptv id and not a matched copy: hashed as before",
+            SubtitleHashProbePolicy.mayProbe(
+                "https://cdn.example/a.mkv", "tt1", "tt1", false, notPanel, iptvId = null, isMatchedIptvSource = false
+            )
+        )
+    }
 }

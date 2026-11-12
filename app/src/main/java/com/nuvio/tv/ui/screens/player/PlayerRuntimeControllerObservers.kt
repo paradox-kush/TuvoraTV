@@ -64,7 +64,9 @@ internal suspend fun PlayerRuntimeController.fetchAddonSubtitlesNow(
         isPanelHost = { host ->
             com.nuvio.tv.core.contracts.PlaybackTrustHosts.isPanelHost(host) ||
                 com.nuvio.tv.core.contracts.PlaybackTrustHosts.isMediaServerHost(host)
-        }
+        },
+        iptvId = iptvClassifier?.refreshableIptvId(listOf(currentVideoId, contentId)),
+        isMatchedIptvSource = com.nuvio.tv.core.contracts.OwnSourcePolicy.isOwnStreamLabel(currentAddonName),
     )
     if (currentVideoHash == null && mayProbeForHash) {
         val result = OpenSubtitlesHasher.compute(currentStreamUrl, currentHeaders)
