@@ -43,4 +43,13 @@ internal object GuideEpgPrefetchPolicy {
 
     /** Focus settled on [center]. */
     fun onFocusChanged(center: Int, size: Int): List<Int> = indexesAround(center, size)
+
+    /**
+     * B56: where the focused channel sits in the view model's list. The screen reports the index of
+     * the row it RENDERS, and it renders the list de-duplicated by content id, while [items] is the
+     * raw list; behind a duplicate the two disagree and the prefetch window was centred on the wrong
+     * channels. The hint is trusted only when it names the same channel; -1 when it is not listed.
+     */
+    fun <T> centerIndex(items: List<T>, hinted: Int, isTarget: (T) -> Boolean): Int =
+        if (hinted in items.indices && isTarget(items[hinted])) hinted else items.indexOfFirst(isTarget)
 }

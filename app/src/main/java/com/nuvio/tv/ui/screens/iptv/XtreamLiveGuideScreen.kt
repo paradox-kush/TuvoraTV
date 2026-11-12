@@ -127,6 +127,7 @@ import kotlinx.coroutines.flow.map
  * TiViMate-style catalogue/EPG guide rendered around one clean live host. Compose passes stable
  * content ids only; the clean owner controls playback, recovery, surfaces, and profile changes.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun LiveGuide(
     account: XtreamAccount,
@@ -603,6 +604,13 @@ fun LiveGuide(
                 true
             }
     ) {
+        // B56: both guide lists keep the app's scroll pivot but settle with Compose's own spring, so a
+        // held D-pad cannot leave the scroll trailing the focus (GuideScrollSpec).
+        val appScrollSpec = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
+        val guideScrollSpec = remember(appScrollSpec) { GuideScrollSpec.around(appScrollSpec) }
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides guideScrollSpec,
+        ) {
         // Breathing room: the guide's left edge sits on the same 52dp content gutter the rails
         // use (none while fullscreen — the video must cover the whole screen).
         Row(
@@ -851,6 +859,7 @@ fun LiveGuide(
                 }
             }
         }
+        } // B56 guide scroll spec
 
         // One persistent clean surface owner changes geometry only; GUIDE/FULLSCREEN never creates
         // a second player or moves provider transport through Compose.

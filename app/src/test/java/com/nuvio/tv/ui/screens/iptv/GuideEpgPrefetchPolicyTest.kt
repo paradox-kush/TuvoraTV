@@ -82,4 +82,21 @@ class GuideEpgPrefetchPolicyTest {
     fun `an empty category primes nothing`() {
         assertEquals(emptyList<Int>(), GuideEpgPrefetchPolicy.onChannelsLoaded(size = 0))
     }
+
+    /** B56 side defect: the screen's row index counts the de-duplicated list, the view model's list is raw. */
+    @Test
+    fun `behind a duplicate the prefetch centres on the focused channel, not on the rendered index`() {
+        val raw = listOf("a", "b", "a", "c", "d") // the guide renders a, b, c, d
+        assertEquals(
+            "row 3 on screen is d, which is raw index 4",
+            4,
+            GuideEpgPrefetchPolicy.centerIndex(raw, hinted = 3) { it == "d" },
+        )
+    }
+
+    @Test
+    fun `a hint that names the focused channel is used as is`() {
+        assertEquals("no scan needed", 1, GuideEpgPrefetchPolicy.centerIndex(listOf("a", "b", "b"), hinted = 1) { it == "b" })
+        assertEquals("not listed", -1, GuideEpgPrefetchPolicy.centerIndex(listOf("a"), hinted = 5) { it == "z" })
+    }
 }

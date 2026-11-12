@@ -288,39 +288,51 @@ fun XtreamHubScreen(
         // front of the navigation. Out on the right it stays one press away without competing,
         // and LEFT from the first tab now leaves the header for the sidebar, which is how every
         // other screen behaves.
-        if (!liveFullscreen) Row(
+        if (!liveFullscreen) {
+          // B132: scoped to this composed row, so a header that left composition (category page, fullscreen,
+          // another screen) comes back with "focus came from outside".
+          val headerFocus = remember { HubHeaderFocus() }
+          val section = uiState.section
+          val selectSection: (XtreamSection) -> Unit = viewModel::selectSection
+          val notATab: () -> Unit = { headerFocus.onControlFocused(null, section) }
+          Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = HubRowStartPadding, end = HubRowStartPadding, bottom = NuvioTheme.spacing.md)
+                .hubHeaderFocusScope(headerFocus)
                 .focusRestorer(headerRestoreTarget),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
-        ) {
-            if (showLive) HubChip(stringResource(R.string.iptv_hub_tab_live), uiState.section == XtreamSection.LIVE, focusRequester = liveTab,
-                onFocusSelect = { if (uiState.section != XtreamSection.LIVE) viewModel.selectSection(XtreamSection.LIVE) }) { viewModel.selectSection(XtreamSection.LIVE) }
-            if (showMovies) HubChip(stringResource(R.string.type_movies), uiState.section == XtreamSection.MOVIES, focusRequester = moviesTab,
-                onFocusSelect = { if (uiState.section != XtreamSection.MOVIES) viewModel.selectSection(XtreamSection.MOVIES) }) { viewModel.selectSection(XtreamSection.MOVIES) }
-            if (showSeries) HubChip(stringResource(R.string.type_series), uiState.section == XtreamSection.SERIES, focusRequester = seriesTab,
-                onFocusSelect = { if (uiState.section != XtreamSection.SERIES) viewModel.selectSection(XtreamSection.SERIES) }) { viewModel.selectSection(XtreamSection.SERIES) }
+          ) {
+            if (showLive) HubSectionTab(stringResource(R.string.iptv_hub_tab_live), XtreamSection.LIVE, section,
+                headerFocus, liveTab, selectSection)
+            if (showMovies) HubSectionTab(stringResource(R.string.type_movies), XtreamSection.MOVIES, section,
+                headerFocus, moviesTab, selectSection)
+            if (showSeries) HubSectionTab(stringResource(R.string.type_series), XtreamSection.SERIES, section,
+                headerFocus, seriesTab, selectSection)
             Spacer(Modifier.weight(1f))
             if (searchApplies || liveSearchApplies) HubChip(
                 label = stringResource(R.string.iptv_hub_search),
                 selected = false,
                 focusRequester = searchChip,
+                onFocusGained = notATab,
                 onClick = { if (liveSearchApplies) liveSearchRequest++ else showSearchDialog = true }
             )
             HubChip(
                 label = stringResource(R.string.rec_hub_chip),
                 selected = false,
+                onFocusGained = notATab,
                 onClick = onOpenRecordings,
             )
             HubChip(
                 label = uiState.selectedAccount?.name?.let(com.nuvio.tv.core.iptv.PlaylistDisplayPolicy::displayName) ?: stringResource(R.string.iptv_hub_account_fallback),
                 selected = false,
                 focusRequester = firstFocus,
+                onFocusGained = notATab,
                 showDropdownIcon = true,
                 onClick = { showAccountPicker = true }
             )
+          }
         }
 
         // Live TV = TiViMate-style guide (category col + live preview + EPG channel list).
@@ -953,8 +965,37 @@ private fun XtreamHubItem.toMetaPreview(): MetaPreview = MetaPreview(
 )
 
 /**
+ * B132: marks the hub header row as the one place where focus travel may switch sections. When the
+ * row loses focus, the next tab landing counts as an arrival from outside ([HubSectionFocusPolicy]).
+ */
+internal fun Modifier.hubHeaderFocusScope(headerFocus: HubHeaderFocus): Modifier =
+    onFocusChanged { if (!it.hasFocus) headerFocus.onHeaderFocusLost() }
+
+/**
+ * A section tab: OK selects it; focus selects it only when the viewer arrowed onto it along the
+ * header (B132 — a landing from Back, a restore or the sidebar never switches the section).
+ */
+@Composable
+internal fun HubSectionTab(
+    label: String,
+    section: XtreamSection,
+    currentSection: XtreamSection,
+    headerFocus: HubHeaderFocus,
+    focusRequester: FocusRequester,
+    onSelect: (XtreamSection) -> Unit,
+) {
+    HubChip(
+        label = label,
+        selected = currentSection == section,
+        focusRequester = focusRequester,
+        onFocusGained = { headerFocus.onControlFocused(section, currentSection)?.let(onSelect) },
+    ) { onSelect(section) }
+}
+
+/**
  * Header control for the provider picker + section tabs. Section tabs switch on FOCUS
  * (TiViMate-style) — arrow onto a tab and it selects, no OK needed; OK/click still works.
+ * Only travel that starts inside the header counts (B132, [HubSectionTab]).
  *
  * Speaks the sidebar's dialect ([SidebarNavigation]) rather than a header vocabulary of its own:
  * nothing is drawn at rest, the active section takes a soft neutral fill, and focus takes a solid
@@ -967,17 +1008,17 @@ private fun XtreamHubItem.toMetaPreview(): MetaPreview = MetaPreview(
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun HubChip(
+internal fun HubChip(
     label: String,
     selected: Boolean,
     focusRequester: FocusRequester? = null,
-    onFocusSelect: (() -> Unit)? = null,
+    /** Runs synchronously on the focus event, so the header can tell travel from an arrival (B132). */
+    onFocusGained: (() -> Unit)? = null,
     showDropdownIcon: Boolean = false,
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val latestOnFocusSelect by rememberUpdatedState(onFocusSelect)
-    LaunchedEffect(focused) { if (focused) latestOnFocusSelect?.invoke() }
+    val latestOnFocusGained by rememberUpdatedState(onFocusGained)
     // The sidebar's nav-item radius, not a full pill: the hub is app navigation, so it should
     // look like the app's navigation.
     val chipShape = NuvioTheme.shapes.button
@@ -996,7 +1037,11 @@ private fun HubChip(
         onClick = onClick,
         modifier = Modifier
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged {
+                val gained = it.isFocused && !focused
+                focused = it.isFocused
+                if (gained) latestOnFocusGained?.invoke()
+            },
         shape = CardDefaults.shape(shape = chipShape),
         colors = CardDefaults.colors(
             containerColor = containerColor,

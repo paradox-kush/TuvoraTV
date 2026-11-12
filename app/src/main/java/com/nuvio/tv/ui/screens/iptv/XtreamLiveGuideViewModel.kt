@@ -1087,7 +1087,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         epgFocusJob = viewModelScope.launch {
             delay(EPG_FOCUS_DEBOUNCE_MS)
             val channels = _uiState.value.channels
-            val center = if (index in channels.indices) index else channels.indexOfFirst { it.contentId == channel.contentId }
+            val center = GuideEpgPrefetchPolicy.centerIndex(channels, index) { it.contentId == channel.contentId }
             if (center < 0) { ensureEpg(channel.streamId); return@launch }
             // Focused first, then neighbours by proximity, so the visible row resolves soonest.
             GuideEpgPrefetchPolicy.onFocusChanged(center, channels.size).forEach { index ->
