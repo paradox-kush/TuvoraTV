@@ -259,15 +259,25 @@ internal object LiveControlsPolicy {
         sendReport = reportable && (failed || errorShown),
     )
 
-    enum class PrimaryFocus { SCRUB_BAR, RETRY, PLAY_PAUSE }
+    enum class PrimaryFocus { SCRUB_BAR, RETRY, CHANNEL_LIST, PLAY_PAUSE }
 
     /**
      * Where the overlay's first focus lands. Retry keeps it on an error; "Send report" is secondary
-     * and never takes it (one stray OK must retry, not send). Without Retry, play/pause has it.
+     * and never takes it (one stray OK must retry, not send). B227: while a live channel plays, first focus
+     * must not be play/pause (OK, then OK again, paused the stream by accident), so it lands on the channel
+     * list; a paused viewer lands on play/pause and resumes with one OK. A one-off stream with no lineup has no
+     * harmless button, so play/pause keeps it. [channelListAvailable] is whether that button is composed.
      */
-    fun primaryFocus(buttons: Buttons, scrubbing: Boolean): PrimaryFocus = when {
+    fun primaryFocus(
+        buttons: Buttons,
+        scrubbing: Boolean,
+        paused: Boolean = false,
+        channelListAvailable: Boolean = buttons.channelList,
+    ): PrimaryFocus = when {
         scrubbing -> PrimaryFocus.SCRUB_BAR
         buttons.retry -> PrimaryFocus.RETRY
+        paused -> PrimaryFocus.PLAY_PAUSE
+        channelListAvailable -> PrimaryFocus.CHANNEL_LIST
         else -> PrimaryFocus.PLAY_PAUSE
     }
 }

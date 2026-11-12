@@ -252,4 +252,44 @@ class LiveControlsPolicyTest {
         assertFalse(LiveControlsPolicy.mayAutoHide(controlsVisible = true, paused = false, failed = false, panelOpen = false, tuning = true))
         assertTrue(LiveControlsPolicy.mayAutoHide(controlsVisible = true, paused = false, failed = false, panelOpen = false, tuning = false))
     }
+
+    // B227: the first OK shows the overlay; a second OK must not pause a live channel.
+    private fun lineupButtons(failed: Boolean = false) =
+        LiveControlsPolicy.buttons(failed = failed, subtitleTracks = 0, audioTracks = 0, hasLineup = true)
+
+    @Test
+    fun `playing with a lineup puts first focus on the channel list`() {
+        assertEquals("OK opens the channel list, never pauses", LiveControlsPolicy.PrimaryFocus.CHANNEL_LIST,
+            LiveControlsPolicy.primaryFocus(lineupButtons(), scrubbing = false, paused = false))
+    }
+
+    @Test
+    fun `paused with a lineup resumes with one OK`() {
+        assertEquals("paused viewer lands on play", LiveControlsPolicy.PrimaryFocus.PLAY_PAUSE,
+            LiveControlsPolicy.primaryFocus(lineupButtons(), scrubbing = false, paused = true))
+    }
+
+    @Test
+    fun `playing without a lineup keeps play pause`() {
+        val noLineup = LiveControlsPolicy.buttons(failed = false, subtitleTracks = 0, audioTracks = 0, hasLineup = false)
+        assertEquals("no harmless button", LiveControlsPolicy.PrimaryFocus.PLAY_PAUSE,
+            LiveControlsPolicy.primaryFocus(noLineup, scrubbing = false, paused = false))
+    }
+
+    @Test
+    fun `channel list flag without a composed button keeps play pause`() {
+        assertEquals("no focus requester on nothing", LiveControlsPolicy.PrimaryFocus.PLAY_PAUSE,
+            LiveControlsPolicy.primaryFocus(lineupButtons(), scrubbing = false, paused = false, channelListAvailable = false))
+    }
+
+    @Test
+    fun `retry and scrubbing beat the channel list`() {
+        val failed = lineupButtons(failed = true)
+        assertEquals("retry wins", LiveControlsPolicy.PrimaryFocus.RETRY,
+            LiveControlsPolicy.primaryFocus(failed, scrubbing = false, paused = false))
+        assertEquals("scrub bar wins", LiveControlsPolicy.PrimaryFocus.SCRUB_BAR,
+            LiveControlsPolicy.primaryFocus(failed, scrubbing = true, paused = false))
+        assertEquals("scrub bar over channel list", LiveControlsPolicy.PrimaryFocus.SCRUB_BAR,
+            LiveControlsPolicy.primaryFocus(lineupButtons(), scrubbing = true, paused = false))
+    }
 }

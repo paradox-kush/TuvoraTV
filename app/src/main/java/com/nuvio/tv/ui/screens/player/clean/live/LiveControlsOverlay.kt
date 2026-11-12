@@ -243,7 +243,11 @@ internal fun BoxScope.LiveControlsOverlay(
                     horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val firstFocus = LiveControlsPolicy.primaryFocus(buttons, scrubbing)
+                    val firstFocus = LiveControlsPolicy.primaryFocus(
+                        buttons, scrubbing,
+                        paused = paused,
+                        channelListAvailable = buttons.channelList && actions.onChannelList != null,
+                    )
                     if (buttons.retry) {
                         ControlButton(
                             icon = Icons.Default.Refresh,
@@ -333,6 +337,7 @@ internal fun BoxScope.LiveControlsOverlay(
                             ControlButton(
                                 icon = Icons.AutoMirrored.Filled.List,
                                 contentDescription = stringResource(R.string.iptv_guide_channel_list_title),
+                                focusRequester = primaryFocus.takeIf { firstFocus == LiveControlsPolicy.PrimaryFocus.CHANNEL_LIST },
                                 onClick = it, onDownKey = actions.onHide, onFocused = actions.onKeepAlive,
                             )
                         }
