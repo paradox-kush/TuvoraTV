@@ -32,17 +32,29 @@ internal data class CachedSourceIdentity(
 internal fun PlayerRuntimeController.tryRefreshExpiredLinkAfterError(errorMessage: String): Boolean {
     val failedUrl = currentStreamUrl
     if (failedUrl.isBlank() || failedUrl.startsWith("torrent://")) return false
-    // Fork: IPTV links are re-minted by IptvLinkRefreshPolicy only (no add-on re-fetch, no mint loop).
+    // Fork: IPTV links (by id or a matched copy's playlist label) are re-minted by IptvLinkRefreshPolicy
+    // only, and every source is capped URL-independently (no add-on re-fetch loop, no mint loop).
+    val positionMs = currentPlaybackPositionMs() ?: 0L
+    addonLinkRefreshCount = ExpiredLinkRefreshOwnership.consecutiveAfterPlayback(
+        consecutiveRefreshes = addonLinkRefreshCount,
+        positionMs = positionMs,
+        refreshBaselineMs = addonLinkRefreshBaselineMs,
+    )
     if (!ExpiredLinkRefreshOwnership.addonRefreshAllowed(
             iptvId = iptvClassifier?.refreshableIptvId(listOf(currentVideoId, contentId)),
             isCatchUp = navigationArgs.isCatchUp,
-            iptvRefreshAttempted = hasAttemptedIptvLinkRefresh
+            iptvRefreshAttempted = hasAttemptedIptvLinkRefresh,
+            isMatchedIptvSource = com.nuvio.tv.core.contracts.OwnSourcePolicy.isOwnStreamLabel(currentAddonName),
+            consecutiveRefreshes = addonLinkRefreshCount,
         )
     ) return false
     val fromLinkCache = failedUrl == linkCacheSourceUrl
     if (!fromLinkCache && !failedUrl.hasLikelyExpiringPlaybackCredentials()) return false
     if (failedUrl == linkRefreshAttemptedUrl) return false
     linkRefreshAttemptedUrl = failedUrl
+    addonLinkRefreshCount++
+    // Where the refreshed link resumes; a failure before the first frame still counts from the resume target.
+    addonLinkRefreshBaselineMs = maxOf(positionMs, requestedStartPositionMs)
     linkCacheSourceUrl = null
 
     val state = _uiState.value

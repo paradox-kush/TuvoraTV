@@ -285,6 +285,13 @@ class PlayerRuntimeController(
     /** Last URL refetched after a playback error, so a link is refreshed at most once. */
     internal var linkRefreshAttemptedUrl: String? = null
 
+    /**
+     * Fork: URL-independent count of consecutive add-on link refreshes and the content position the last one
+     * resumed at ([ExpiredLinkRefreshOwnership]). Never reset by a source swap — only by healthy playback.
+     */
+    internal var addonLinkRefreshCount: Int = 0
+    internal var addonLinkRefreshBaselineMs: Long = 0L
+
     fun getCurrentStreamUrl(): String = currentStreamUrl
     fun getCurrentHeaders(): Map<String, String> = currentHeaders
 

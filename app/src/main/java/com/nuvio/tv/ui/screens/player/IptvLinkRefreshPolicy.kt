@@ -47,11 +47,39 @@ internal object IptvLinkRefreshPolicy {
 
 /**
  * Who refreshes an expired link (sync 15): upstream's add-on re-fetch
- * ([tryRefreshExpiredLinkAfterError]) only for add-on/debrid sources. IPTV ids, catch-up replays and
- * any stream the fork's IPTV re-mint has already handled stay with [IptvLinkRefreshPolicy] — a
- * Stalker mint yields a new URL each time, so upstream's per-URL guard cannot stop a mint loop.
+ * ([tryRefreshExpiredLinkAfterError]) only for add-on/debrid sources. IPTV ids, TMDB-matched IPTV copies
+ * (a `tt…` id whose addonName is a playlist name), catch-up replays and any stream the fork's IPTV
+ * re-mint has already handled stay with [IptvLinkRefreshPolicy] — a Stalker mint yields a new URL each
+ * time, so upstream's per-URL guard cannot stop a mint loop.
+ *
+ * Backstop for every source: at most [MAX_CONSECUTIVE_ADDON_REFRESHES] refreshes in a row, counted
+ * independently of the URL (each refresh may return a never-seen URL), re-armed only once the refreshed
+ * link has played [HEALTHY_PLAYBACK_RESET_MS] past where it resumed. Same shape as NuvioMobile's
+ * PlayerCredentialRefreshPolicy (decide on a consecutive count + hasRecovered on played time).
  */
 internal object ExpiredLinkRefreshOwnership {
-    fun addonRefreshAllowed(iptvId: String?, isCatchUp: Boolean, iptvRefreshAttempted: Boolean): Boolean =
-        iptvId == null && !isCatchUp && !iptvRefreshAttempted
+    const val MAX_CONSECUTIVE_ADDON_REFRESHES = 3
+    const val HEALTHY_PLAYBACK_RESET_MS = 60_000L
+
+    fun addonRefreshAllowed(
+        iptvId: String?,
+        isCatchUp: Boolean,
+        iptvRefreshAttempted: Boolean,
+        isMatchedIptvSource: Boolean,
+        consecutiveRefreshes: Int,
+    ): Boolean =
+        iptvId == null &&
+            !isMatchedIptvSource &&
+            !isCatchUp &&
+            !iptvRefreshAttempted &&
+            consecutiveRefreshes < MAX_CONSECUTIVE_ADDON_REFRESHES
+
+    /**
+     * The consecutive count after the playhead reached [positionMs]: back to 0 once playback advanced
+     * [HEALTHY_PLAYBACK_RESET_MS] past [refreshBaselineMs] (the content position the last refresh resumed at),
+     * unchanged otherwise. A link that dies right after a refresh never gets that far, so it cannot re-arm.
+     */
+    fun consecutiveAfterPlayback(consecutiveRefreshes: Int, positionMs: Long, refreshBaselineMs: Long): Int =
+        if (consecutiveRefreshes > 0 && positionMs - refreshBaselineMs >= HEALTHY_PLAYBACK_RESET_MS) 0
+        else consecutiveRefreshes
 }
