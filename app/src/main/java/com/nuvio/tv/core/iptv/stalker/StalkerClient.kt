@@ -614,6 +614,8 @@ class StalkerClient @Inject constructor(
         kotlinx.coroutines.withTimeoutOrNull(30_000) { resolveStreamWithinDeadline(acc, kind, streamId, forceFresh) }
 
     private suspend fun resolveStreamWithinDeadline(acc: XtreamAccount, kind: String, streamId: Int, forceFresh: Boolean): String? {
+        // A refusal belongs to the resolve that saw it: an earlier one must not name this one's failure.
+        lastResolveErrorInternal = null
         // Playback: the ACTIVE portal only — a create_link failure never walks to a backup (Step 0.3).
         val session = playbackSession(acc)
         return when {
@@ -907,6 +909,12 @@ class StalkerClient @Inject constructor(
         val js = try { session.request(params) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (error: Exception) {
             val status = (error as? com.nuvio.tv.core.iptv.HttpStatusException)?.status
             Log.w(TAG, "create_link failed: ${error::class.simpleName}, HTTP=$status")
+            // UX340: the portal never answered (refused, unreachable, DNS, timeout) — say so, by type only.
+            if (com.nuvio.tv.core.iptv.classifyPanelThrowable(error) ==
+                com.nuvio.tv.core.iptv.PanelRequestOutcome.CONNECTION_FAILURE
+            ) {
+                lastResolveErrorInternal = UNREACHABLE_MESSAGE
+            }
             return null
         }
         val obj = js as? JsonObject ?: run { Log.w(TAG, "create_link failed: invalid response shape"); return null }
@@ -1123,6 +1131,8 @@ class StalkerClient @Inject constructor(
             "This portal is already streaming on another device — close it and try again"
         internal const val LINK_FAULT_MESSAGE =
             "The portal couldn't build a playback link for this channel"
+        /** UX340: create_link never reached the portal. A tag for the resolver, never shown or reported. */
+        internal const val UNREACHABLE_MESSAGE = "The portal could not be reached"
         private const val MAX_ITEMS = 8000    // ponytail: categories are the browse path; don't slurp 26k
         private const val MAX_PAGES = 200
         /** Pages per Ministra season/episode level: 14 rows a page, so 20 = 280 episodes in a season. */

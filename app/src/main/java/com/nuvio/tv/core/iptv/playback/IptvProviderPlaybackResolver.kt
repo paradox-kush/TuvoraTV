@@ -77,7 +77,12 @@ internal sealed interface ProviderLinkResult {
     data class Unavailable(val reason: ProviderLinkFailureReason) : ProviderLinkResult
 }
 
-internal enum class ProviderLinkFailureReason { SESSION_LIMIT, LINK_FAULT, UNKNOWN }
+/**
+ * Why a link could not be minted. [UNREACHABLE] / [TIMED_OUT] (UX340): the provider never answered
+ * (refused, unreachable, DNS, timeout), so the viewer is told to check the connection instead of the
+ * generic "Live TV playback failed."
+ */
+internal enum class ProviderLinkFailureReason { SESSION_LIMIT, LINK_FAULT, UNREACHABLE, TIMED_OUT, UNKNOWN }
 
 /** Production resolver factory whose returned owner can read only its captured profile's accounts. */
 @Singleton
@@ -114,6 +119,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
                 val reason = when (client.lastResolveError) {
                     StalkerClient.SESSION_LIMIT_MESSAGE -> ProviderLinkFailureReason.SESSION_LIMIT
                     StalkerClient.LINK_FAULT_MESSAGE -> ProviderLinkFailureReason.LINK_FAULT
+                    StalkerClient.UNREACHABLE_MESSAGE -> ProviderLinkFailureReason.UNREACHABLE
                     else -> ProviderLinkFailureReason.UNKNOWN
                 }
                 ProviderLinkResult.Unavailable(reason)
@@ -217,7 +223,10 @@ class IptvProviderPlaybackResolver internal constructor(
             )
         }
         return when (
-            val link = bounded.valueOrNull() ?: ProviderLinkResult.Unavailable(ProviderLinkFailureReason.UNKNOWN)
+            val link = bounded.valueOrNull() ?: ProviderLinkResult.Unavailable(
+                (bounded as? com.nuvio.tv.core.iptv.LoadOutcome.Failed)?.let(ProviderLinkFailurePolicy::reasonOfFailure)
+                    ?: ProviderLinkFailureReason.UNKNOWN,
+            )
         ) {
             is ProviderLinkResult.Resolved -> mapped(account, selection, link.url, dialect = null)
             is ProviderLinkResult.Unavailable -> unavailable(link.reason)
@@ -470,8 +479,22 @@ class IptvProviderPlaybackResolver internal constructor(
             ),
         )
         ProviderLinkFailureReason.LINK_FAULT -> unavailable(deterministic = true)
+        // UX340: the same terminal, non-deterministic failure as UNKNOWN (the reconnect loop treats it
+        // identically), with a code that says the provider could not be reached. No host crosses.
+        ProviderLinkFailureReason.UNREACHABLE -> unreachable(FailureCode.NETWORK_UNREACHABLE)
+        ProviderLinkFailureReason.TIMED_OUT -> unreachable(FailureCode.NETWORK_TIMEOUT)
         ProviderLinkFailureReason.UNKNOWN -> unavailable(deterministic = false)
     }
+
+    private fun unreachable(code: FailureCode): PlaybackResult.Failure = PlaybackResult.Failure(
+        PlaybackFailure(
+            code = code,
+            domain = FailureDomain.NETWORK,
+            phase = FailurePhase.REQUEST_RESOLUTION,
+            retryability = Retryability.FATAL,
+            deterministic = false,
+        ),
+    )
 
     private fun unavailable(deterministic: Boolean): PlaybackResult.Failure = PlaybackResult.Failure(
         PlaybackFailure(
@@ -513,5 +536,35 @@ class IptvProviderPlaybackResolver internal constructor(
         val attempt: CatchUpDialectWalk.Attempt,
     ) {
         override fun toString(): String = "ActiveCatchUp(key=$key, hasRequest=true, hasAttempt=true)"
+    }
+}
+
+/**
+ * UX340: a link fetch that THREW (rather than returned "no link") is classified by the exception TYPE
+ * only — never its message, which can name the host. "Never answered" (refused, unreachable, DNS,
+ * connect/read timeout) or our own stall deadline are network failures; anything else stays UNKNOWN.
+ */
+internal object ProviderLinkFailurePolicy {
+    fun reasonOfFailure(failed: com.nuvio.tv.core.iptv.LoadOutcome.Failed): ProviderLinkFailureReason = when {
+        failed.timedOut -> ProviderLinkFailureReason.TIMED_OUT
+        else -> reasonOfError(failed.error)
+    }
+
+    fun reasonOfError(error: Throwable?): ProviderLinkFailureReason {
+        var cause = error
+        var depth = 0
+        while (cause != null && depth < 8) {
+            when (cause) {
+                is java.net.SocketTimeoutException -> return ProviderLinkFailureReason.TIMED_OUT
+                is java.net.ConnectException,
+                is java.net.NoRouteToHostException,
+                is java.net.PortUnreachableException,
+                is java.net.UnknownHostException,
+                -> return ProviderLinkFailureReason.UNREACHABLE
+            }
+            cause = cause.cause
+            depth++
+        }
+        return ProviderLinkFailureReason.UNKNOWN
     }
 }

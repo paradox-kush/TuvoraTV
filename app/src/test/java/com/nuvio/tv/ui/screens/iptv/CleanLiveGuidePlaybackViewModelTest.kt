@@ -76,6 +76,93 @@ class CleanLiveGuidePlaybackViewModelTest {
         fixture.viewModel.releaseBeforeExit()
     }
 
+    /**
+     * Regression (B256, 2026-11-12): a channel that played and then lost its provider (one reconnect,
+     * create_link refused, release barrier FAILURE) ended FAILED with no `iptv_load` outcome at all: the
+     * bounded-load rule says the terminal outcome is reported, so a regression shows up in PostHog.
+     */
+    @Test
+    fun `a channel that played and then failed reports one live playback outcome`() = runTest {
+        val events = mutableListOf<Pair<String, Map<String, Any>>>()
+        val saved = com.nuvio.tv.core.iptv.BoundedLoad.sink
+        com.nuvio.tv.core.iptv.BoundedLoad.sink = { event, properties -> events += event to properties }
+        com.nuvio.tv.core.iptv.BoundedLoad.resetReportsForTests()
+        try {
+            val fixture = fixture()
+            fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+            val host = fixture.firstHost
+            fun step(transform: (PlaybackSnapshot) -> PlaybackSnapshot) { host.snapshotFlow.value = transform(host.snapshotFlow.value) }
+            step { it.copy(state = PlaybackState.PLAYING, isPlaying = true) }
+            step { it.copy(state = PlaybackState.LIVE_RECONNECTING, isPlaying = false, isReconnecting = true) }
+            step { it.copy(state = PlaybackState.RELEASING, isReconnecting = false) }
+            step {
+                it.copy(
+                    state = PlaybackState.FAILED,
+                    failure = com.nuvio.tv.playback.core.PlaybackFailure(
+                        com.nuvio.tv.playback.core.FailureCode.NETWORK_UNREACHABLE,
+                        com.nuvio.tv.playback.core.FailureDomain.NETWORK,
+                        com.nuvio.tv.playback.core.FailurePhase.REQUEST_RESOLUTION,
+                        com.nuvio.tv.playback.core.Retryability.FATAL,
+                    ),
+                )
+            }
+            // A later frame of the same failed state is the same outcome, never a second report.
+            step { it.copy(isBuffering = false, playWhenReady = !it.playWhenReady) }
+
+            val reports = events.filter { it.first == "iptv_load" && it.second["surface"] == "live_playback" }
+            assertEquals("one terminal outcome, was $events", 1, reports.size)
+            val properties = reports.single().second
+            assertEquals("outcome", "failed", properties["outcome"])
+            assertEquals("source type", "xtream", properties["source_type"])
+            assertEquals("closed-vocabulary reason", "NETWORK_UNREACHABLE", properties["failure_code"])
+            assertTrue("duration", properties["duration_ms"] is Long)
+            assertFalse("no account or channel identity", properties.toString().contains("account-private"))
+            assertFalse("no channel name", properties.toString().contains("Channel initial"))
+            fixture.viewModel.releaseBeforeExit()
+        } finally {
+            com.nuvio.tv.core.iptv.BoundedLoad.sink = saved
+        }
+    }
+
+    /** Bounded-load rule 3: the screen ends a wait at its own deadline even if the session never answers. */
+    @Test
+    fun `a wait the session never ends is stalled and reported at the backstop and Retry tunes again`() = runTest {
+        val events = mutableListOf<Pair<String, Map<String, Any>>>()
+        val saved = com.nuvio.tv.core.iptv.BoundedLoad.sink
+        com.nuvio.tv.core.iptv.BoundedLoad.sink = { event, properties -> events += event to properties }
+        com.nuvio.tv.core.iptv.BoundedLoad.resetReportsForTests()
+        try {
+            val fixture = fixture(
+                ownerDispatcher = StandardTestDispatcher(testScheduler),
+                clock = { testScheduler.currentTime },
+            )
+            fixture.viewModel.attach(fixture.initial.contentId, fixture.activity, fixture.lifecycle, fixture.owner)
+            runCurrent()
+            val host = fixture.firstHost
+            host.snapshotFlow.value = host.snapshotFlow.value.copy(state = PlaybackState.PLAYING, isPlaying = true)
+            runCurrent()
+            host.snapshotFlow.value = host.snapshotFlow.value.copy(state = PlaybackState.LIVE_RECONNECTING, isPlaying = false)
+            runCurrent()
+
+            advanceTimeBy(com.nuvio.tv.playback.live.LivePlaybackOutcomePolicy.WAIT_BACKSTOP_MS - 1)
+            runCurrent()
+            assertFalse("not before the deadline", fixture.viewModel.stalled.value)
+            advanceTimeBy(2)
+            runCurrent()
+            assertTrue("stalled at the deadline", fixture.viewModel.stalled.value)
+            val reports = events.filter { it.second["surface"] == "live_playback" }
+            assertEquals("one timeout report, was $events", 1, reports.size)
+            assertEquals("timeout", reports.single().second["outcome"])
+
+            fixture.viewModel.requestRetry()
+            advanceUntilIdle()
+            assertEquals("Retry re-tunes the channel", listOf(fixture.initial.selection), fixture.firstHost.zapSelections)
+            fixture.viewModel.releaseBeforeExit()
+        } finally {
+            com.nuvio.tv.core.iptv.BoundedLoad.sink = saved
+        }
+    }
+
     @Test
     fun `fullscreen requested during initial lookup survives host creation`() = runTest {
         val started = CompletableDeferred<Unit>()
@@ -911,6 +998,7 @@ class CleanLiveGuidePlaybackViewModelTest {
         extraTargets: List<LiveChannelTarget> = emptyList(),
         picturePort: com.nuvio.tv.core.picture.LivePicturePort = com.nuvio.tv.core.picture.LivePicturePort.Unremembered,
         livePauseFactory: com.nuvio.tv.core.contracts.LivePauseControlFactory = com.nuvio.tv.core.contracts.LivePauseControlFactory { null },
+        clock: () -> Long = { System.currentTimeMillis() },
     ): Fixture {
         val context = RuntimeEnvironment.getApplication() as Context
         val operations = mutableListOf<String>()
@@ -952,6 +1040,7 @@ class CleanLiveGuidePlaybackViewModelTest {
             releaseRetryWait = releaseWait,
             picturePort = picturePort,
             livePauseFactory = livePauseFactory,
+            clock = clock,
         )
         return Fixture(
             viewModel = viewModel,

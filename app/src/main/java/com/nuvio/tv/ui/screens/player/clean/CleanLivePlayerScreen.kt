@@ -148,7 +148,10 @@ internal fun CleanLivePlayerScreen(
     val reconnecting = uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECONNECTING ||
         uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECOVERING
     LaunchedEffect(failed, reconnecting) {
-        if (LiveControlsPolicy.revealForTrouble(failed, reconnecting, controlsVisible, panel != null)) showControls()
+        // B256: a failure takes over from an open picker, so its reason and Retry are seen.
+        val reveal = LiveControlsPolicy.revealForTrouble(failed, reconnecting, controlsVisible, panel != null)
+        if (LiveControlsPolicy.closesPanelForFailure(failed, panel != null)) panel = null
+        if (reveal) showControls()
     }
     LaunchedEffect(revealTick, controlsVisible, paused, failed, panel, tuning) {
         if (LiveControlsPolicy.mayAutoHide(controlsVisible, paused, failed, panelOpen = panel != null, tuning = tuning)) {
@@ -265,6 +268,7 @@ internal fun CleanLivePlayerScreen(
                 hasLineup = false,
                 reportable = onSendReport != null,
                 errorShown = failed,
+                playbackFailed = chrome.retryEnabled,
             )
             val messageText = chrome.messageRes?.let { stringResource(it) }
             LiveControlsOverlay(
@@ -452,10 +456,11 @@ internal object CleanLivePlayerUiPolicy {
 
     @StringRes
     private fun playbackErrorMessageRes(reason: FailureCode): Int = when (reason) {
+        // UX340 (UX191's wording): the provider never answered — say what the viewer can check.
         FailureCode.NETWORK_UNREACHABLE,
         FailureCode.NETWORK_TIMEOUT,
-        FailureCode.LIVE_RECONNECT_EXHAUSTED,
-        -> R.string.clean_live_error_network
+        -> R.string.clean_live_error_provider_unreachable
+        FailureCode.LIVE_RECONNECT_EXHAUSTED -> R.string.clean_live_error_network
         FailureCode.AUTHORIZATION_REJECTED,
         FailureCode.PROVIDER_CONNECTION_LIMIT,
         -> R.string.clean_live_error_access

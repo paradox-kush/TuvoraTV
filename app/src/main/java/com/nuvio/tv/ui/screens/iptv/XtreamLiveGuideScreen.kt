@@ -366,7 +366,9 @@ fun LiveGuide(
     var requestedContentId by remember(account.id) { mutableStateOf<String?>(null) }
     val pendingSelection by playbackViewModel.pendingSelection.collectAsStateWithLifecycle()
     val pendingContentId = pendingSelection?.value
-    val playbackError = playbackErrorText(playbackState, playbackUi?.bottomErrorCode)
+    // B256: a wait the session never ended (the outcome backstop) reads as failed, with Retry.
+    val playbackStalled by playbackViewModel.stalled.collectAsStateWithLifecycle()
+    val playbackError = playbackErrorText(playbackState, playbackUi?.bottomErrorCode, playbackStalled)
     val errorChannelId = if (pendingContentId != null && pendingContentId != playingContentId) null
         else playingContentId ?: requestedContentId
     val context = LocalContext.current
@@ -463,7 +465,8 @@ fun LiveGuide(
         showControls()
     }
     val liveChrome = playbackUi?.let { CleanLivePlayerUiPolicy.present(it) }
-    val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected || pauseFailed
+    val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected ||
+        pauseFailed || playbackStalled
     val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null || uiState.replayRetry != null
     // A zap retunes: the aimed channel isn't the playing one yet, or the spinner is up. Read at event time
     // (B180: the body's uiState has the aim cleared, so it must come from the view model, not composition).
@@ -493,6 +496,12 @@ fun LiveGuide(
         livePanelOpen = livePanelOpen,
         primaryFocus = controlsPrimaryFocus,
         onHide = ::hideControls,
+        closablePanelOpen = channelListOpen || livePanel != null,
+        onCloseForFailure = {
+            channelListOpen = false
+            livePanel = null
+            controls.moreOpen = false
+        },
     )
     LaunchedEffect(fullscreen) { if (!fullscreen) { controls.reset(); livePanel = null } }
     // F28 BACK: the channel list and the pickers answer it themselves; then hide the controls; then
@@ -1240,7 +1249,8 @@ fun LiveGuide(
 internal fun playbackErrorText(
     state: CleanLiveGuidePlaybackState,
     error: LivePlaybackUiErrorCode?,
-): String? = LiveGuidePreviewErrorPolicy.messageRes(state, error)?.let { stringResource(it) }
+    stalled: Boolean = false,
+): String? = LiveGuidePreviewErrorPolicy.messageRes(state, error, stalled)?.let { stringResource(it) }
 
 /**
  * The guide preview's playback notice, as the same translated sentence the full player shows. It used
@@ -1248,9 +1258,15 @@ internal fun playbackErrorText(
  */
 internal object LiveGuidePreviewErrorPolicy {
     @StringRes
-    fun messageRes(state: CleanLiveGuidePlaybackState, error: LivePlaybackUiErrorCode?): Int? = when {
+    fun messageRes(
+        state: CleanLiveGuidePlaybackState,
+        error: LivePlaybackUiErrorCode?,
+        /** B256: the outcome backstop ended a wait the session never ended. */
+        stalled: Boolean = false,
+    ): Int? = when {
         error != null -> CleanLivePlayerUiPolicy.errorMessageRes(error)
         state is CleanLiveGuidePlaybackState.Rejected -> rejectionMessageRes(state.reason)
+        stalled -> R.string.clean_live_error_no_progress
         else -> null
     }
 

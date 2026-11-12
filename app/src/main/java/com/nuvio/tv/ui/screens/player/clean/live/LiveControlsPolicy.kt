@@ -141,11 +141,18 @@ internal object LiveControlsPolicy {
     /**
      * T10 (W2 device pass): a failed tune (or a reconnect) on fullscreen live left the picture black
      * with nothing on screen until OK brought the controls up. Trouble reveals the overlay by itself,
-     * so its status line ("Can't play" + the reason, or "Reconnecting") is seen at once. An open panel
-     * keeps its focus; controls already up stay as they are.
+     * so its status line ("Can't play" + the reason, or "Reconnecting") is seen at once. Controls already
+     * up stay as they are.
+     *
+     * B256: an open panel keeps its focus only through a RECONNECT (transient). A terminal failure takes
+     * over: the channel list over fullscreen video used to hide it (black picture, focused list, no reason,
+     * no Retry for 90 s+). The host closes the panel ([closesPanelForFailure]) and shows the controls.
      */
     fun revealForTrouble(failed: Boolean, reconnecting: Boolean, controlsVisible: Boolean, panelOpen: Boolean): Boolean =
-        (failed || reconnecting) && !controlsVisible && !panelOpen
+        !controlsVisible && (failed || (reconnecting && !panelOpen))
+
+    /** B256: a terminal failure closes the open panel (channel list, track picker) so its reason and Retry show. */
+    fun closesPanelForFailure(failed: Boolean, panelOpen: Boolean): Boolean = failed && panelOpen
 
     enum class Status { LIVE, PAUSED, TUNING, RECONNECTING, FAILED, PREPARING, SHIFTED }
 
@@ -221,6 +228,8 @@ internal object LiveControlsPolicy {
         val favourite: Boolean,
         /** Telemetry v2: "Send report", right after Retry, whenever an error is on screen. */
         val sendReport: Boolean = false,
+        /** UX341: there is nothing to pause on a failed channel, so Pause leaves the row while it is failed. */
+        val playPause: Boolean = true,
     )
 
     /**
@@ -250,7 +259,13 @@ internal object LiveControlsPolicy {
          * yet the viewer can still tell us about them.
          */
         errorShown: Boolean = failed,
+        /**
+         * UX341: the PLAYBACK itself failed (not a live-pause buffer, where Play still means something):
+         * Pause is hidden and Retry is the row's first button.
+         */
+        playbackFailed: Boolean = false,
     ): Buttons = Buttons(
+        playPause = !playbackFailed,
         retry = failed,
         subtitles = subtitleTracks > 0,
         audio = audioTracks > 1,
@@ -276,7 +291,7 @@ internal object LiveControlsPolicy {
     ): PrimaryFocus = when {
         scrubbing -> PrimaryFocus.SCRUB_BAR
         buttons.retry -> PrimaryFocus.RETRY
-        paused -> PrimaryFocus.PLAY_PAUSE
+        paused && buttons.playPause -> PrimaryFocus.PLAY_PAUSE
         channelListAvailable -> PrimaryFocus.CHANNEL_LIST
         else -> PrimaryFocus.PLAY_PAUSE
     }

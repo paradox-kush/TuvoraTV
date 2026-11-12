@@ -100,14 +100,20 @@ internal fun GuideFullscreenControlsEffects(
     scrubbable: Boolean,
     primaryFocus: FocusRequester,
     onHide: () -> Unit,
+    /** B256: the channel list or a track picker is open over the video (closable by a failure). */
+    closablePanelOpen: Boolean = false,
+    /** B256: close that panel; the failure's reason and Retry take its place. */
+    onCloseForFailure: () -> Unit = {},
 ) {
     val aimed by rememberAimedContentId(viewModel)
     val tuning = GuideZapTuningPolicy.tuning(spinnerVisible, aimed, playingContentId)
     // T10: a failed tune or a reconnect shows the overlay (and its reason) without waiting for OK.
+    // B256: a terminal failure takes over from the channel list / a picker (it used to stay hidden behind it).
     LaunchedEffect(fullscreen, liveFailed, liveReconnecting) {
-        if (fullscreen && LiveControlsPolicy.revealForTrouble(liveFailed, liveReconnecting, controls.visible, livePanelOpen)) {
-            controls.show()
-        }
+        if (!fullscreen) return@LaunchedEffect
+        val reveal = LiveControlsPolicy.revealForTrouble(liveFailed, liveReconnecting, controls.visible, livePanelOpen)
+        if (LiveControlsPolicy.closesPanelForFailure(liveFailed, closablePanelOpen)) onCloseForFailure()
+        if (reveal) controls.show()
     }
     // F28: one auto-hide delay shared with VOD; never while paused, on an error, or with a panel open.
     LaunchedEffect(fullscreen, controls.tick, paused, liveFailed, livePanelOpen, tuning) {
@@ -116,8 +122,10 @@ internal fun GuideFullscreenControlsEffects(
             onHide()
         }
     }
-    // Shown controls take the D-pad, starting on Retry (when offered) or play/pause.
-    LaunchedEffect(fullscreen, controls.visible, livePanelOpen, scrubbable) {
+    // Shown controls take the D-pad, starting on Retry (when offered) or play/pause. UX341: keyed on the
+    // failure too — a channel that fails while the controls are already up moves focus onto Retry
+    // (it used to stay on the channel-list button, five LEFT presses away).
+    LaunchedEffect(fullscreen, controls.visible, livePanelOpen, scrubbable, liveFailed) {
         if (fullscreen && controls.visible && !livePanelOpen) primaryFocus.requestFocusOrFalse()
     }
 }
@@ -205,19 +213,24 @@ private fun BoxScope.GuideFullscreenOverlayContent(
         loadedOverlayEpg?.let { GuideWindowRows.atTime(it, nowMs) }
     }
     val catalog = readyPlayback?.snapshot?.trackCatalog
+    // B256: a wait the session never ended reads as failed, with Retry.
+    val stalled by playbackViewModel.stalled.collectAsStateWithLifecycle()
     // Same message the docked preview shows; without it a failed tune read "Live".
-    val errorText = playbackErrorText(playbackState, playbackUi?.bottomErrorCode)
+    val errorText = playbackErrorText(playbackState, playbackUi?.bottomErrorCode, stalled)
     val status = playbackUi?.bottomStatusCode
     val tuningNow = GuideZapTuningPolicy.tuning(
         spinnerVisible = playbackUi?.spinnerVisible == true,
         aimedContentId = ui.focusedChannel?.contentId,
         playingContentId = playingContentId,
     )
+    val playbackFailed = liveChrome?.retryEnabled == true || stalled
     val currentButtons = LiveControlsPolicy.buttons(
-        failed = liveChrome?.retryEnabled == true || pauseFailed,
+        failed = playbackFailed || pauseFailed,
         subtitleTracks = catalog?.subtitles?.size ?: 0,
         audioTracks = catalog?.audio?.size ?: 0,
         hasLineup = true,
+        // UX341: nothing to pause on a failed channel.
+        playbackFailed = playbackFailed,
     )
     // Zapping retunes every press: hold the track buttons steady until the stream settles.
     var settledButtons by remember { mutableStateOf<LiveControlsPolicy.Buttons?>(null) }

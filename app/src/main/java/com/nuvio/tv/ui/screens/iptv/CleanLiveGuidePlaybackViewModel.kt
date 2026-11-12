@@ -31,6 +31,9 @@ import com.nuvio.tv.playback.host.CleanLiveHost
 import com.nuvio.tv.playback.host.CleanLiveHostFactory
 import com.nuvio.tv.playback.live.LiveChannelNavigationPort
 import com.nuvio.tv.playback.live.LiveTuneDeadlinePolicy
+import com.nuvio.tv.playback.live.LivePlaybackOutcomePolicy
+import com.nuvio.tv.core.iptv.BoundedLoad
+import com.nuvio.tv.core.iptv.LoadSurface
 import com.nuvio.tv.playback.live.LiveZapSettlePolicy
 import com.nuvio.tv.playback.live.LiveChannelSelectionPort
 import com.nuvio.tv.playback.live.LiveChannelTarget
@@ -125,6 +128,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     private val releaseRetryWait: CleanLiveGuideReleaseRetryWait,
     picturePort: LivePicturePort,
     private val livePauseFactory: LivePauseControlFactory,
+    private val clock: () -> Long,
 ) : ViewModel() {
     @Inject
     internal constructor(
@@ -147,6 +151,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         releaseRetryWait = CleanLiveGuideReleaseRetryWait { delay(it) },
         picturePort = livePicture,
         livePauseFactory = livePauseFactory,
+        clock = { System.currentTimeMillis() },
     )
 
     internal constructor(
@@ -160,6 +165,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         releaseRetryWait: CleanLiveGuideReleaseRetryWait = CleanLiveGuideReleaseRetryWait {},
         picturePort: LivePicturePort = LivePicturePort.Unremembered,
         livePauseFactory: LivePauseControlFactory = LivePauseControlFactory { null },
+        clock: () -> Long = { System.currentTimeMillis() },
         @Suppress("UNUSED_PARAMETER") testOnly: Unit = Unit,
     ) : this(
         appContext = context.applicationContext,
@@ -172,6 +178,7 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
         releaseRetryWait = releaseRetryWait,
         picturePort = picturePort,
         livePauseFactory = livePauseFactory,
+        clock = clock,
     )
 
     private val ownerJob = SupervisorJob()
@@ -255,6 +262,19 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     // the preview included, as surface "preview" — and stopped on every exit path: failure
     // snapshot, rebind, release, reject, detach, leave. Promote/collapse is a surface change.
     private val playbackBreadcrumbs = PlaybackBreadcrumbTracker()
+
+    // B256: the viewing's terminal outcome (bounded-load rule). One tracker per host; owner thread only.
+    private var outcomeTracker = LivePlaybackOutcomePolicy.Tracker()
+    private var outcomeHost: CleanLiveHost? = null
+    private var outcomeBackstopJob: Job? = null
+    private var outcomeBackstopAtMs: Long? = null
+    private val mutableStalled = MutableStateFlow(false)
+
+    /**
+     * The wait passed [LivePlaybackOutcomePolicy.WAIT_BACKSTOP_MS] with no picture and no failure: the
+     * screen shows it as failed (reason + Retry) even though the session never answered.
+     */
+    val stalled: StateFlow<Boolean> = mutableStalled.asStateFlow()
 
     private val tuneWorker = ownerScope.launch {
         for (contentId in tuneRequests) {
@@ -609,7 +629,17 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
 
     fun requestPause() = requestCommand { host -> livePauseControl?.onPause() ?: host.pause() }
     fun requestResume() = requestCommand { host -> livePauseControl?.onPlay() ?: host.resume() }
-    fun requestRetry() = requestCommand { host ->
+    fun requestRetry() {
+        // B256 backstop: a session that never ended its wait has nothing for host.retry() to restart
+        // (it restarts only from FAILED/STOPPED), so Retry tunes the channel again.
+        if (mutableStalled.value) {
+            activeTarget?.contentId?.let(::requestTune)
+            return
+        }
+        requestRetryCommand()
+    }
+
+    private fun requestRetryCommand() = requestCommand { host ->
         val control = livePauseControl
         if (control != null && GuideLivePausePolicy.retryGoesToPause(mutableLivePause.value.phase)) {
             control.retry()
@@ -828,6 +858,14 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
     }
 
     private fun publishReady(current: CleanLiveHost) {
+        if (outcomeHost !== current) {
+            outcomeHost = current
+            outcomeTracker = LivePlaybackOutcomePolicy.Tracker()
+            outcomeBackstopJob?.cancel()
+            outcomeBackstopJob = null
+            outcomeBackstopAtMs = null
+            mutableStalled.value = false
+        }
         publishSnapshot(current.snapshot.value)
         presentationJob = ownerScope.launch {
             current.snapshot.collect(::publishSnapshot)
@@ -862,6 +900,54 @@ internal class CleanLiveGuidePlaybackViewModel private constructor(
             sessionProfile = sessionProfile,
         )
         acceptRenderedVideoEvidence(snapshot)
+        trackOutcome(snapshot, target)
+    }
+
+    /** B256: one report per failed or timed-out incident; the backstop ends a wait the session never ends. */
+    private fun trackOutcome(snapshot: PlaybackSnapshot, target: LiveChannelTarget) {
+        if (clearedReleaseLoopStarted) return
+        outcomeTracker.observe(
+            generation = snapshot.generation,
+            phase = LivePlaybackOutcomePolicy.phaseOf(snapshot.state),
+            failureCode = snapshot.failure?.code,
+            nowMs = clock(),
+        )?.let { reportOutcome(it, target) }
+        mutableStalled.value = outcomeTracker.stalled
+        armOutcomeBackstop()
+    }
+
+    private fun armOutcomeBackstop() {
+        val deadline = outcomeTracker.deadlineAtMs
+        if (deadline == null) {
+            outcomeBackstopJob?.cancel()
+            outcomeBackstopJob = null
+            outcomeBackstopAtMs = null
+            return
+        }
+        if (outcomeBackstopAtMs == deadline && outcomeBackstopJob?.isActive == true) return
+        outcomeBackstopJob?.cancel()
+        outcomeBackstopAtMs = deadline
+        val tracker = outcomeTracker
+        outcomeBackstopJob = ownerScope.launch {
+            delay((deadline - clock()).coerceAtLeast(0L))
+            if (tracker !== outcomeTracker) return@launch
+            tracker.expire(clock())?.let { report -> activeTarget?.let { reportOutcome(report, it) } }
+            mutableStalled.value = tracker.stalled
+        }
+    }
+
+    /** Closed vocabulary only (bounded-load rule 5): never a host, URL, account or channel name. */
+    private fun reportOutcome(report: LivePlaybackOutcomePolicy.Report, target: LiveChannelTarget) {
+        BoundedLoad.report(
+            surface = LoadSurface.LIVE_PLAYBACK,
+            timedOut = report.outcome == LivePlaybackOutcomePolicy.Outcome.TIMED_OUT,
+            durationMs = report.durationMs,
+            extra = buildMap {
+                put("source_type", target.selection.sourceType.name.lowercase())
+                put("view", sessionProfile.name.lowercase())
+                report.failureCode?.let { put("failure_code", it.name) }
+            },
+        )
     }
 
     private fun acceptRenderedVideoEvidence(snapshot: PlaybackSnapshot) {

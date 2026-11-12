@@ -4,6 +4,8 @@
     <string name="clean_live_action_play">Play live TV</string>
     <string name="clean_live_action_pause">Pause live TV</string>
     <string name="clean_live_action_retry">Retry playback</string>
+    <!-- UX341: the visible label on the live Retry button (the content description stays the longer one). -->
+    <string name="clean_live_action_retry_label">Retry</string>
     <string name="clean_live_action_next_channel">Next channel</string>
     <string name="clean_live_action_exit">Exit live TV</string>
 
@@ -36,6 +38,8 @@
     <string name="clean_live_error_stream_provider">The provider reports that this channel is unavailable.</string>
     <string name="clean_live_error_stream_no_graph">This channel has no compatible playback path.</string>
     <string name="clean_live_error_network">The channel could not be reached over the network.</string>
+    <!-- UX340: the provider never answered (refused, unreachable, timeout). Fixed sentence: never a host or URL. -->
+    <string name="clean_live_error_provider_unreachable">Couldn\'t reach the provider. Check your connection, then try again.</string>
     <string name="clean_live_error_access">The provider refused or limited this playback connection.</string>
     <string name="clean_live_error_secure_connection">A secure connection to the channel could not be established.</string>
     <string name="clean_live_error_stream_format">The channel uses an unreadable stream format.</string>

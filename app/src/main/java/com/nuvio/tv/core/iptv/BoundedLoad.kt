@@ -63,6 +63,13 @@ enum class LoadSurface(val key: String, val stallMs: Long, val reportsEveryOutco
     PLAYLIST_REFRESH("playlist_refresh", 90_000L, reportsEveryOutcome = true),
     /** Starting a live pause / rewind buffer: the first playable piece (or a Failed the viewer can Retry). */
     LIVE_PAUSE("live_pause", 20_000L, reportsEveryOutcome = true),
+    /**
+     * B256: one live viewing's terminal outcome (a channel that played and then failed, or a wait the
+     * session never ended). Not a [run] surface: the playback owner reports it through [BoundedLoad.report]
+     * once per incident ([com.nuvio.tv.playback.live.LivePlaybackOutcomePolicy]). Failures only.
+     * [stallMs] mirrors the policy's WAIT_BACKSTOP_MS (4 x the 90 s tune deadline).
+     */
+    LIVE_PLAYBACK("live_playback", 360_000L, reportsEveryOutcome = false),
 }
 
 sealed interface LoadStatus {
@@ -208,6 +215,15 @@ object BoundedLoad {
         }
         reportOutcome(surface, outcome, clock() - startedAt, report)
         return outcome
+    }
+
+    /**
+     * Reports an outcome decided outside [run] (B256: a live viewing that failed or timed out after it
+     * started). Same event, same per-surface failure cap, same closed vocabulary: [extra] carries enum
+     * names and source types only — never a host, URL, playlist, channel name or engine message.
+     */
+    fun report(surface: LoadSurface, timedOut: Boolean, durationMs: Long, extra: Map<String, Any> = emptyMap()) {
+        reportOutcome(surface, LoadOutcome.Failed(error = null, timedOut = timedOut), durationMs, extra)
     }
 
     private fun reportOutcome(surface: LoadSurface, outcome: LoadOutcome<*>, durationMs: Long, extra: Map<String, Any>) {

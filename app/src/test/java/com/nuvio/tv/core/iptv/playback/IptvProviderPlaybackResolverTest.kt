@@ -115,6 +115,45 @@ class IptvProviderPlaybackResolverTest {
         assertEquals(DeliveryType.UDP, resolved.evidence.delivery?.value)
     }
 
+    /**
+     * Regression (UX340, 2026-11-12): the portal went away mid-play; the reconnect's create_link threw
+     * ConnectException and the resolver reported it as UNKNOWN, so the viewer read the generic "Live TV
+     * playback failed." The failure must say the provider could not be reached, with no host in it.
+     */
+    @Test
+    fun `a provider that cannot be reached fails as network unreachable, not unknown`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        val resolver = resolver(account) { _, _, _, _ ->
+            throw java.net.ConnectException("failed to connect to portal.invalid/10.0.2.2:8911")
+        }
+
+        val result = resolver.resolve(
+            selection(account, ProviderSourceType.STALKER, ContentType.LIVE),
+            ProviderResolutionContext(ProviderResolutionTrigger.RECOVERY),
+        ) as PlaybackResult.Failure
+
+        assertEquals("code", FailureCode.NETWORK_UNREACHABLE, result.failure.code)
+        assertEquals("domain", FailureDomain.NETWORK, result.failure.domain)
+        assertEquals("still terminal for the reconnect loop", com.nuvio.tv.playback.core.Retryability.FATAL, result.failure.retryability)
+        assertFalse("no host crosses the port", result.toString().contains("portal.invalid"))
+    }
+
+    @Test
+    fun `a portal that never answered create_link or timed out is a network failure`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        val unreachable = resolver(account) { _, _, _, _ ->
+            ProviderLinkResult.Unavailable(ProviderLinkFailureReason.UNREACHABLE)
+        }.resolve(
+            selection(account, ProviderSourceType.STALKER, ContentType.LIVE),
+            ProviderResolutionContext(ProviderResolutionTrigger.RECOVERY),
+        ) as PlaybackResult.Failure
+        assertEquals("tagged by the client", FailureCode.NETWORK_UNREACHABLE, unreachable.failure.code)
+        assertEquals("timeout", ProviderLinkFailureReason.TIMED_OUT,
+            ProviderLinkFailurePolicy.reasonOfError(java.io.IOException("wrapped", java.net.SocketTimeoutException("read timed out"))))
+        assertEquals("anything else stays unknown", ProviderLinkFailureReason.UNKNOWN,
+            ProviderLinkFailurePolicy.reasonOfError(IllegalStateException("parse")))
+    }
+
     @Test
     fun `Stalker session limit remains typed and no provider text crosses the port`() = runTest {
         val account = account(sourceType = XtreamAccount.SOURCE_STALKER)

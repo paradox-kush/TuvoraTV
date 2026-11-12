@@ -249,9 +249,10 @@ internal fun BoxScope.LiveControlsOverlay(
                         channelListAvailable = buttons.channelList && actions.onChannelList != null,
                     )
                     if (buttons.retry) {
-                        ControlButton(
-                            icon = Icons.Default.Refresh,
-                            contentDescription = stringResource(R.string.clean_live_action_retry),
+                        // UX341: a labelled button, not a bare icon: on a failed channel it is THE action.
+                        RetryButton(
+                            label = stringResource(R.string.clean_live_action_retry_label),
+                            description = stringResource(R.string.clean_live_action_retry),
                             onClick = actions.onRetry,
                             focusRequester = primaryFocus.takeIf { firstFocus == LiveControlsPolicy.PrimaryFocus.RETRY },
                             onDownKey = actions.onHide,
@@ -273,15 +274,18 @@ internal fun BoxScope.LiveControlsOverlay(
                             )
                         }
                     }
-                    ControlButton(
-                        icon = if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                        iconPainter = if (paused) playPainter else pausePainter,
-                        contentDescription = stringResource(if (paused) R.string.cd_play else R.string.cd_pause),
-                        onClick = actions.onPlayPause,
-                        focusRequester = primaryFocus.takeIf { firstFocus == LiveControlsPolicy.PrimaryFocus.PLAY_PAUSE },
-                        onDownKey = actions.onHide,
-                        onFocused = actions.onKeepAlive,
-                    )
+                    // UX341: nothing to pause on a failed channel.
+                    if (buttons.playPause) {
+                        ControlButton(
+                            icon = if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            iconPainter = if (paused) playPainter else pausePainter,
+                            contentDescription = stringResource(if (paused) R.string.cd_play else R.string.cd_pause),
+                            onClick = actions.onPlayPause,
+                            focusRequester = primaryFocus.takeIf { firstFocus == LiveControlsPolicy.PrimaryFocus.PLAY_PAUSE },
+                            onDownKey = actions.onHide,
+                            onFocused = actions.onKeepAlive,
+                        )
+                    }
                     // "LIVE" becomes "-mm:ss · Live" once the viewer is behind: focusable, back to the edge.
                     if (pause.phase != LivePausePhase.OFF) {
                         actions.onGoLive?.let { goLive ->
@@ -414,6 +418,49 @@ private fun LiveStatusBadge(status: LiveControlsPolicy.Status) {
             .background(if (status == LiveControlsPolicy.Status.LIVE) color else Color.White.copy(alpha = 0.16f))
             .padding(horizontal = NuvioTheme.spacing.sm, vertical = 2.dp),
     )
+}
+
+/**
+ * UX341: Retry with its word beside the icon, so a failed channel's one action reads at a glance. Same
+ * focus vocabulary as [ControlButton] / [LiveChip]: white fill + black content when focused.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun RetryButton(
+    label: String,
+    description: String,
+    onClick: () -> Unit,
+    focusRequester: FocusRequester?,
+    onDownKey: () -> Unit,
+    onFocused: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.White.copy(alpha = 0.16f),
+            contentColor = Color.White,
+            focusedContainerColor = Color.White,
+            focusedContentColor = Color.Black,
+        ),
+        modifier = Modifier
+            .height(NuvioTheme.spacing.xxxl)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .semantics { contentDescription = description }
+            .onFocusChanged { if (it.isFocused) onFocused() }
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { onDownKey(); true } else false
+            },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = NuvioTheme.spacing.md).fillMaxHeight(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs),
+        ) {
+            androidx.tv.material3.Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
+            Text(text = label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
+    }
 }
 
 /** The "-mm:ss · Live" chip: a button in the row, white fill + black text when focused (like [ControlButton]). */

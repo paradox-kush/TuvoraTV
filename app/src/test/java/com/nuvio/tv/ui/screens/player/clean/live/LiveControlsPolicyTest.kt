@@ -184,8 +184,35 @@ class LiveControlsPolicyTest {
         assertEquals("failed, hidden -> reveal", true, LiveControlsPolicy.revealForTrouble(failed = true, reconnecting = false, controlsVisible = false, panelOpen = false))
         assertEquals("reconnecting, hidden -> reveal", true, LiveControlsPolicy.revealForTrouble(failed = false, reconnecting = true, controlsVisible = false, panelOpen = false))
         assertEquals("already shown -> nothing", false, LiveControlsPolicy.revealForTrouble(failed = true, reconnecting = false, controlsVisible = true, panelOpen = false))
-        assertEquals("a panel keeps its focus", false, LiveControlsPolicy.revealForTrouble(failed = true, reconnecting = false, controlsVisible = false, panelOpen = true))
+        assertEquals("a panel keeps its focus while reconnecting", false, LiveControlsPolicy.revealForTrouble(failed = false, reconnecting = true, controlsVisible = false, panelOpen = true))
         assertEquals("healthy -> nothing", false, LiveControlsPolicy.revealForTrouble(failed = false, reconnecting = false, controlsVisible = false, panelOpen = false))
+    }
+
+    /**
+     * Regression (B256, 2026-11-12): the provider died while the channel list was open over fullscreen
+     * video. The panel kept its focus, so the failure (reason + Retry) never showed: a black picture
+     * beside a focused list for 90 s+. A terminal failure must take over from an open panel.
+     */
+    @Test
+    fun `a terminal failure takes over from an open panel`() {
+        assertEquals("failed with the channel list open -> reveal", true,
+            LiveControlsPolicy.revealForTrouble(failed = true, reconnecting = false, controlsVisible = false, panelOpen = true))
+        assertTrue("and closes the panel", LiveControlsPolicy.closesPanelForFailure(failed = true, panelOpen = true))
+        assertFalse("a reconnect never closes it", LiveControlsPolicy.closesPanelForFailure(failed = false, panelOpen = true))
+    }
+
+    /** UX341 (2026-11-12): on a failed channel Pause was still offered and Retry was not the first focus. */
+    @Test
+    fun `a failed channel offers Retry first and no Pause`() {
+        val failed = LiveControlsPolicy.buttons(failed = true, subtitleTracks = 0, audioTracks = 0, hasLineup = true, playbackFailed = true)
+        assertFalse("no Pause on a failed channel", failed.playPause)
+        assertTrue("Retry", failed.retry)
+        assertEquals("focus lands on Retry", LiveControlsPolicy.PrimaryFocus.RETRY,
+            LiveControlsPolicy.primaryFocus(failed, scrubbing = false, paused = true))
+        val healthy = LiveControlsPolicy.buttons(failed = false, subtitleTracks = 0, audioTracks = 0, hasLineup = true)
+        assertTrue("a healthy channel keeps Pause", healthy.playPause)
+        val pauseBufferFailed = LiveControlsPolicy.buttons(failed = true, subtitleTracks = 0, audioTracks = 0, hasLineup = true)
+        assertTrue("a failed live-pause buffer still offers Play", pauseBufferFailed.playPause)
     }
 
     // Zapping: the controls must stay readable while the aimed channel changes under them.
