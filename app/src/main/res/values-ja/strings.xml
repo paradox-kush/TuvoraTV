@@ -591,8 +591,6 @@
     <string name="advanced_section_diagnostics">診断</string>
     <string name="advanced_sentry_reports">Sentryクラッシュレポート</string>
     <string name="advanced_sentry_reports_subtitle">安全なコンテキストでクラッシュとANRレポートを送信します。デフォルトでオン。</string>
-    <string name="advanced_playback_issue_reports">再生問題レポート</string>
-    <string name="advanced_playback_issue_reports_subtitle">再生中、長時間読み込み中、再生エラー時にレポートボタンを表示</string>
     <string name="advanced_player_stats_hud">再生統計オーバーレイ</string>
     <string name="advanced_player_stats_hud_subtitle">ストリーム情報に再生中のCPU、メモリ、バッファ、ビットレート、熱の読み取り値をライブで切り替えるボタンを表示</string>
     <string name="sentry_enable_dialog_title">クラッシュレポートをオンにしますか？</string>

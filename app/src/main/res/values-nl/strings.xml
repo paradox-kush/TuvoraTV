@@ -591,8 +591,6 @@
     <string name="advanced_section_diagnostics">Diagnostiek</string>
     <string name="advanced_sentry_reports">Sentry-crashrapporten</string>
     <string name="advanced_sentry_reports_subtitle">Verstuur crash- en ANR-rapporten met veilige context. Standaard ingeschakeld.</string>
-    <string name="advanced_playback_issue_reports">Rapporten over afspeelproblemen</string>
-    <string name="advanced_playback_issue_reports_subtitle">Toon rapportageknoppen tijdens het afspelen, bij lang laden en bij afspeelfouten</string>
     <string name="advanced_player_stats_hud">Overlay met afspeelstatistieken</string>
     <string name="advanced_player_stats_hud_subtitle">Toon een knop in de streaminfo om live cpu-, geheugen-, buffer-, bitrate- en temperatuurwaarden tijdens het afspelen in of uit te schakelen</string>
     <string name="sentry_enable_dialog_title">Crashrapporten inschakelen?</string>

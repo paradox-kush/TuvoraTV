@@ -2470,8 +2470,6 @@
 <string name="external_auto_next_loading">Načítavanie ďalšej epizódy…</string>
 <string name="advanced_sentry_reports">Správy o zlyhaní Sentry</string>
 <string name="advanced_sentry_reports_subtitle">Odosielať hlásenia o pádoch a zamrznutiach (ANR) s bezpečným kontextom; predvolene zapnuté.</string>
-<string name="advanced_playback_issue_reports">Hlásenia o problémoch s prehrávaním</string>
-<string name="advanced_playback_issue_reports_subtitle">Zobrazovať tlačidlá hlásení počas prehrávania, dlhého načítavania a chýb prehrávania</string>
 <string name="sentry_enable_dialog_title">Zapnúť správy o zlyhaní?</string>
 <string name="sentry_enable_dialog_subtitle">Správy o zlyhaní pomáhajú identifikovať chyby špecifické pre zariadenie bez potreby reprodukovať problém pomocou ADB logov.</string>
 <string name="sentry_disable_dialog_title">Vypnúť správy o zlyhaní?</string>

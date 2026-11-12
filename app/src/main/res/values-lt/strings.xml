@@ -1402,8 +1402,6 @@
     <string name="advanced_section_diagnostics">Diagnostika</string>
     <string name="advanced_sentry_reports">„Sentry“ strigčių ataskaitos</string>
     <string name="advanced_sentry_reports_subtitle">Siųsti strigčių ir ANR ataskaitas su saugiu kontekstu. Pagal numatytuosius nustatymus įjungta.</string>
-    <string name="advanced_playback_issue_reports">Atkūrimo problemų ataskaitos</string>
-    <string name="advanced_playback_issue_reports_subtitle">Rodyti pranešimo mygtukus atkuriant, ilgai įkeliant ir įvykus atkūrimo klaidai</string>
     <string name="advanced_player_stats_hud">Atkūrimo statistikos sluoksnis</string>
     <string name="advanced_player_stats_hud_subtitle">Srauto informacijoje rodyti mygtuką, kuriuo atkuriant įjungiami arba išjungiami CPU, atminties, buferio, bitų spartos ir temperatūros rodmenys</string>
     <string name="sentry_enable_dialog_title">Įjungti strigčių ataskaitas?</string>
