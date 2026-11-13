@@ -906,6 +906,7 @@ private fun PlayerRuntimeController.mintDeferredStreamThen(
         val outcome = DeferredStreamPolicy.resolve(
             stream = stream,
             isDeferred = streamRepository::isDeferredIptvUrl,
+            decorate = { deferredUrl, minted -> streamRepository.withMintedIptvHeaders(deferredUrl, minted) },
             mint = { url -> streamRepository.mintDeferredIptvUrl(url) },
         )
         debridResolveJob = null

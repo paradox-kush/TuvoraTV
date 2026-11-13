@@ -265,6 +265,35 @@ class MpvAdapterPlanTest {
         assertEquals("no", plan.preInitOptions["sid"])
     }
 
+    /**
+     * B259: FFmpeg re-sends custom headers to every redirect target, across hosts, so libmpv can never
+     * keep a portal's MAC cookie or token on the portal host. The mpv plan must not carry them at all,
+     * while the non-secret box identity (UA, X-User-Agent) still goes out.
+     */
+    @Test
+    fun `origin bound portal credentials never reach libmpv`() {
+        val request = PlaybackRequest(
+            "http://portal.example.com/play/live.php?play_token=t",
+            headers = mapOf("X-User-Agent" to "Model: MAG250; Link: WiFi"),
+            userAgent = "MAG-UA",
+            contentType = ContentType.LIVE,
+            originBoundHeaders = com.nuvio.tv.playback.core.OriginBoundHeaders(
+                host = "portal.example.com",
+                secureOrigin = false,
+                headers = mapOf("Cookie" to "mac=00%3A1A", "Authorization" to "Bearer tok", "Referer" to "http://portal.example.com/c/"),
+            ),
+        )
+        val result = MpvAdapterPlanFactory.create(start(request = request))
+        val plan = (result as PlaybackResult.Success).value
+        val sent = plan.headers.keys.map { it.lowercase() }.toSet()
+        assertFalse("no cookie", "cookie" in sent)
+        assertFalse("no token", "authorization" in sent)
+        assertFalse("no referer", "referer" in sent)
+        assertFalse("nothing secret in any option", (plan.preInitOptions.values + plan.headers.values).any { "tok" in it || "00%3A1A" in it })
+        assertEquals("box model still sent", "Model: MAG250; Link: WiFi", plan.headers["X-User-Agent"])
+        assertEquals("MAG UA still sent", "MAG-UA", plan.preInitOptions["user-agent"])
+    }
+
     private fun plan(input: PlaybackEngineStart) =
         (MpvAdapterPlanFactory.create(input) as PlaybackResult.Success).value
 

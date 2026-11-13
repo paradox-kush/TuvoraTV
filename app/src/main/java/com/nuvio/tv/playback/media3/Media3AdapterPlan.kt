@@ -81,6 +81,8 @@ internal data class Media3NetworkPlan(
     val retryConnectionFailures: Boolean,
     val transientLoadRetryPolicy: TransientLoadRetryPolicy,
     val drm: Media3DrmPlan?,
+    /** B259: one host's credentials, applied per hop by [OriginBoundHeaderInterceptor]. */
+    val originBoundHeaders: com.nuvio.tv.playback.core.OriginBoundHeaders? = null,
 ) {
     override fun toString(): String =
         "Media3NetworkPlan(scheme=${url.substringBefore(':', "unknown")}, " +
@@ -175,6 +177,7 @@ internal object Media3AdapterPlanFactory {
                 callTimeoutMs = request.network.callTimeoutMs,
                 retryConnectionFailures = request.network.retryConnectionFailures,
                 transientLoadRetryPolicy = request.network.transientLoadRetryPolicy,
+                originBoundHeaders = request.originBoundHeaders,
                 drm = request.drm?.let { drm ->
                     Media3DrmPlan(
                         schemeUuid = when (drm.scheme) {

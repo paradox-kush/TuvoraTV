@@ -227,6 +227,10 @@ internal class AndroidMedia3BackendFactory(
                 ),
             )
         }
+        // B259: a Stalker portal's identity reaches the portal host only, decided per hop (redirects too).
+        plan.request.originBoundHeaders?.let { bound ->
+            mediaClientBuilder.addNetworkInterceptor(OriginBoundHeaderInterceptor(bound))
+        }
         val callRegistry = TrackingCallRegistry()
         val mediaCalls = TrackingCallFactory(mediaClientBuilder.build(), callRegistry)
         val byteProgress = Media3ByteProgressSignal()

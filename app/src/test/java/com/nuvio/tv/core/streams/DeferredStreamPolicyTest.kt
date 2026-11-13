@@ -62,4 +62,19 @@ class DeferredStreamPolicyTest {
             DeferredStreamPolicy.resolve(stream("stalker-deferred:a"), isDeferred) { "stalker-deferred:a" },
         )
     }
+
+    /** B259: the minted copy gets its playlist's stream headers, keyed by the deferred url it came from. */
+    @Test
+    fun `the minted copy is decorated with its stream headers`() = runBlocking {
+        var seen: String? = null
+        val outcome = DeferredStreamPolicy.resolve(
+            stream("stalker-deferred:acc|movie|1|Heat"),
+            isDeferred,
+            decorate = { deferred, minted -> seen = deferred; minted.copy(name = "decorated") },
+        ) { "https://cdn.example/minted.mp4" }
+        val playable = (outcome as DeferredStreamPolicy.Outcome.Minted).stream
+        assertEquals("decorated", "decorated", playable.name)
+        assertEquals("keyed by the deferred url", "stalker-deferred:acc|movie|1|Heat", seen)
+        assertEquals("url kept", "https://cdn.example/minted.mp4", playable.url)
+    }
 }

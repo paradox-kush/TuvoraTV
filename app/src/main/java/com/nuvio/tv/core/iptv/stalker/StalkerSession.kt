@@ -210,6 +210,22 @@ class StalkerSession(
         }
     }
 
+    /**
+     * B259: the identity this session presents to its portal (the accepted MAG preset, MAC cookie,
+     * Referer, current token), for the stream request that follows a create_link. Read-only; never
+     * handshakes. The stream request decides per host whether any of it is sent
+     * ([StalkerStreamHeaderPolicy]).
+     */
+    fun streamIdentity(): StalkerStreamIdentity = StalkerStreamIdentity(
+        portalBase = baseUrl,
+        referer = referer,
+        cookie = "mac=" + StalkerProtocol.encodeMacForCookie(account.macAddress) +
+            "; stb_lang=en; timezone=Europe/London",
+        magUserAgent = magPreset.userAgent,
+        magXUserAgent = magPreset.xUserAgent,
+        token = token,
+    )
+
     /** Force re-auth on the next call (used when a create_link/browse hits a hard 401/403). */
     fun invalidate() { token = null }
 

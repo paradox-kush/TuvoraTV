@@ -28,6 +28,8 @@ class PlaybackRequest(
     val contentType: ContentType,
     val contentKey: SecretValue? = null,
     val providerConnectionLimit: Int? = null,
+    /** Credentials for one host only; see [OriginBoundHeaders] for which engine may send them. */
+    val originBoundHeaders: OriginBoundHeaders? = null,
 ) {
     init {
         require(url.isNotBlank()) { "Playback URL must not be blank" }
@@ -242,6 +244,43 @@ data class RequestSummary(
 enum class ContentType { LIVE, CATCH_UP, VOD }
 enum class RedirectPolicy { FOLLOW, REJECT }
 enum class CrossHostAuthorization { STRIP, PRESERVE }
+
+/**
+ * Headers that identify the viewer to ONE host (a Stalker portal's MAC cookie, its bearer token,
+ * Referer/Origin) and must never reach another host — not on the first request, and not after a
+ * redirect. Kept apart from [PlaybackRequest.headers], which every engine sends on every hop.
+ *
+ * A hop may carry them only when its host equals [host] (case-insensitive; the port may differ, a
+ * portal often streams from another port) and it is not an `http` hop of an `https` origin
+ * ([secureOrigin]): a downgrade would put the credential on the wire in clear.
+ *
+ * Engine contract: an engine that cannot decide per hop must not send these at all. Media3 enforces
+ * [allowsHop] in an OkHttp network interceptor, which sees every hop including redirects and HLS
+ * children. libmpv cannot: FFmpeg's http protocol re-sends its `headers` option unchanged to every
+ * redirect target, across hosts (libavformat/http.c, http_connect after `goto redo`), so the mpv plan
+ * never reads this field.
+ */
+class OriginBoundHeaders(
+    host: String,
+    val secureOrigin: Boolean,
+    val headers: Map<String, String>,
+) {
+    val host: String = host.trim().trimEnd('.').lowercase()
+
+    init {
+        require(this.host.isNotEmpty()) { "Origin-bound headers need a host" }
+    }
+
+    /** True when a request to [scheme]://[hopHost] may carry [headers]. */
+    fun allowsHop(scheme: String, hopHost: String): Boolean {
+        if (!hopHost.trim().trimEnd('.').equals(host, ignoreCase = true)) return false
+        val hopScheme = scheme.lowercase()
+        if (hopScheme != "http" && hopScheme != "https") return false
+        return !(secureOrigin && hopScheme == "http")
+    }
+
+    override fun toString(): String = "OriginBoundHeaders(names=${headers.keys.sorted()})"
+}
 enum class TlsPolicy { PLATFORM_DEFAULT, STRICT }
 enum class DnsPolicy { SYSTEM, SHARED_APPLICATION_RESOLVER }
 enum class DrmScheme { WIDEVINE, PLAYREADY, CLEARKEY, UNKNOWN }

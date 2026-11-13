@@ -40,6 +40,8 @@
     <string name="clean_live_error_network">The channel could not be reached over the network.</string>
     <!-- UX340: the provider never answered (refused, unreachable, timeout). Fixed sentence: never a host or URL. -->
     <string name="clean_live_error_provider_unreachable">Couldn\'t reach the provider. Check your connection, then try again.</string>
+    <!-- B259: a Stalker link was issued, then the provider's stream server sent nothing. Fixed sentence: never a host or URL. -->
+    <string name="clean_live_error_provider_no_video">The provider\'s server sent no video. Try again later, or check with your provider.</string>
     <string name="clean_live_error_access">The provider refused or limited this playback connection.</string>
     <string name="clean_live_error_secure_connection">A secure connection to the channel could not be established.</string>
     <string name="clean_live_error_stream_format">The channel uses an unreadable stream format.</string>

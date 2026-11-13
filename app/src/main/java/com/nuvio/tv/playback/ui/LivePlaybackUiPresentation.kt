@@ -26,7 +26,11 @@ enum class LivePlaybackUiStatusCode {
 sealed interface LivePlaybackUiErrorCode {
     data class PreviewUnavailable(val reasonCode: PreviewUnavailableReason) : LivePlaybackUiErrorCode
     data class StreamUnavailable(val reasonCode: StreamUnavailableReason) : LivePlaybackUiErrorCode
-    data class PlaybackFailed(val reasonCode: FailureCode) : LivePlaybackUiErrorCode
+    data class PlaybackFailed(
+        val reasonCode: FailureCode,
+        /** B259: a minted link whose stream server sent nothing ([ProviderNoVideoPolicy]). */
+        val providerSentNoVideo: Boolean = false,
+    ) : LivePlaybackUiErrorCode
 }
 
 /**
@@ -61,7 +65,10 @@ object LivePlaybackUiPresenter {
                 snapshot.previewAvailability is PreviewAvailability.Unavailable ->
                 LivePlaybackUiErrorCode.PreviewUnavailable(snapshot.previewAvailability.reason)
             snapshot.state == PlaybackState.FAILED ->
-                LivePlaybackUiErrorCode.PlaybackFailed(snapshot.failure?.code ?: FailureCode.UNKNOWN)
+                LivePlaybackUiErrorCode.PlaybackFailed(
+                    snapshot.failure?.code ?: FailureCode.UNKNOWN,
+                    providerSentNoVideo = ProviderNoVideoPolicy.applies(snapshot),
+                )
             else -> null
         }
         val active = snapshot.state in CONTROL_STATES && terminalStream == null

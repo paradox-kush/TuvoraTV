@@ -99,6 +99,10 @@ internal object MpvAdapterPlanFactory {
             return unsupported(FailureCode.NO_ELIGIBLE_GRAPH)
         }
 
+        // B259: request.originBoundHeaders (a Stalker portal's cookie/token/Referer/Origin) is NEVER
+        // read here. FFmpeg's http protocol re-sends its `headers` option to every redirect target,
+        // across hosts, with no per-hop hook, so libmpv cannot keep them on the portal host. mpv sends
+        // the non-secret part only (UA, X-User-Agent); Media3 enforces the full set per hop.
         val headers = request.assembledHttpHeaders()
 
         val options = linkedMapOf(

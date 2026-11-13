@@ -47,6 +47,7 @@ import com.nuvio.tv.playback.core.TransientLoadRetryPolicy
 import com.nuvio.tv.playback.core.VideoDimensions
 import com.nuvio.tv.playback.core.VideoQualityIntent
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -384,6 +385,24 @@ class Media3AdapterPlanTest {
         )
         assertEquals(FailureCode.AUDIO_OUTPUT_FAILED, audio?.failure?.code)
         assertEquals(FailureDomain.AUDIO, audio?.failure?.domain)
+    }
+
+    @Test
+    fun `origin bound portal credentials ride the Media3 plan separately from every-hop headers`() {
+        val bound = com.nuvio.tv.playback.core.OriginBoundHeaders(
+            host = "portal.example.com",
+            secureOrigin = false,
+            headers = mapOf("Cookie" to "mac=00%3A1A", "Authorization" to "Bearer tok"),
+        )
+        val plan = Media3AdapterPlanFactory.create(
+            PlaybackRequest("http://portal.example.com/live", contentType = ContentType.LIVE, originBoundHeaders = bound),
+            StreamEvidence(),
+            graph(),
+            requirements(),
+        )
+        assertSame("carried for the per-hop interceptor", bound, plan.request.originBoundHeaders)
+        assertFalse("never in the every-hop map", plan.request.headers.keys.any { it.equals("Cookie", true) || it.equals("Authorization", true) })
+        assertFalse("never printable", plan.toString().contains("tok"))
     }
 
     private fun plan(

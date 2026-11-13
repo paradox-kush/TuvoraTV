@@ -1503,6 +1503,78 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    // B259: a Stalker line that allows one connection answered an immediate second request with an empty
+    // 200. The reconnect loop re-minted at 0 ms after the drop, inside that window, so the automatic
+    // recovery was spent on a request the provider could only refuse.
+    @Test
+    fun `automatic re-mint of a single-use link waits out the one-connection window`() = runTest {
+        val engine = FakeEngine { start, input, events ->
+            if (start == 2) events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+        }
+        val resolves = mutableListOf<Pair<ProviderResolutionTrigger, Long>>()
+        val selection = providerSelection("single-use")
+        val session = session(
+            engine = engine,
+            providerPlaybackResolver = ProviderPlaybackResolver { sel, context ->
+                resolves += context.trigger to testScheduler.currentTime
+                PlaybackResult.Success(singleUseResolved(sel))
+            },
+            clock = virtualClock(),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(selection, SessionProfile.FULLSCREEN))
+        runUntil { engine.startCalls == 1 }
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+        val droppedAt = testScheduler.currentTime
+
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        runUntil { engine.startCalls == 2 }
+
+        val remint = resolves.last()
+        assertEquals("the reconnect re-mints", ProviderResolutionTrigger.RECOVERY, remint.first)
+        assertTrue(
+            "re-mint ${remint.second - droppedAt} ms after the drop; must wait ${SingleUseRemintSpacingPolicy.MIN_GAP_MS} ms",
+            remint.second - droppedAt >= SingleUseRemintSpacingPolicy.MIN_GAP_MS,
+        )
+        assertEquals("the reconnect budget is untouched: one attempt recovered", PlaybackState.PLAYING, session.snapshot.value.state)
+        close(session)
+    }
+
+    @Test
+    fun `the viewer's retry after a single-use failure is never delayed`() = runTest {
+        val engine = FakeEngine { start, input, events ->
+            if (start > 1) events.emit(PlaybackEvent.PlaybackEnded(input.generation, PlaybackEndReason.EOF))
+        }
+        val resolves = mutableListOf<Pair<ProviderResolutionTrigger, Long>>()
+        val selection = providerSelection("retry")
+        val session = session(
+            engine = engine,
+            providerPlaybackResolver = ProviderPlaybackResolver { sel, context ->
+                resolves += context.trigger to testScheduler.currentTime
+                PlaybackResult.Success(singleUseResolved(sel))
+            },
+            clock = virtualClock(),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(selection, SessionProfile.FULLSCREEN))
+        runUntil { engine.startCalls == 1 }
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        runUntil(maxMs = 300_000) { session.snapshot.value.state == PlaybackState.FAILED }
+        assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
+
+        val pressedAt = testScheduler.currentTime
+        session.dispatch(PlaybackCommand.Retry)
+        runUntil(maxMs = 10_000) { resolves.last().first == ProviderResolutionTrigger.INITIAL }
+
+        val retry = resolves.last()
+        assertEquals("Retry is a fresh tune", ProviderResolutionTrigger.INITIAL, retry.first)
+        assertEquals("Retry contacts the provider at once", pressedAt, retry.second)
+        close(session)
+    }
+
     // Live pipeline audit 2026-11-04 §3c, fits B52 ("recovers after zapping and waiting 1-2 min"): the
     // rolling reconnect window is session-scoped and cleared only by 30 s of stable playback, so it
     // survived a user Retry and a channel change. A healthy stream after Retry/zap inherited the old
@@ -3313,6 +3385,20 @@ class PlaybackSessionTest {
             container = EvidenceFact(ContainerType.MPEG_TS, EvidenceProvenance.PROVIDER_DECLARED),
         ),
     )
+
+    private fun singleUseResolved(selection: ProviderPlaybackSelection): ResolvedPlaybackRequest {
+        val request = PlaybackRequest(
+            url = "http://portal.invalid/play/live.php?play_token=t",
+            contentType = selection.contentType,
+            contentKey = SecretValue(selection.contentKey.value),
+            providerConnectionLimit = selection.providerConnectionLimit,
+            network = PlaybackNetworkRequest(
+                retryConnectionFailures = false,
+                transientLoadRetryPolicy = TransientLoadRetryPolicy.SESSION_ONLY,
+            ),
+        )
+        return ResolvedPlaybackRequest(request, request.summary(), StreamEvidence())
+    }
 
     private fun providerResolved(selection: ProviderPlaybackSelection): ResolvedPlaybackRequest {
         val request = PlaybackRequest(

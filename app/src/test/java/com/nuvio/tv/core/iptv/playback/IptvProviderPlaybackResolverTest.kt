@@ -30,6 +30,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -263,6 +264,84 @@ class IptvProviderPlaybackResolverTest {
         }
     }
 
+    /**
+     * B259: the Stalker stream request carried only the engine default (a spoofed Chrome UA) - no MAG
+     * identity even when the stream lives on the portal's own host. Portal host: identity, with the
+     * credentials kept origin-bound; any other host: a credential-free player profile.
+     */
+    @Test
+    fun `Stalker stream on the portal host presents the portal identity as origin bound headers`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        val resolver = resolver(account, appVersion = "9.9") { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://portal.invalid:8000/play/live.php?stream=42&play_token=abc", stalkerIdentity)
+        }
+
+        val request = resolver.resolve(
+            selection(account, ProviderSourceType.STALKER, ContentType.LIVE),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success().request
+
+        assertEquals("MAG preset UA", "MAG-UA", request.userAgent)
+        assertEquals("box model on every hop", "Model: MAG250; Link: WiFi", request.headers["X-User-Agent"])
+        assertNull("no cookie in the every-hop headers", request.headers["Cookie"])
+        assertTrue("no cookie map either", request.cookies.isEmpty())
+        val bound = requireNotNull(request.originBoundHeaders) { "portal identity expected" }
+        assertEquals("portal host", "portal.invalid", bound.host)
+        assertEquals("mac cookie", stalkerIdentity.cookie, bound.headers["Cookie"])
+        assertEquals("token", "Bearer tok", bound.headers["Authorization"])
+        assertFalse("never printable", request.toString().contains("tok"))
+    }
+
+    @Test
+    fun `Stalker stream on a foreign host carries no credential and an honest user agent`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        val resolver = resolver(account, appVersion = "9.9") { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://edge.cdn.invalid/live/42.ts?token=abc", stalkerIdentity)
+        }
+
+        val request = resolver.resolve(
+            selection(account, ProviderSourceType.STALKER, ContentType.LIVE),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success().request
+
+        assertNull("no origin-bound credentials", request.originBoundHeaders)
+        assertEquals("neutral player UA", "Tuvora/9.9 (Linux; Android TV)", request.userAgent)
+        assertNull("no box model to a foreign host", request.headers["X-User-Agent"])
+        assertFalse("no Authorization", request.summary().hasAuthorization)
+    }
+
+    @Test
+    fun `Stalker playlist user agent override wins over the MAG preset`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER).copy(userAgent = "VLC/3.0.20")
+        val resolver = resolver(account) { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://portal.invalid/play/live.php?stream=42", stalkerIdentity)
+        }
+
+        val request = resolver.resolve(
+            selection(account, ProviderSourceType.STALKER, ContentType.LIVE),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success().request
+
+        assertEquals("override", "VLC/3.0.20", request.userAgent)
+        assertNotNull("identity still bound to the portal", request.originBoundHeaders)
+    }
+
+    @Test
+    fun `Xtream live keeps its headers and gets no Stalker identity`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_XTREAM)
+        val resolver = resolver(account) { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://provider.invalid/live/user/password/42.ts", stalkerIdentity)
+        }
+
+        val request = resolver.resolve(
+            selection(account, ProviderSourceType.XTREAM, ContentType.LIVE),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success().request
+
+        assertNull("Xtream: no origin-bound identity", request.originBoundHeaders)
+        assertNull("Xtream: engine default UA as before", request.userAgent)
+    }
+
     /** A reusable Xtream live URL keeps the engines' bounded in-stack recovery (frozen-frame reconnect). */
     @Test
     fun `Xtream live link stays re-openable by the engines`() = runTest {
@@ -483,8 +562,18 @@ class IptvProviderPlaybackResolverTest {
         assertFalse(first.toString().contains(account.password))
     }
 
+    private val stalkerIdentity = com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentity(
+        portalBase = "http://portal.invalid",
+        referer = "http://portal.invalid/c/",
+        cookie = "mac=00%3A1A%3A79%3A00%3A00%3A01; stb_lang=en; timezone=Europe/London",
+        magUserAgent = "MAG-UA",
+        magXUserAgent = "Model: MAG250; Link: WiFi",
+        token = "tok",
+    )
+
     private fun resolver(
         account: XtreamAccount,
+        appVersion: String = "1.0",
         panelOffsetMs: Long? = null,
         m3uChannel: M3uChannelCatchUp? = null,
         link: suspend (XtreamAccount, String, Int, Boolean) -> ProviderLinkResult,
@@ -494,6 +583,7 @@ class IptvProviderPlaybackResolverTest {
         winnerMemory = Memory(),
         panelClock = PanelClockSource { panelOffsetMs },
         m3uChannels = ProviderM3uCatchUpLookup { _, _ -> m3uChannel },
+        appVersion = appVersion,
     )
 
     private fun selection(

@@ -51,6 +51,8 @@ class NavigationPlaybackInput(
     val providerDeclaredSubtitleFormat: SubtitleFormat? = null,
     val httpMimeType: String? = null,
     val existingEvidence: StreamEvidence = StreamEvidence(),
+    /** One host's credentials (a Stalker portal's identity); never merged into [headers]. */
+    val originBoundHeaders: com.nuvio.tv.playback.core.OriginBoundHeaders? = null,
 ) {
     override fun toString(): String =
         "NavigationPlaybackInput(contentType=$contentType, hasHeaders=${headers.isNotEmpty()}, " +
@@ -98,6 +100,13 @@ class PlaybackRequestMapper {
             contentType = input.contentType,
             contentKey = input.contentKey,
             providerConnectionLimit = input.providerConnectionLimit,
+            originBoundHeaders = input.originBoundHeaders?.let { bound ->
+                com.nuvio.tv.playback.core.OriginBoundHeaders(
+                    host = bound.host,
+                    secureOrigin = bound.secureOrigin,
+                    headers = sanitizeHeaders(bound.headers),
+                ).takeIf { it.headers.isNotEmpty() }
+            },
         )
         return MappedPlaybackRequest(request, passiveEvidence(input, urlAuth.url))
     }

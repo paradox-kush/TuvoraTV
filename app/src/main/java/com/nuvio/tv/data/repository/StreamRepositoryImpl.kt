@@ -137,9 +137,42 @@ class StreamRepositoryImpl @Inject constructor(
             item.copy(streamUrl = freshUrl)
         }
         com.nuvio.tv.core.iptv.IptvPanelHosts.note(playable.streamUrl)
+        val stalkerPortable = stalkerPortableHeaders(account, playable.streamUrl)
         return playable.toAddonStreams().map { group -> group.copy(streams = group.streams.map { stream ->
-            com.nuvio.tv.core.iptv.StreamUserAgentPolicy.applyTo(stream, account).copy(deviceSourceKind = "iptv", deviceSourceRef = account.id)
+            val withUa = com.nuvio.tv.core.iptv.StreamUserAgentPolicy.applyTo(stream, account)
+            val headed = stalkerPortable?.let {
+                com.nuvio.tv.core.iptv.stalker.StalkerStreamHeaderPolicy.withPortableHeaders(withUa, it)
+            } ?: withUa
+            headed.copy(deviceSourceKind = "iptv", deviceSourceRef = account.id)
         }) }
+    }
+
+    /**
+     * B259: the flat (every-hop) headers a Stalker stream at [url] gets on the VOD/episode player: the
+     * MAG identity's non-secret part on the portal host, a neutral player profile elsewhere, the
+     * playlist's User-Agent override winning. Never the MAC cookie or token: this player re-sends its
+     * headers on every redirect hop. Null for every other source type.
+     */
+    private fun stalkerPortableHeaders(account: com.nuvio.tv.core.iptv.XtreamAccount, url: String): Map<String, String>? {
+        if (account.sourceType != com.nuvio.tv.core.iptv.XtreamAccount.SOURCE_STALKER || url.isBlank()) return null
+        val identity = (iptvClientFactory.clientFor(account) as? com.nuvio.tv.core.iptv.stalker.StalkerClient)
+            ?.let { runCatching { it.streamIdentity(account) }.getOrNull() }
+        return com.nuvio.tv.core.iptv.stalker.StalkerStreamHeaderPolicy.portableHeaders(
+            streamUrl = url,
+            identity = identity,
+            userAgentOverride = com.nuvio.tv.core.iptv.StreamUserAgentPolicy.resolve(account),
+            appVersion = com.nuvio.tv.BuildConfig.VERSION_NAME,
+        )
+    }
+
+    override suspend fun withMintedIptvHeaders(
+        deferredUrl: String,
+        minted: com.nuvio.tv.domain.model.Stream,
+    ): com.nuvio.tv.domain.model.Stream {
+        val accountId = com.nuvio.tv.core.iptv.match.XtreamStreamSource.deferredAccountId(deferredUrl) ?: return minted
+        val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == accountId } ?: return minted
+        val portable = stalkerPortableHeaders(account, minted.url.orEmpty()) ?: return minted
+        return com.nuvio.tv.core.iptv.stalker.StalkerStreamHeaderPolicy.withPortableHeaders(minted, portable)
     }
 
     /**

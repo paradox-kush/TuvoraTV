@@ -97,6 +97,10 @@ class PlaybackSession(
     private val recordedCompatibilityOutcomes = mutableSetOf<CompatibilityRecordingKey>()
     private val liveReconnectAttempts = ArrayDeque<Long>()
     private var reconnectPlaybackStableSinceEpochMs: Long? = null
+    /** B259: whether the link most recently handed to an engine was single-use (SingleUseRemintSpacingPolicy). */
+    @Volatile private var lastLinkSingleUse: Boolean = false
+    /** B259: when an engine connection was last proven closed (release or hard abort succeeded). */
+    @Volatile private var connectionEndedAtEpochMs: Long? = null
 
     /** Opaque id of this session, so two NO_PROGRESS reports can be told apart (guide preview vs fullscreen). */
     private val instanceId = Integer.toHexString(System.identityHashCode(this))
@@ -1555,7 +1559,10 @@ class PlaybackSession(
         val graceful = withTimeoutOrNull(releaseTimeoutMs) {
             safeResult(FailurePhase.RELEASE) { engine.release(adapterGeneration) }
         }
-        if (graceful is PlaybackResult.Success) return graceful
+        if (graceful is PlaybackResult.Success) {
+            connectionEndedAtEpochMs = clock.nowEpochMs()
+            return graceful
+        }
         // Read before anything else touches the engine: a stuck release is still in its step.
         val stuckStep = engine.releaseStepName()
         diagnostics.record(
@@ -1571,7 +1578,10 @@ class PlaybackSession(
         val abort = withTimeoutOrNull(releaseTimeoutMs) {
             safeResult(FailurePhase.RELEASE) { engine.hardAbort(adapterGeneration) }
         }
-        if (abort is PlaybackResult.Success) return abort
+        if (abort is PlaybackResult.Success) {
+            connectionEndedAtEpochMs = clock.nowEpochMs()
+            return abort
+        }
         val abortStep = engine.releaseStepName() ?: stuckStep
         diagnostics.record(
             PlaybackDiagnosticEvent(
@@ -1590,7 +1600,10 @@ class PlaybackSession(
         // stuck player and let a fresh one start. The fail-closed rule is relaxed here; the
         // trade-off is that the provider may briefly see a second connection while the abandoned
         // player's socket winds down. A second stuck shutdown stays fatal.
-        return abandonOrFail(generation, engine, adapterGeneration, abortStep)
+        return abandonOrFail(generation, engine, adapterGeneration, abortStep).also {
+            // The abandoned player's socket may still be winding down: space the next mint from now.
+            if (it is PlaybackResult.Success) connectionEndedAtEpochMs = clock.nowEpochMs()
+        }
     }
 
     /** Applies the once-per-process abandon after both shutdown attempts failed. */
@@ -2150,6 +2163,15 @@ class PlaybackSession(
         phase: FailurePhase,
         context: ProviderResolutionContext,
     ): PlaybackResult<ResolvedPlaybackRequest> {
+        // B259: an automatic re-mint of a single-use link waits out the provider's one-connection
+        // window; a tune, zap or the viewer's Retry (INITIAL) never waits.
+        val spacing = SingleUseRemintSpacingPolicy.delayBeforeResolveMs(
+            trigger = context.trigger,
+            previousLinkSingleUse = lastLinkSingleUse,
+            connectionEndedAtMs = connectionEndedAtEpochMs,
+            nowMs = clock.nowEpochMs(),
+        )
+        if (spacing > 0L) clock.delayMs(spacing)
         val raw = safeResult(phase) {
             when (launch) {
                 is PlaybackLaunch.ConcreteRequest -> requestResolver.resolve(launch.request)
@@ -2166,6 +2188,7 @@ class PlaybackSession(
         }
         val resolvedRequest = (raw as PlaybackResult.Success).value
         val request = resolvedRequest.request
+        lastLinkSingleUse = request.network.transientLoadRetryPolicy == TransientLoadRetryPolicy.SESSION_ONLY
         val valid = when (launch) {
             is PlaybackLaunch.ConcreteRequest ->
                 request.contentType == launch.request.contentType &&

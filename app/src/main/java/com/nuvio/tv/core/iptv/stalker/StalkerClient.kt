@@ -112,6 +112,12 @@ class StalkerClient @Inject constructor(
     private fun playbackSession(acc: XtreamAccount): StalkerSession =
         sessions.sessionFor(acc, failover.activeAccount(acc))
 
+    /**
+     * B259: the identity the ACTIVE portal's session presents, for the stream request of a link this
+     * client just minted. Never a network call.
+     */
+    fun streamIdentity(acc: XtreamAccount): StalkerStreamIdentity = playbackSession(acc).streamIdentity()
+
     /** Verify = handshake succeeds (session authenticates) + account_info is reachable. */
     suspend fun verify(acc: XtreamAccount): Result<Unit> = runCatching {
         // A successful get_genres proves the full handshake+get_profile+authorised-browse chain.

@@ -1311,7 +1311,10 @@ class StreamScreenViewModel @Inject constructor(
                 Log.w(TAG, "resolveStreamForPlayback: portal would not issue a link for ${stream.name}")
                 return null
             }
-            return resolveStreamForPlayback(stream.copy(url = minted))
+            // B259: the minted link gets its playlist's stream headers (Stalker: portal host vs elsewhere).
+            return resolveStreamForPlayback(
+                streamRepository.withMintedIptvHeaders(stream.url.orEmpty(), stream.copy(url = minted)),
+            )
         }
         if (stream.youTubeIdToResolve() != null) {
             return resolveYouTubeStreamForPlayback(stream)

@@ -70,7 +70,11 @@ internal fun interface ProviderM3uCatchUpLookup {
 }
 
 internal sealed interface ProviderLinkResult {
-    class Resolved(val url: String) : ProviderLinkResult {
+    class Resolved(
+        val url: String,
+        /** B259: the Stalker session's identity right after the mint; null for every other source. */
+        val stalkerIdentity: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentity? = null,
+    ) : ProviderLinkResult {
         override fun toString(): String = "ProviderLinkResult.Resolved(hasUrl=true)"
     }
 
@@ -116,7 +120,15 @@ class IptvProviderPlaybackResolverFactory internal constructor(
             val client = clientFactory.clientFor(account)
             val url = client.resolveStreamUrl(account, kind, streamId, forceFresh)
             if (!url.isNullOrBlank()) {
-                ProviderLinkResult.Resolved(url)
+                // B259: the session's identity right after the mint, for the stream request's headers.
+                val identity = (client as? StalkerClient)?.let { stalker ->
+                    try {
+                        stalker.streamIdentity(account)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                ProviderLinkResult.Resolved(url, identity)
             } else {
                 val reason = when (client.lastResolveError) {
                     StalkerClient.SESSION_LIMIT_MESSAGE -> ProviderLinkFailureReason.SESSION_LIMIT
@@ -178,6 +190,8 @@ class IptvProviderPlaybackResolver internal constructor(
     private val activeServer: (XtreamAccount) -> XtreamAccount = { it },
     private val panelClock: com.nuvio.tv.core.iptv.PanelClockSource = com.nuvio.tv.core.iptv.PanelClockSource.NONE,
     private val m3uChannels: ProviderM3uCatchUpLookup = ProviderM3uCatchUpLookup { _, _ -> null },
+    /** B259: names the app in the neutral stream User-Agent. */
+    private val appVersion: String = com.nuvio.tv.BuildConfig.VERSION_NAME,
 ) : ProviderPlaybackResolver {
 
     private val mapper = PlaybackRequestMapper()
@@ -245,7 +259,7 @@ class IptvProviderPlaybackResolver internal constructor(
                     ?: ProviderLinkFailureReason.UNKNOWN,
             )
         ) {
-            is ProviderLinkResult.Resolved -> mapped(account, selection, link.url, dialect = null)
+            is ProviderLinkResult.Resolved -> mapped(account, selection, link.url, dialect = null, link.stalkerIdentity)
             is ProviderLinkResult.Unavailable -> unavailable(link.reason)
         }
     }
@@ -358,14 +372,30 @@ class IptvProviderPlaybackResolver internal constructor(
         selection: ProviderPlaybackSelection,
         url: String,
         dialect: CatchUpDialectWalk.Dialect?,
+        stalkerIdentity: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentity? = null,
     ): PlaybackResult<ResolvedPlaybackRequest> {
         if (url.isBlank()) return unavailable(deterministic = true)
         val declared = declaredTransport(selection, dialect)
+        val userAgentOverride = com.nuvio.tv.core.iptv.StreamUserAgentPolicy.resolve(account)
+        // B259: a Stalker stream presents the portal identity to the portal host only (credentials
+        // origin-bound, enforced per hop), and a credential-free player profile to any other host.
+        val stalkerHeaders = if (account.sourceType == XtreamAccount.SOURCE_STALKER) {
+            com.nuvio.tv.core.iptv.stalker.StalkerStreamHeaderPolicy.decide(
+                streamUrl = url,
+                identity = stalkerIdentity,
+                userAgentOverride = userAgentOverride,
+                appVersion = appVersion,
+            )
+        } else {
+            null
+        }
         val dnsPolicy = account.cleanDnsPolicy()
         val mapped = mapper.map(
             NavigationPlaybackInput(
                 url = url,
-                userAgent = com.nuvio.tv.core.iptv.StreamUserAgentPolicy.resolve(account),
+                headers = stalkerHeaders?.headers.orEmpty(),
+                userAgent = stalkerHeaders?.userAgent ?: userAgentOverride,
+                originBoundHeaders = stalkerHeaders?.originBound,
                 redirectPolicy = RedirectPolicy.FOLLOW,
                 crossHostAuthorization = CrossHostAuthorization.STRIP,
                 tlsPolicy = TlsPolicy.PLATFORM_DEFAULT,

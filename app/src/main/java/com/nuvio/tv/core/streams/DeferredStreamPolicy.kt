@@ -25,11 +25,17 @@ object DeferredStreamPolicy {
     suspend fun resolve(
         stream: Stream,
         isDeferred: (String?) -> Boolean,
+        /** B259: the stream headers for the minted link (deferred url, minted copy) - identity by default. */
+        decorate: suspend (String, Stream) -> Stream = { _, minted -> minted },
         mint: suspend (String) -> String?,
     ): Outcome {
         val url = stream.url
         if (!isDeferred(url)) return Outcome.Plain
         val minted = mint(url.orEmpty())
-        return if (minted.isNullOrBlank() || isDeferred(minted)) Outcome.Unavailable else Outcome.Minted(stream.copy(url = minted))
+        return if (minted.isNullOrBlank() || isDeferred(minted)) {
+            Outcome.Unavailable
+        } else {
+            Outcome.Minted(decorate(url.orEmpty(), stream.copy(url = minted)))
+        }
     }
 }
