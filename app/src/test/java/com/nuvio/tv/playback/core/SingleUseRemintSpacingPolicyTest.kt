@@ -45,6 +45,32 @@ class SingleUseRemintSpacingPolicyTest {
     }
 
     @Test
+    fun `a re-mint that switches the stream identity after an auth rejection at open does not wait`() {
+        assertEquals(
+            "a 401/403 at open holds no connection",
+            0L,
+            SingleUseRemintSpacingPolicy.delayBeforeResolveMs(
+                ProviderResolutionTrigger.RECOVERY,
+                previousLinkSingleUse = true,
+                connectionEndedAtMs = 10_000L,
+                nowMs = 10_000L,
+                identitySwitchAfterAuthRejection = true,
+            ),
+        )
+        assertEquals(
+            "every other re-mint keeps the spacing",
+            gap,
+            SingleUseRemintSpacingPolicy.delayBeforeResolveMs(
+                ProviderResolutionTrigger.RECOVERY,
+                previousLinkSingleUse = true,
+                connectionEndedAtMs = 10_000L,
+                nowMs = 10_000L,
+                identitySwitchAfterAuthRejection = false,
+            ),
+        )
+    }
+
+    @Test
     fun `no recorded connection end means nothing to wait for`() {
         assertEquals("no anchor", 0L, delay(ProviderResolutionTrigger.RECOVERY, endedAt = null, now = 10_000L))
     }

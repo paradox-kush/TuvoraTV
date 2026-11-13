@@ -309,6 +309,19 @@ class PlaybackSession(
             probationPassingWindows = 0
         }
         if (event is PlaybackEvent.FirstVideoFrame) lastFreezeKind = null
+        if (event != null &&
+            (event is PlaybackEvent.FirstVideoFrame || event is PlaybackEvent.FirstAudio) &&
+            event.generation == before.snapshot.generation
+        ) {
+            // The request identity this attempt presented got past the provider's check.
+            (before.launch as? PlaybackLaunch.DeferredProvider)?.let { deferred ->
+                try {
+                    providerPlaybackResolver?.onPlaybackStarted(deferred.selection)
+                } catch (_: Exception) {
+                    // Learning is best-effort; playback never depends on it.
+                }
+            }
+        }
         observeCompatibilityFact(before, input)
         val resetsReconnectPressure = input is PlaybackReducerInput.Command &&
             LiveReconnectPressureResetPolicy.resetsOn(input.value, before.launch)
@@ -1355,9 +1368,13 @@ class PlaybackSession(
         val original = machine.launch ?: return
         val profileSnapshot = machine.snapshot.profile
         val preferenceSnapshot = preferences
-        val reconnectFeedback = machine.snapshot.failure?.toProviderResolutionFeedback()
+        val openingFailure = machine.snapshot.failure
+        var reconnectFeedback = openingFailure?.toProviderResolutionFeedback()
         reconnectJob = generationScope(action.generation).launch {
             var attempt = 0
+            // What refused the latest attempt: the next re-mint is told (a 401 at open switches the
+            // Stalker stream identity), and an exhausted budget reports a provider refusal as such.
+            var lastAttemptFailure: PlaybackFailure? = openingFailure
             while (
                 currentCoroutineContext().isActive &&
                 isCurrentReconnect(action.generation)
@@ -1382,7 +1399,7 @@ class PlaybackSession(
                     liveReconnectAttempts.removeFirst()
                 }
                 if (!policy.liveReconnectAllowed(attempt, liveReconnectAttempts, now)) {
-                    liveReconnectEscalated(action.generation, policy.liveReconnectExhaustedFailure())
+                    liveReconnectEscalated(action.generation, policy.liveReconnectExhaustedFailure(lastAttemptFailure))
                     return@launch
                 }
                 liveReconnectAttempts.addLast(now)
@@ -1525,6 +1542,8 @@ class PlaybackSession(
                             liveReconnectEscalated(action.generation, event.failure)
                             return@launch
                         }
+                        lastAttemptFailure = event.failure
+                        reconnectFeedback = event.failure.toProviderResolutionFeedback()
                         attempt++
                         // The shared event reaches this waiter before the general engine collector
                         // necessarily queues the same fact. Cross an acknowledged actor boundary
@@ -2165,11 +2184,23 @@ class PlaybackSession(
     ): PlaybackResult<ResolvedPlaybackRequest> {
         // B259: an automatic re-mint of a single-use link waits out the provider's one-connection
         // window; a tune, zap or the viewer's Retry (INITIAL) never waits.
+        // A re-mint that switches the stream identity after a 401/403 at open does not wait: that
+        // attempt was refused before any connection was held.
+        val identitySwitch = context.trigger != ProviderResolutionTrigger.INITIAL &&
+            launch is PlaybackLaunch.DeferredProvider &&
+            try {
+                providerPlaybackResolver?.remintSkipsSpacing(launch.selection, context) == true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                false
+            }
         val spacing = SingleUseRemintSpacingPolicy.delayBeforeResolveMs(
             trigger = context.trigger,
             previousLinkSingleUse = lastLinkSingleUse,
             connectionEndedAtMs = connectionEndedAtEpochMs,
             nowMs = clock.nowEpochMs(),
+            identitySwitchAfterAuthRejection = identitySwitch,
         )
         if (spacing > 0L) clock.delayMs(spacing)
         val raw = safeResult(phase) {

@@ -304,12 +304,22 @@ class PlaybackPolicy(
     fun stablePlaybackResetsReconnectPressure(stableForMs: Long): Boolean =
         stableForMs >= liveReconnectConfiguration.minimumStablePlaybackBeforeResetMs
 
-    fun liveReconnectExhaustedFailure(): PlaybackFailure = PlaybackFailure(
-        code = FailureCode.LIVE_RECONNECT_EXHAUSTED,
-        domain = FailureDomain.NETWORK,
-        phase = FailurePhase.RECOVERY,
-        retryability = Retryability.FATAL,
-    )
+    /**
+     * The terminal failure when the live reconnect budget is spent. When the last attempt was refused
+     * by the provider (401/403), that is what the viewer is told — "the provider refused", not "the
+     * network" — since every re-mint reached the provider and was turned away.
+     */
+    fun liveReconnectExhaustedFailure(lastAttemptFailure: PlaybackFailure? = null): PlaybackFailure =
+        if (lastAttemptFailure?.code == FailureCode.AUTHORIZATION_REJECTED) {
+            lastAttemptFailure.copy(phase = FailurePhase.RECOVERY, retryability = Retryability.FATAL)
+        } else {
+            PlaybackFailure(
+                code = FailureCode.LIVE_RECONNECT_EXHAUSTED,
+                domain = FailureDomain.NETWORK,
+                phase = FailurePhase.RECOVERY,
+                retryability = Retryability.FATAL,
+            )
+        }
 
     /** Adapters report authorization evidence; provider-link freshness is a core concern. */
     fun normalizeAuthorizationRecovery(

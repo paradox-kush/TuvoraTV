@@ -99,6 +99,9 @@ class IptvProviderPlaybackResolverFactory internal constructor(
     private val m3uChannels: ProviderM3uCatchUpLookup = ProviderM3uCatchUpLookup { _, _ -> null },
     /** UX345: clears the panel breaker for every server of the playlist (the guard's Retry contract). */
     private val breakerReset: (XtreamAccount) -> Unit = com.nuvio.tv.core.iptv.IptvPanelGuard::resetForAccount,
+    /** Which Stalker stream identity each playlist's provider accepts; outlives each session's resolver. */
+    private val streamIdentities: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy =
+        com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy.processWide,
 ) : ProviderPlaybackResolverFactory, com.nuvio.tv.playback.core.ProviderUserRetryPort {
 
     @Inject
@@ -172,6 +175,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
             activeServer = activeServer,
             panelClock = panelClock,
             m3uChannels = m3uChannels,
+            streamIdentities = streamIdentities,
         )
 }
 
@@ -192,6 +196,9 @@ class IptvProviderPlaybackResolver internal constructor(
     private val m3uChannels: ProviderM3uCatchUpLookup = ProviderM3uCatchUpLookup { _, _ -> null },
     /** B259: names the app in the neutral stream User-Agent. */
     private val appVersion: String = com.nuvio.tv.BuildConfig.VERSION_NAME,
+    /** Per-playlist Stalker stream identity (IDENTITY, or NEUTRAL once the provider refused the MAG box). */
+    private val streamIdentities: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy =
+        com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy.processWide,
 ) : ProviderPlaybackResolver {
 
     private val mapper = PlaybackRequestMapper()
@@ -209,6 +216,31 @@ class IptvProviderPlaybackResolver internal constructor(
         throw cancelled
     } catch (_: Exception) {
         unavailable(deterministic = false)
+    }
+
+    override suspend fun remintSkipsSpacing(
+        selection: ProviderPlaybackSelection,
+        context: ProviderResolutionContext,
+    ): Boolean = try {
+        val account = accounts.find(selection.accountId.value)
+        account != null && account.sourceType == XtreamAccount.SOURCE_STALKER &&
+            selection.contentType != ContentType.CATCH_UP &&
+            streamIdentities.switchesOnRemint(
+                playlistId = account.id,
+                contentKey = selection.contentKey.value,
+                trigger = context.trigger,
+                previousFailure = context.previousFailure?.code,
+                hasUserAgentOverride = com.nuvio.tv.core.iptv.StreamUserAgentPolicy.resolve(account) != null,
+            )
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        false
+    }
+
+    override fun onPlaybackStarted(selection: ProviderPlaybackSelection) {
+        if (selection.sourceType != ProviderSourceType.STALKER || selection.contentType == ContentType.CATCH_UP) return
+        streamIdentities.onPlaybackStarted(selection.accountId.value, selection.contentKey.value)
     }
 
     private suspend fun resolveSerialized(
@@ -259,7 +291,9 @@ class IptvProviderPlaybackResolver internal constructor(
                     ?: ProviderLinkFailureReason.UNKNOWN,
             )
         ) {
-            is ProviderLinkResult.Resolved -> mapped(account, selection, link.url, dialect = null, link.stalkerIdentity)
+            is ProviderLinkResult.Resolved -> mapped(
+                account, selection, link.url, dialect = null, link.stalkerIdentity, context,
+            )
             is ProviderLinkResult.Unavailable -> unavailable(link.reason)
         }
     }
@@ -373,6 +407,7 @@ class IptvProviderPlaybackResolver internal constructor(
         url: String,
         dialect: CatchUpDialectWalk.Dialect?,
         stalkerIdentity: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentity? = null,
+        context: ProviderResolutionContext? = null,
     ): PlaybackResult<ResolvedPlaybackRequest> {
         if (url.isBlank()) return unavailable(deterministic = true)
         val declared = declaredTransport(selection, dialect)
@@ -380,11 +415,25 @@ class IptvProviderPlaybackResolver internal constructor(
         // B259: a Stalker stream presents the portal identity to the portal host only (credentials
         // origin-bound, enforced per hop), and a credential-free player profile to any other host.
         val stalkerHeaders = if (account.sourceType == XtreamAccount.SOURCE_STALKER) {
+            // A provider that refuses its own stream to the MAG identity gets the neutral profile on the
+            // re-mint after that refusal, and on every tune once neutral has played (per playlist).
+            val streamIdentity = context?.let {
+                streamIdentities.identityFor(
+                    playlistId = account.id,
+                    contentKey = selection.contentKey.value,
+                    trigger = it.trigger,
+                    previousFailure = it.previousFailure?.code,
+                    hasUserAgentOverride = userAgentOverride != null,
+                    onPortalHost = stalkerIdentity != null &&
+                        com.nuvio.tv.core.iptv.stalker.StalkerStreamHeaderPolicy.isPortalHost(url, stalkerIdentity.portalBase),
+                )
+            } ?: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy.StreamIdentity.IDENTITY
             com.nuvio.tv.core.iptv.stalker.StalkerStreamHeaderPolicy.decide(
                 streamUrl = url,
                 identity = stalkerIdentity,
                 userAgentOverride = userAgentOverride,
                 appVersion = appVersion,
+                streamIdentity = streamIdentity,
             )
         } else {
             null

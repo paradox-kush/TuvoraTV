@@ -31,6 +31,19 @@ fun interface ProviderPlaybackResolver {
         selection: ProviderPlaybackSelection,
         context: ProviderResolutionContext,
     ): PlaybackResult<ResolvedPlaybackRequest>
+
+    /**
+     * True when the re-mint for [context] will present a different request identity because the
+     * provider refused the previous attempt at open (401/403 before any media): no connection was held,
+     * so the session need not wait out [SingleUseRemintSpacingPolicy]. Must not mint or throw.
+     */
+    suspend fun remintSkipsSpacing(
+        selection: ProviderPlaybackSelection,
+        context: ProviderResolutionContext,
+    ): Boolean = false
+
+    /** The selection showed media (first frame or first audio). Must not mint or throw. */
+    fun onPlaybackStarted(selection: ProviderPlaybackSelection) = Unit
 }
 
 /** Creates a resolver permanently bound to the playback owner's captured profile scope. */

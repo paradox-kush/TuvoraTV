@@ -28,15 +28,20 @@ object SingleUseRemintSpacingPolicy {
     /**
      * Milliseconds to wait before resolving. [previousLinkSingleUse]: the link being replaced was
      * single-use (`TransientLoadRetryPolicy.SESSION_ONLY`). [connectionEndedAtMs]: when its connection
-     * was proven closed, or null when none was recorded.
+     * was proven closed, or null when none was recorded. [identitySwitchAfterAuthRejection]: the
+     * provider refused the previous attempt at open (HTTP 401/403 before any media) and this re-mint
+     * presents a different stream identity (StalkerStreamIdentityPolicy). A refusal at open means
+     * no connection was ever held, so there is nothing to wait out; every other re-mint keeps the gap.
      */
     fun delayBeforeResolveMs(
         trigger: ProviderResolutionTrigger,
         previousLinkSingleUse: Boolean,
         connectionEndedAtMs: Long?,
         nowMs: Long,
+        identitySwitchAfterAuthRejection: Boolean = false,
     ): Long {
         if (trigger == ProviderResolutionTrigger.INITIAL || !previousLinkSingleUse) return 0L
+        if (identitySwitchAfterAuthRejection) return 0L
         val endedAt = connectionEndedAtMs ?: return 0L
         val elapsed = (nowMs - endedAt).coerceAtLeast(0L)
         return (MIN_GAP_MS - elapsed).coerceIn(0L, MIN_GAP_MS)

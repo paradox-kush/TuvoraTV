@@ -152,6 +152,24 @@ class StalkerStreamHeaderPolicyTest {
         assertNull("not deferred", com.nuvio.tv.core.iptv.match.XtreamStreamSource.deferredAccountId("http://x/y"))
     }
 
+    @Test
+    fun `the neutral stream identity on the portal host carries no MAG identity and no credential`() {
+        val d = StalkerStreamHeaderPolicy.decide(
+            "http://portal.example.com:8080/play/live.php?stream=1&play_token=x",
+            identity,
+            userAgentOverride = null,
+            appVersion = "1.21.2",
+            streamIdentity = StalkerStreamIdentityPolicy.StreamIdentity.NEUTRAL,
+        )
+        assertEquals("profile", StalkerStreamHeaderPolicy.Profile.NEUTRAL_PLAYER, d.profile)
+        assertEquals("neutral UA, not the MAG box", "Tuvora/1.21.2 (Linux; Android TV)", d.userAgent)
+        assertFalse("no MAG UA", d.userAgent.contains("MAG"))
+        assertNull("no box model", d.headers["X-User-Agent"])
+        assertNull("no origin-bound Cookie/Authorization/Referer/Origin", d.originBound)
+        assertFalse("no credential in the every-hop map", d.headers.keys.any { it in SECRET_NAMES })
+        assertEquals("only Accept", mapOf("Accept" to "*/*"), d.headers)
+    }
+
     private fun decide(url: String, override: String? = null) =
         StalkerStreamHeaderPolicy.decide(url, identity, override, appVersion = "1.21.2")
 

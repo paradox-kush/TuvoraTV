@@ -76,17 +76,24 @@ object StalkerStreamHeaderPolicy {
     /**
      * The headers for a stream at [streamUrl]. [identity] null (the session never authenticated, or a
      * test) means there is nothing to present: the neutral profile. [userAgentOverride] is the
-     * playlist's own User-Agent (StreamUserAgentPolicy) and always wins.
+     * playlist's own User-Agent (StreamUserAgentPolicy) and always wins. [streamIdentity] NEUTRAL
+     * ([StalkerStreamIdentityPolicy]: this provider refuses its own stream to the MAG identity) gives
+     * the portal host the same credential-free profile as any other host.
      */
     fun decide(
         streamUrl: String,
         identity: StalkerStreamIdentity?,
         userAgentOverride: String?,
         appVersion: String,
+        streamIdentity: StalkerStreamIdentityPolicy.StreamIdentity = StalkerStreamIdentityPolicy.StreamIdentity.IDENTITY,
     ): Decision {
         val override = userAgentOverride?.trim()?.takeIf { it.isNotEmpty() }
         val portal = identity?.portalBase?.toHttpUrlOrNull()
-        if (identity == null || portal == null || !isPortalHost(streamUrl, identity.portalBase)) {
+        if (
+            identity == null || portal == null ||
+            streamIdentity == StalkerStreamIdentityPolicy.StreamIdentity.NEUTRAL ||
+            !isPortalHost(streamUrl, identity.portalBase)
+        ) {
             return Decision(
                 profile = Profile.NEUTRAL_PLAYER,
                 userAgent = override ?: neutralUserAgent(appVersion),

@@ -310,6 +310,46 @@ class IptvProviderPlaybackResolverTest {
         assertFalse("no Authorization", request.summary().hasAuthorization)
     }
 
+    /**
+     * A provider that answers its own create_link stream with 401 to the MAG box UA: the re-mint after
+     * that refusal is immediate, presents the neutral profile, and a neutral that plays is remembered.
+     */
+    @Test
+    fun `Stalker portal-host stream refused at open re-mints with the neutral profile and remembers it`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        val identities = com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy()
+        val resolver = resolver(account, appVersion = "9.9", identities = identities) { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://portal.invalid:8000/play/live.php?stream=42&play_token=abc", stalkerIdentity)
+        }
+        val selection = selection(account, ProviderSourceType.STALKER, ContentType.LIVE)
+        val refused = ProviderResolutionContext(
+            ProviderResolutionTrigger.RECOVERY,
+            ProviderResolutionFeedback(
+                FailureCode.AUTHORIZATION_REJECTED,
+                FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
+                FailurePhase.PLAYBACK,
+                ProviderDialectAdvanceEligibility.NONE,
+            ),
+        )
+
+        val first = resolver.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success().request
+        assertEquals("tune presents the MAG identity", "MAG-UA", first.userAgent)
+        assertTrue("re-mint after the refusal skips the spacing", resolver.remintSkipsSpacing(selection, refused))
+
+        val second = resolver.resolve(selection, refused).success().request
+        assertEquals("neutral UA", "Tuvora/9.9 (Linux; Android TV)", second.userAgent)
+        assertNull("no box model", second.headers["X-User-Agent"])
+        assertNull("no origin-bound Cookie/Authorization/Referer/Origin", second.originBoundHeaders)
+        assertFalse("no Authorization", second.summary().hasAuthorization)
+        assertFalse("no Cookie", second.summary().hasCookies)
+        assertFalse("no Referer", second.summary().hasReferer)
+        assertFalse("no Origin", second.summary().hasOrigin)
+
+        resolver.onPlaybackStarted(selection)
+        val retune = resolver.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success().request
+        assertEquals("the playlist remembers neutral", "Tuvora/9.9 (Linux; Android TV)", retune.userAgent)
+    }
+
     @Test
     fun `Stalker playlist user agent override wins over the MAG preset`() = runTest {
         val account = account(sourceType = XtreamAccount.SOURCE_STALKER).copy(userAgent = "VLC/3.0.20")
@@ -576,6 +616,8 @@ class IptvProviderPlaybackResolverTest {
         appVersion: String = "1.0",
         panelOffsetMs: Long? = null,
         m3uChannel: M3uChannelCatchUp? = null,
+        identities: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy =
+            com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy(),
         link: suspend (XtreamAccount, String, Int, Boolean) -> ProviderLinkResult,
     ) = IptvProviderPlaybackResolver(
         accounts = ProviderAccountLookup { id -> account.takeIf { it.id == id } },
@@ -584,6 +626,7 @@ class IptvProviderPlaybackResolverTest {
         panelClock = PanelClockSource { panelOffsetMs },
         m3uChannels = ProviderM3uCatchUpLookup { _, _ -> m3uChannel },
         appVersion = appVersion,
+        streamIdentities = identities,
     )
 
     private fun selection(

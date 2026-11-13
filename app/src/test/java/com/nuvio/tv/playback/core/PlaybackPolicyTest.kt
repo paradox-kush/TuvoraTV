@@ -54,6 +54,29 @@ class PlaybackPolicyTest {
     }
 
     @Test
+    fun `reconnects spent on a provider refusal end as the refusal, not a network failure`() {
+        val policy = PlaybackPolicy()
+        val refused = HttpStatusFailures.forStatus(401, FailurePhase.PLAYBACK).copy(
+            retryability = Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+        )
+        val ended = policy.liveReconnectExhaustedFailure(lastAttemptFailure = refused)
+        assertEquals("says the provider refused", FailureCode.AUTHORIZATION_REJECTED, ended.code)
+        assertEquals("terminal", Retryability.FATAL, ended.retryability)
+        assertEquals("recovery phase", FailurePhase.RECOVERY, ended.phase)
+
+        val network = PlaybackFailure(
+            FailureCode.NETWORK_UNREACHABLE, FailureDomain.NETWORK, FailurePhase.PLAYBACK,
+            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+        )
+        assertEquals(
+            "anything else keeps the exhausted code",
+            FailureCode.LIVE_RECONNECT_EXHAUSTED,
+            policy.liveReconnectExhaustedFailure(lastAttemptFailure = network).code,
+        )
+        assertEquals("no attempt seen", FailureCode.LIVE_RECONNECT_EXHAUSTED, policy.liveReconnectExhaustedFailure(null).code)
+    }
+
+    @Test
     fun `audio decoder failure enters audio ladder while video decoder never does`() {
         val current = requirements(
             preferredEngineOrder = listOf(EngineType.MEDIA3, EngineType.LIBMPV),
