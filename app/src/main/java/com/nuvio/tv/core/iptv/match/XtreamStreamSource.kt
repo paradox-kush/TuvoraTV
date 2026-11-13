@@ -290,13 +290,5 @@ class XtreamStreamSource @Inject constructor(
 
         /** True for a matched Stalker source that still needs its create_link minted. */
         fun isDeferred(url: String?): Boolean = url != null && url.startsWith(DEFERRED_PREFIX)
-
-        /** The playlist id a deferred url belongs to (ids contain '|', so anchor on the kind marker). */
-        fun deferredAccountId(url: String?): String? {
-            if (!isDeferred(url)) return null
-            val parts = url!!.removePrefix(DEFERRED_PREFIX).split("|")
-            val kindIdx = parts.indexOfFirst { it == "movie" || it == "episode" }
-            return if (kindIdx <= 0) null else parts.subList(0, kindIdx).joinToString("|")
-        }
     }
 }

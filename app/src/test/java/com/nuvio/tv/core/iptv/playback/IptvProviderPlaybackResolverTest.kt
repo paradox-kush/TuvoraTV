@@ -265,14 +265,14 @@ class IptvProviderPlaybackResolverTest {
     }
 
     /**
-     * B259: the Stalker stream request carried only the engine default (a spoofed Chrome UA) - no MAG
-     * identity even when the stream lives on the portal's own host. Portal host: identity, with the
-     * credentials kept origin-bound; any other host: a credential-free player profile.
+     * The request every Stalker stream got before 1.21.3 (e4178acc7), when providers played: the
+     * playlist's User-Agent override or none at all (the engine then sends its default), no other
+     * header, no cookie, no origin-bound credentials. It is the default live request again.
      */
     @Test
-    fun `Stalker stream on the portal host presents the portal identity as origin bound headers`() = runTest {
+    fun `the default Stalker live request is the pre-1_21_3 request`() = runTest {
         val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
-        val resolver = resolver(account, appVersion = "9.9") { _, _, _, _ ->
+        val resolver = resolver(account) { _, _, _, _ ->
             ProviderLinkResult.Resolved("http://portal.invalid:8000/play/live.php?stream=42&play_token=abc", stalkerIdentity)
         }
 
@@ -281,21 +281,28 @@ class IptvProviderPlaybackResolverTest {
             ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
         ).success().request
 
-        assertEquals("MAG preset UA", "MAG-UA", request.userAgent)
-        assertEquals("box model on every hop", "Model: MAG250; Link: WiFi", request.headers["X-User-Agent"])
-        assertNull("no cookie in the every-hop headers", request.headers["Cookie"])
-        assertTrue("no cookie map either", request.cookies.isEmpty())
-        val bound = requireNotNull(request.originBoundHeaders) { "portal identity expected" }
-        assertEquals("portal host", "portal.invalid", bound.host)
-        assertEquals("mac cookie", stalkerIdentity.cookie, bound.headers["Cookie"])
-        assertEquals("token", "Bearer tok", bound.headers["Authorization"])
-        assertFalse("never printable", request.toString().contains("tok"))
+        assertPreB259Request(request, userAgent = null)
     }
 
     @Test
-    fun `Stalker stream on a foreign host carries no credential and an honest user agent`() = runTest {
+    fun `the default Stalker live request with a playlist user agent carries that user agent only`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER).copy(userAgent = "VLC/3.0.20")
+        val resolver = resolver(account) { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://portal.invalid/play/live.php?stream=42", stalkerIdentity)
+        }
+
+        val request = resolver.resolve(
+            selection(account, ProviderSourceType.STALKER, ContentType.LIVE),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success().request
+
+        assertPreB259Request(request, userAgent = "VLC/3.0.20")
+    }
+
+    @Test
+    fun `a Stalker stream on a foreign host gets the pre-1_21_3 request`() = runTest {
         val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
-        val resolver = resolver(account, appVersion = "9.9") { _, _, _, _ ->
+        val resolver = resolver(account) { _, _, _, _ ->
             ProviderLinkResult.Resolved("http://edge.cdn.invalid/live/42.ts?token=abc", stalkerIdentity)
         }
 
@@ -304,58 +311,76 @@ class IptvProviderPlaybackResolverTest {
             ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
         ).success().request
 
-        assertNull("no origin-bound credentials", request.originBoundHeaders)
-        assertEquals("neutral player UA", "Tuvora/9.9 (Linux; Android TV)", request.userAgent)
-        assertNull("no box model to a foreign host", request.headers["X-User-Agent"])
-        assertFalse("no Authorization", request.summary().hasAuthorization)
+        assertPreB259Request(request, userAgent = null)
     }
 
     /**
-     * A provider that answers its own create_link stream with 401 to the MAG box UA: the re-mint after
-     * that refusal is immediate, presents the neutral profile, and a neutral that plays is remembered.
+     * A provider that refuses the plain request at open (401/403): the re-mint after that refusal is
+     * immediate and presents the portal identity, credentials kept origin-bound; an identity that plays
+     * is remembered for the playlist.
      */
     @Test
-    fun `Stalker portal-host stream refused at open re-mints with the neutral profile and remembers it`() = runTest {
+    fun `Stalker portal-host stream refused at open re-mints with the portal identity and remembers it`() = runTest {
         val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
         val identities = com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy()
-        val resolver = resolver(account, appVersion = "9.9", identities = identities) { _, _, _, _ ->
+        val resolver = resolver(account, identities = identities) { _, _, _, _ ->
             ProviderLinkResult.Resolved("http://portal.invalid:8000/play/live.php?stream=42&play_token=abc", stalkerIdentity)
         }
         val selection = selection(account, ProviderSourceType.STALKER, ContentType.LIVE)
-        val refused = ProviderResolutionContext(
-            ProviderResolutionTrigger.RECOVERY,
-            ProviderResolutionFeedback(
-                FailureCode.AUTHORIZATION_REJECTED,
-                FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
-                FailurePhase.PLAYBACK,
-                ProviderDialectAdvanceEligibility.NONE,
-            ),
-        )
 
         val first = resolver.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success().request
-        assertEquals("tune presents the MAG identity", "MAG-UA", first.userAgent)
-        assertTrue("re-mint after the refusal skips the spacing", resolver.remintSkipsSpacing(selection, refused))
+        assertPreB259Request(first, userAgent = null)
+        assertTrue("re-mint after the refusal skips the spacing", resolver.remintSkipsSpacing(selection, refusedAtOpen()))
 
-        val second = resolver.resolve(selection, refused).success().request
-        assertEquals("neutral UA", "Tuvora/9.9 (Linux; Android TV)", second.userAgent)
-        assertNull("no box model", second.headers["X-User-Agent"])
-        assertNull("no origin-bound Cookie/Authorization/Referer/Origin", second.originBoundHeaders)
-        assertFalse("no Authorization", second.summary().hasAuthorization)
-        assertFalse("no Cookie", second.summary().hasCookies)
-        assertFalse("no Referer", second.summary().hasReferer)
-        assertFalse("no Origin", second.summary().hasOrigin)
+        val second = resolver.resolve(selection, refusedAtOpen()).success().request
+        assertEquals("MAG preset UA", "MAG-UA", second.userAgent)
+        assertEquals("box model on every hop", "Model: MAG250; Link: WiFi", second.headers["X-User-Agent"])
+        assertNull("no cookie in the every-hop headers", second.headers["Cookie"])
+        assertTrue("no cookie map either", second.cookies.isEmpty())
+        val bound = requireNotNull(second.originBoundHeaders) { "portal identity expected" }
+        assertEquals("portal host", "portal.invalid", bound.host)
+        assertEquals("mac cookie", stalkerIdentity.cookie, bound.headers["Cookie"])
+        assertEquals("token", "Bearer tok", bound.headers["Authorization"])
+        assertFalse("never printable", second.toString().contains("tok"))
 
         resolver.onPlaybackStarted(selection)
         val retune = resolver.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success().request
-        assertEquals("the playlist remembers neutral", "Tuvora/9.9 (Linux; Android TV)", retune.userAgent)
+        assertEquals("the playlist remembers the identity", "MAG-UA", retune.userAgent)
     }
 
-    /** Review LOW: only live streams switch and teach; VOD keeps the identity and never learns. */
     @Test
-    fun `Stalker VOD neither switches the stream identity nor teaches the playlist`() = runTest {
+    fun `a refused identity trial goes back to the pre-1_21_3 request with normal spacing`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        val resolver = resolver(account) { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://portal.invalid:8000/play/live.php?stream=42&play_token=abc", stalkerIdentity)
+        }
+        val selection = selection(account, ProviderSourceType.STALKER, ContentType.LIVE)
+
+        resolver.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success()
+        resolver.resolve(selection, refusedAtOpen()).success()
+        assertFalse("the way back is spaced", resolver.remintSkipsSpacing(selection, refusedAtOpen()))
+        assertPreB259Request(resolver.resolve(selection, refusedAtOpen()).success().request, userAgent = null)
+    }
+
+    @Test
+    fun `a playlist user agent override is never switched to the identity`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER).copy(userAgent = "VLC/3.0.20")
+        val resolver = resolver(account) { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://portal.invalid/play/live.php?stream=42", stalkerIdentity)
+        }
+        val selection = selection(account, ProviderSourceType.STALKER, ContentType.LIVE)
+
+        resolver.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success()
+        assertFalse("no switch", resolver.remintSkipsSpacing(selection, refusedAtOpen()))
+        assertPreB259Request(resolver.resolve(selection, refusedAtOpen()).success().request, userAgent = "VLC/3.0.20")
+    }
+
+    /** VOD is exactly what it was before 1.21.3: the plain request, never switched, never teaching. */
+    @Test
+    fun `Stalker VOD is the pre-1_21_3 request and never switches or teaches`() = runTest {
         val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
         val identities = com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy()
-        val resolver = resolver(account, appVersion = "9.9", identities = identities) { _, _, _, _ ->
+        val resolver = resolver(account, identities = identities) { _, _, _, _ ->
             ProviderLinkResult.Resolved("http://portal.invalid:8000/play/movie.php?stream=42&play_token=abc", stalkerIdentity)
         }
         val vod = ProviderPlaybackSelection(
@@ -367,19 +392,18 @@ class IptvProviderPlaybackResolverTest {
             providerConnectionLimit = 1,
         )
 
-        resolver.resolve(vod, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success()
+        assertPreB259Request(resolver.resolve(vod, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success().request, null)
         assertFalse("VOD re-mint keeps the spacing", resolver.remintSkipsSpacing(vod, refusedAtOpen()))
-        val again = resolver.resolve(vod, refusedAtOpen()).success().request
-        assertEquals("VOD keeps the MAG identity", "MAG-UA", again.userAgent)
+        assertPreB259Request(resolver.resolve(vod, refusedAtOpen()).success().request, null)
         resolver.onPlaybackStarted(vod)
         assertEquals(
             "VOD never teaches the playlist",
-            com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy.StreamIdentity.IDENTITY,
+            com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy.StreamIdentity.NEUTRAL,
             identities.remembered(account.id),
         )
     }
 
-    /** Review LOW: each resolver is one playback session; a guide preview of the same channel is another. */
+    /** Each resolver is one playback session; a guide preview of the same channel is another. */
     @Test
     fun `a second session tuning the same channel does not give the first a second immediate switch`() = runTest {
         val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
@@ -409,20 +433,18 @@ class IptvProviderPlaybackResolverTest {
         ),
     )
 
-    @Test
-    fun `Stalker playlist user agent override wins over the MAG preset`() = runTest {
-        val account = account(sourceType = XtreamAccount.SOURCE_STALKER).copy(userAgent = "VLC/3.0.20")
-        val resolver = resolver(account) { _, _, _, _ ->
-            ProviderLinkResult.Resolved("http://portal.invalid/play/live.php?stream=42", stalkerIdentity)
-        }
-
-        val request = resolver.resolve(
-            selection(account, ProviderSourceType.STALKER, ContentType.LIVE),
-            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
-        ).success().request
-
-        assertEquals("override", "VLC/3.0.20", request.userAgent)
-        assertNotNull("identity still bound to the portal", request.originBoundHeaders)
+    /** Pins the request shape of e4178acc7's resolver: userAgent = the override or null, nothing else. */
+    private fun assertPreB259Request(request: com.nuvio.tv.playback.core.PlaybackRequest, userAgent: String?) {
+        assertEquals("user agent: the playlist override or none (engine default)", userAgent, request.userAgent)
+        assertTrue("no extra headers (no X-User-Agent, no Accept)", request.headers.isEmpty())
+        assertTrue("no cookies", request.cookies.isEmpty())
+        assertNull("no origin-bound Cookie/Authorization/Referer/Origin", request.originBoundHeaders)
+        val summary = request.summary()
+        assertFalse("no Authorization", summary.hasAuthorization)
+        assertFalse("no Cookie", summary.hasCookies)
+        assertFalse("no Referer", summary.hasReferer)
+        assertFalse("no Origin", summary.hasOrigin)
+        assertFalse("no custom headers", summary.hasCustomHeaders)
     }
 
     @Test
@@ -672,7 +694,6 @@ class IptvProviderPlaybackResolverTest {
 
     private fun resolver(
         account: XtreamAccount,
-        appVersion: String = "1.0",
         panelOffsetMs: Long? = null,
         m3uChannel: M3uChannelCatchUp? = null,
         identities: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy =
@@ -684,7 +705,6 @@ class IptvProviderPlaybackResolverTest {
         winnerMemory = Memory(),
         panelClock = PanelClockSource { panelOffsetMs },
         m3uChannels = ProviderM3uCatchUpLookup { _, _ -> m3uChannel },
-        appVersion = appVersion,
         streamIdentities = identities,
     )
 

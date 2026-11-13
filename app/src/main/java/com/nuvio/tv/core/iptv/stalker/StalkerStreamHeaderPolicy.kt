@@ -24,30 +24,24 @@ class StalkerStreamIdentity(
 }
 
 /**
- * Which headers a Stalker stream request carries (B259), decided without the network.
+ * Which headers a Stalker stream request carries, decided without the network.
  *
- * Model: iptvnator's `buildStalkerExternalPlaybackHeaders` (research/reference-players/iptvnator,
- * stalker-live-playback.utils.ts) — the portal identity goes ONLY to the portal's own host; any other
- * stream host gets a credential-free player profile. Implemented here in our own terms:
- *
- * - **Portal host** (same host as the portal; the port may differ — portals stream from another port —
- *   but an `https` portal streamed over `http` is NOT the portal: that downgrade would send the MAC in
- *   clear): User-Agent = the playlist's override, else the MAG preset the portal accepted; X-User-Agent
- *   (the box model, not a secret); Accept. Plus the origin-bound credentials — Cookie (mac / stb_lang /
- *   timezone), Authorization Bearer token when we have one, Referer, Origin — as [OriginBoundHeaders].
- * - **Any other host**: User-Agent = the override, else an honest neutral player UA ([neutralUserAgent],
- *   never a browser or a MAG box we are not presenting to that host); Accept. Never a cookie, token,
- *   MAC, Referer or Origin.
- *
- * Deliberately NOT sent, unlike iptvnator's cross-origin profile:
- *  - `Range: bytes=0-` — Media3 and FFmpeg own Range for seeks and resumes; a fixed one would conflict.
- *  - `Icy-MetaData: 1` — both engines already ask for ICY metadata where they can strip it (Media3's
- *    progressive loader, FFmpeg's `icy` option, default on). Forcing it onto an HLS segment request
- *    would let a server interleave metadata into bytes Media3 then parses as media.
+ * - **NEUTRAL** ([StalkerStreamIdentityPolicy.StreamIdentity.NEUTRAL], the default, and every host
+ *   other than the portal's): exactly the request the TV sent before 1.21.3 (e4178acc7) — the
+ *   playlist's User-Agent override, else no User-Agent at all (each engine then sends its own default,
+ *   DEFAULT_STREAM_USER_AGENT), and no other header. Never a cookie, token, MAC, Referer or Origin.
+ * - **Portal identity** (IDENTITY, and the stream is on the portal's host; the port may differ —
+ *   portals stream from another port — but an `https` portal streamed over `http` is NOT the portal:
+ *   that downgrade would send the MAC in clear): User-Agent = the override, else the MAG preset the
+ *   portal accepted; X-User-Agent (the box model, not a secret); Accept. Plus the origin-bound
+ *   credentials — Cookie (mac / stb_lang / timezone), Authorization Bearer token when we have one,
+ *   Referer, Origin — as [OriginBoundHeaders]. Model: iptvnator's `buildStalkerExternalPlaybackHeaders`
+ *   (research/reference-players/iptvnator, stalker-live-playback.utils.ts): identity to the portal's
+ *   own host only.
  *
  * Redirects (the reason identity is a separate field): see [OriginBoundHeaders] — Media3 strips the
  * credentials on every hop that is not the portal host; libmpv never receives them, because FFmpeg
- * re-sends custom headers to every redirect target. So on mpv a portal-host stream carries the
+ * re-sends custom headers to every redirect target. So on mpv a portal-identity stream carries the
  * non-secret part (UA + X-User-Agent) only. That is a named engine gap, not a leak.
  */
 object StalkerStreamHeaderPolicy {
@@ -56,7 +50,8 @@ object StalkerStreamHeaderPolicy {
 
     class Decision(
         val profile: Profile,
-        val userAgent: String,
+        /** Null: no User-Agent of our own (the engine default), as before 1.21.3. */
+        val userAgent: String?,
         /** Sent by every engine on every hop: nothing secret. */
         val headers: Map<String, String>,
         /** Portal-host-only credentials; null for [Profile.NEUTRAL_PLAYER]. */
@@ -69,23 +64,17 @@ object StalkerStreamHeaderPolicy {
 
     const val ACCEPT = "*/*"
 
-    /** Honest: names the app and the platform, claims to be neither a browser nor a set-top box. */
-    fun neutralUserAgent(appVersion: String): String =
-        "Tuvora/${appVersion.trim().ifEmpty { "1" }} (Linux; Android TV)"
-
     /**
      * The headers for a stream at [streamUrl]. [identity] null (the session never authenticated, or a
-     * test) means there is nothing to present: the neutral profile. [userAgentOverride] is the
-     * playlist's own User-Agent (StreamUserAgentPolicy) and always wins. [streamIdentity] NEUTRAL
-     * ([StalkerStreamIdentityPolicy]: this provider refuses its own stream to the MAG identity) gives
-     * the portal host the same credential-free profile as any other host.
+     * test) means there is nothing to present. [userAgentOverride] is the playlist's own User-Agent
+     * (StreamUserAgentPolicy) and always wins. [streamIdentity] is the playlist's learned identity
+     * ([StalkerStreamIdentityPolicy]); only IDENTITY on the portal host presents the MAG identity.
      */
     fun decide(
         streamUrl: String,
         identity: StalkerStreamIdentity?,
         userAgentOverride: String?,
-        appVersion: String,
-        streamIdentity: StalkerStreamIdentityPolicy.StreamIdentity = StalkerStreamIdentityPolicy.StreamIdentity.IDENTITY,
+        streamIdentity: StalkerStreamIdentityPolicy.StreamIdentity = StalkerStreamIdentityPolicy.DEFAULT,
     ): Decision {
         val override = userAgentOverride?.trim()?.takeIf { it.isNotEmpty() }
         val portal = identity?.portalBase?.toHttpUrlOrNull()
@@ -96,8 +85,8 @@ object StalkerStreamHeaderPolicy {
         ) {
             return Decision(
                 profile = Profile.NEUTRAL_PLAYER,
-                userAgent = override ?: neutralUserAgent(appVersion),
-                headers = linkedMapOf("Accept" to ACCEPT),
+                userAgent = override,
+                headers = emptyMap(),
                 originBound = null,
             )
         }
@@ -113,39 +102,6 @@ object StalkerStreamHeaderPolicy {
                 host = portal.host,
                 secureOrigin = portal.scheme == "https",
                 headers = bound,
-            ),
-        )
-    }
-
-    /**
-     * The non-secret part of [decide], for players that apply one flat header map to every hop (the
-     * VOD/episode player, the legacy lanes): never a cookie, token, Referer or Origin.
-     */
-    fun portableHeaders(
-        streamUrl: String,
-        identity: StalkerStreamIdentity?,
-        userAgentOverride: String?,
-        appVersion: String,
-    ): Map<String, String> {
-        val decision = decide(streamUrl, identity, userAgentOverride, appVersion)
-        return linkedMapOf("User-Agent" to decision.userAgent) + decision.headers
-    }
-
-    /**
-     * [stream] with [portable] replacing any same-named request header (case-insensitive); other
-     * request headers and the response headers are kept. For the VOD/episode player.
-     */
-    fun withPortableHeaders(
-        stream: com.nuvio.tv.domain.model.Stream,
-        portable: Map<String, String>,
-    ): com.nuvio.tv.domain.model.Stream {
-        if (portable.isEmpty()) return stream
-        val hints = stream.behaviorHints ?: com.nuvio.tv.domain.model.StreamBehaviorHints(null, null, null, null)
-        val old = hints.proxyHeaders
-        val kept = old?.request.orEmpty().filterKeys { name -> portable.keys.none { it.equals(name, ignoreCase = true) } }
-        return stream.copy(
-            behaviorHints = hints.copy(
-                proxyHeaders = com.nuvio.tv.domain.model.ProxyHeaders(request = kept + portable, response = old?.response),
             ),
         )
     }

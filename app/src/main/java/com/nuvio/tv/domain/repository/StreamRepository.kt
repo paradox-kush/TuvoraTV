@@ -86,13 +86,6 @@ interface StreamRepository {
     suspend fun mintDeferredIptvUrl(url: String): String?
 
     /**
-     * B259: [minted] (a copy of a deferred stream carrying the link just minted for [deferredUrl]) with
-     * the stream request headers its playlist calls for - for Stalker the non-secret part of the portal
-     * identity on the portal host, a neutral player profile elsewhere. Default: unchanged.
-     */
-    suspend fun withMintedIptvHeaders(deferredUrl: String, minted: com.nuvio.tv.domain.model.Stream): com.nuvio.tv.domain.model.Stream = minted
-
-    /**
      * True when [url] is a deferred (not yet minted) matched-source play url - the player and the stream
      * screen mint it ([mintDeferredIptvUrl]) before handing it to an engine.
      */

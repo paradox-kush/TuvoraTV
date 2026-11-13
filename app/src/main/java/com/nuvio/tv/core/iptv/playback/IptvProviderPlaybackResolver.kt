@@ -194,8 +194,6 @@ class IptvProviderPlaybackResolver internal constructor(
     private val activeServer: (XtreamAccount) -> XtreamAccount = { it },
     private val panelClock: com.nuvio.tv.core.iptv.PanelClockSource = com.nuvio.tv.core.iptv.PanelClockSource.NONE,
     private val m3uChannels: ProviderM3uCatchUpLookup = ProviderM3uCatchUpLookup { _, _ -> null },
-    /** B259: names the app in the neutral stream User-Agent. */
-    private val appVersion: String = com.nuvio.tv.BuildConfig.VERSION_NAME,
     /** Per-playlist Stalker stream identity (IDENTITY, or NEUTRAL once the provider refused the MAG box). */
     private val streamIdentities: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy =
         com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy.processWide,
@@ -415,11 +413,12 @@ class IptvProviderPlaybackResolver internal constructor(
         if (url.isBlank()) return unavailable(deterministic = true)
         val declared = declaredTransport(selection, dialect)
         val userAgentOverride = com.nuvio.tv.core.iptv.StreamUserAgentPolicy.resolve(account)
-        // B259: a Stalker stream presents the portal identity to the portal host only (credentials
-        // origin-bound, enforced per hop), and a credential-free player profile to any other host.
+        // B259: the portal identity only ever goes to the portal host (credentials origin-bound, enforced
+        // per hop); everywhere else, and by default, the plain pre-1.21.3 request.
         val stalkerHeaders = if (account.sourceType == XtreamAccount.SOURCE_STALKER) {
-            // A provider that refuses its own stream to the MAG identity gets the neutral profile on the
-            // re-mint after that refusal, and on every tune once neutral has played (per playlist).
+            // Live: the pre-1.21.3 request by default; the portal identity on the re-mint after the
+            // provider refused that request at open, and on every tune once the identity has played.
+            // VOD and catch-up: always the pre-1.21.3 request.
             val streamIdentity = context?.takeIf { selection.contentType == ContentType.LIVE }?.let {
                 streamIdentities.identityFor(
                     playlistId = account.id,
@@ -431,12 +430,11 @@ class IptvProviderPlaybackResolver internal constructor(
                         com.nuvio.tv.core.iptv.stalker.StalkerStreamHeaderPolicy.isPortalHost(url, stalkerIdentity.portalBase),
                     sessionKey = sessionKey,
                 )
-            } ?: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy.StreamIdentity.IDENTITY
+            } ?: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy.StreamIdentity.NEUTRAL
             com.nuvio.tv.core.iptv.stalker.StalkerStreamHeaderPolicy.decide(
                 streamUrl = url,
                 identity = stalkerIdentity,
                 userAgentOverride = userAgentOverride,
-                appVersion = appVersion,
                 streamIdentity = streamIdentity,
             )
         } else {

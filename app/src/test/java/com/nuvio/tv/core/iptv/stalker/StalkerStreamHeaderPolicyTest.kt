@@ -8,8 +8,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * B259: a Stalker stream request presents the portal's identity to the portal's own host only, and a
- * credential-free player profile everywhere else (iptvnator's same-origin rule, our implementation).
+ * B259: the MAG identity is presented to the portal's own host only, and only when the playlist's
+ * stream identity is IDENTITY (StalkerStreamIdentityPolicy). The default everywhere is the request TV
+ * sent before 1.21.3: the playlist's User-Agent override or none (the engine's default), nothing else.
  */
 class StalkerStreamHeaderPolicyTest {
 
@@ -46,14 +47,24 @@ class StalkerStreamHeaderPolicyTest {
     }
 
     @Test
-    fun `foreign host gets a credential free neutral player profile`() {
+    fun `foreign host gets the pre-1_21_3 request even when the playlist uses the identity`() {
         val d = decide("http://cdn.other-host.net/live/1.ts?token=abc")
         assertEquals("profile", StalkerStreamHeaderPolicy.Profile.NEUTRAL_PLAYER, d.profile)
-        assertEquals("neutral UA", "Tuvora/1.21.2 (Linux; Android TV)", d.userAgent)
+        assertNull("no UA of our own: the engine default, as before 1.21.3", d.userAgent)
         assertNull("no origin-bound credentials", d.originBound)
-        assertEquals("only Accept", mapOf("Accept" to "*/*"), d.headers)
-        assertFalse("never claims to be a browser", d.userAgent.contains("Mozilla"))
-        assertFalse("no Range, engines own it", d.headers.keys.any { it.equals("Range", true) })
+        assertTrue("no headers at all", d.headers.isEmpty())
+    }
+
+    @Test
+    fun `the default on the portal host is the pre-1_21_3 request`() {
+        val d = StalkerStreamHeaderPolicy.decide("http://portal.example.com:8080/play/live.php?stream=1", identity, userAgentOverride = null)
+        assertEquals("profile", StalkerStreamHeaderPolicy.Profile.NEUTRAL_PLAYER, d.profile)
+        assertNull("no MAG UA: the engine default", d.userAgent)
+        assertTrue("no X-User-Agent, no Accept, nothing", d.headers.isEmpty())
+        assertNull("no Cookie/Authorization/Referer/Origin", d.originBound)
+        val overridden = StalkerStreamHeaderPolicy.decide("http://portal.example.com:8080/x", identity, userAgentOverride = "VLC/3.0.20")
+        assertEquals("only the playlist override", "VLC/3.0.20", overridden.userAgent)
+        assertTrue("and nothing else", overridden.headers.isEmpty())
     }
 
     @Test
@@ -73,17 +84,17 @@ class StalkerStreamHeaderPolicyTest {
     @Test
     fun `https portal streamed over http is not the portal`() {
         val secure = identity.copyPortal("https://portal.example.com")
-        val d = StalkerStreamHeaderPolicy.decide("http://portal.example.com/ch/1", secure, null, "1.21.2")
+        val d = StalkerStreamHeaderPolicy.decide("http://portal.example.com/ch/1", secure, null, streamIdentity = IDENTITY)
         assertEquals("downgrade is foreign", StalkerStreamHeaderPolicy.Profile.NEUTRAL_PLAYER, d.profile)
         assertNull("no MAC in clear", d.originBound)
-        val upgraded = StalkerStreamHeaderPolicy.decide("https://portal.example.com/ch/1", identity, null, "1.21.2")
+        val upgraded = StalkerStreamHeaderPolicy.decide("https://portal.example.com/ch/1", identity, null, streamIdentity = IDENTITY)
         assertEquals("http portal to https stream is fine", StalkerStreamHeaderPolicy.Profile.PORTAL_IDENTITY, upgraded.profile)
     }
 
     @Test
     fun `redirect hops carry credentials only to the portal host and never downgraded`() {
         val bound = assertNotNullBound(
-            StalkerStreamHeaderPolicy.decide("https://portal.example.com/ch/1", identity.copyPortal("https://portal.example.com"), null, "1"),
+            StalkerStreamHeaderPolicy.decide("https://portal.example.com/ch/1", identity.copyPortal("https://portal.example.com"), null, streamIdentity = IDENTITY),
         )
         assertTrue("same host https", bound.allowsHop("https", "portal.example.com"))
         assertFalse("same host http after https", bound.allowsHop("http", "portal.example.com"))
@@ -94,7 +105,7 @@ class StalkerStreamHeaderPolicyTest {
     @Test
     fun `no token means no Authorization header`() {
         val noToken = StalkerStreamIdentity(identity.portalBase, identity.referer, identity.cookie, "MAG-UA", "X", token = null)
-        val bound = assertNotNullBound(StalkerStreamHeaderPolicy.decide("http://portal.example.com/x", noToken, null, "1"))
+        val bound = assertNotNullBound(StalkerStreamHeaderPolicy.decide("http://portal.example.com/x", noToken, null, streamIdentity = IDENTITY))
         assertFalse("no bearer", bound.headers.containsKey("Authorization"))
         assertEquals("cookie still", noToken.cookie, bound.headers["Cookie"])
     }
@@ -102,18 +113,9 @@ class StalkerStreamHeaderPolicyTest {
     @Test
     fun `no identity and unparseable urls fall back to the neutral profile`() {
         assertEquals("no identity", StalkerStreamHeaderPolicy.Profile.NEUTRAL_PLAYER,
-            StalkerStreamHeaderPolicy.decide("http://portal.example.com/x", null, null, "1").profile)
+            StalkerStreamHeaderPolicy.decide("http://portal.example.com/x", null, null, streamIdentity = IDENTITY).profile)
         assertEquals("garbage url", StalkerStreamHeaderPolicy.Profile.NEUTRAL_PLAYER,
-            StalkerStreamHeaderPolicy.decide("not a url", identity, null, "1").profile)
-    }
-
-    @Test
-    fun `portable headers never carry a credential`() {
-        val portal = StalkerStreamHeaderPolicy.portableHeaders("http://portal.example.com/m/1.mkv", identity, null, "1.21.2")
-        assertEquals("portal: MAG identity without secrets",
-            mapOf("User-Agent" to "MAG-UA", "X-User-Agent" to "Model: MAG250; Link: WiFi", "Accept" to "*/*"), portal)
-        val foreign = StalkerStreamHeaderPolicy.portableHeaders("http://cdn.net/m/1.mkv", identity, "UA-X", "1.21.2")
-        assertEquals("foreign: override + Accept", mapOf("User-Agent" to "UA-X", "Accept" to "*/*"), foreign)
+            StalkerStreamHeaderPolicy.decide("not a url", identity, null, streamIdentity = IDENTITY).profile)
     }
 
     @Test
@@ -124,54 +126,23 @@ class StalkerStreamHeaderPolicyTest {
     }
 
     @Test
-    fun `the VOD player's stream gets portable headers replacing a stale user agent`() {
-        val stream = com.nuvio.tv.domain.model.Stream(
-            name = "Movie", title = null, description = null, url = "http://portal.example.com/m/1.mkv", ytId = null,
-            infoHash = null, fileIdx = null, externalUrl = null,
-            behaviorHints = com.nuvio.tv.domain.model.StreamBehaviorHints(null, null, null, null).copy(
-                proxyHeaders = com.nuvio.tv.domain.model.ProxyHeaders(request = mapOf("user-agent" to "old", "X-Keep" to "1"), response = null),
-            ),
-            addonName = "Portal", addonLogo = null,
-        )
-        val headed = StalkerStreamHeaderPolicy.withPortableHeaders(
-            stream, StalkerStreamHeaderPolicy.portableHeaders(stream.url!!, identity, null, "1"),
-        )
-        val sent = headed.behaviorHints!!.proxyHeaders!!.request!!
-        assertEquals("MAG UA replaces the stale one", "MAG-UA", sent["User-Agent"])
-        assertFalse("no duplicate lower-case key", sent.containsKey("user-agent"))
-        assertEquals("other headers kept", "1", sent["X-Keep"])
-        assertFalse("never a credential", sent.keys.any { it in SECRET_NAMES })
-    }
-
-    @Test
-    fun `a deferred url names its playlist even though playlist ids contain bars`() {
-        assertEquals(
-            "account id", "stalker|http://portal|00:1A",
-            com.nuvio.tv.core.iptv.match.XtreamStreamSource.deferredAccountId("stalker-deferred:stalker|http://portal|00:1A|movie|7|Heat"),
-        )
-        assertNull("not deferred", com.nuvio.tv.core.iptv.match.XtreamStreamSource.deferredAccountId("http://x/y"))
-    }
-
-    @Test
     fun `the neutral stream identity on the portal host carries no MAG identity and no credential`() {
         val d = StalkerStreamHeaderPolicy.decide(
             "http://portal.example.com:8080/play/live.php?stream=1&play_token=x",
             identity,
             userAgentOverride = null,
-            appVersion = "1.21.2",
             streamIdentity = StalkerStreamIdentityPolicy.StreamIdentity.NEUTRAL,
         )
         assertEquals("profile", StalkerStreamHeaderPolicy.Profile.NEUTRAL_PLAYER, d.profile)
-        assertEquals("neutral UA, not the MAG box", "Tuvora/1.21.2 (Linux; Android TV)", d.userAgent)
-        assertFalse("no MAG UA", d.userAgent.contains("MAG"))
+        assertNull("no MAG UA: the engine default", d.userAgent)
         assertNull("no box model", d.headers["X-User-Agent"])
         assertNull("no origin-bound Cookie/Authorization/Referer/Origin", d.originBound)
-        assertFalse("no credential in the every-hop map", d.headers.keys.any { it in SECRET_NAMES })
-        assertEquals("only Accept", mapOf("Accept" to "*/*"), d.headers)
+        assertTrue("no headers", d.headers.isEmpty())
     }
 
+    /** The identity-profile cases: the playlist presents the MAG identity (the one-shot fallback). */
     private fun decide(url: String, override: String? = null) =
-        StalkerStreamHeaderPolicy.decide(url, identity, override, appVersion = "1.21.2")
+        StalkerStreamHeaderPolicy.decide(url, identity, override, streamIdentity = IDENTITY)
 
     private fun assertNotNullBound(d: StalkerStreamHeaderPolicy.Decision) =
         d.originBound.also { assertNotNull("portal identity expected", it) }!!
@@ -180,6 +151,7 @@ class StalkerStreamHeaderPolicyTest {
         StalkerStreamIdentity(base, "$base/c/", cookie, magUserAgent, magXUserAgent, token)
 
     private companion object {
+        val IDENTITY = StalkerStreamIdentityPolicy.StreamIdentity.IDENTITY
         val SECRET_NAMES = setOf("Cookie", "Authorization", "Referer", "Origin")
     }
 }
