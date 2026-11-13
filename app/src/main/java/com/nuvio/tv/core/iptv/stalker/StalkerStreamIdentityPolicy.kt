@@ -15,13 +15,16 @@ import com.nuvio.tv.playback.core.ProviderResolutionTrigger
  *   origin-bound Cookie/Bearer/Referer/Origin). Every playlist starts here.
  * - [StreamIdentity.NEUTRAL] — the credential-free player profile a foreign host already gets.
  *
- * A tune (an INITIAL resolution: tune, zap, the viewer's Retry) starts on the playlist's remembered
- * identity. When the stream on the portal host is refused with an auth rejection (401/403 →
- * [FailureCode.AUTHORIZATION_REJECTED]) before it ever showed media, the next re-mint of that tune
- * presents the other identity — each identity at most once per tune, so a provider that refuses both
- * falls through to the normal failure handling instead of flip-flopping. The identity that then
- * plays is remembered for the playlist (in memory, per process). A playlist User-Agent override is
- * the user's decision: it is used as set and never switched.
+ * A tune (an INITIAL resolution: tune, zap, the viewer's Retry, in one playback session) starts on
+ * the playlist's remembered identity. When the stream on the portal host is refused with an auth
+ * rejection (401/403 → [FailureCode.AUTHORIZATION_REJECTED]) before it ever showed media, the next
+ * re-mint of that tune is a one-shot TRIAL of the other identity. If the trial shows media, it is
+ * remembered for the playlist (in memory, per process). If it fails before media, the rest of the
+ * reconnect ladder goes back to the tune's starting identity with the normal spacing: a provider
+ * that needs the MAG identity and refused one open for a passing reason (the previous connection
+ * still held, an expired token) recovers exactly as it did before this policy existed. One trial
+ * per tune, so nothing flip-flops. A playlist User-Agent override is the user's decision: it is used
+ * as set and never switched. Live streams only — the resolver keeps VOD on the identity.
  *
  * Such a switch also means the previous attempt held no connection (refused at open), so the re-mint
  * need not wait out [com.nuvio.tv.playback.core.SingleUseRemintSpacingPolicy] — see [switchesOnRemint].
@@ -31,6 +34,8 @@ class StalkerStreamIdentityPolicy {
     enum class StreamIdentity { IDENTITY, NEUTRAL }
 
     private class Tune(
+        /** What the tune started with; a failed trial returns here. */
+        val start: StreamIdentity,
         var current: StreamIdentity,
         val tried: MutableSet<StreamIdentity>,
         var onPortalHost: Boolean,
@@ -40,9 +45,11 @@ class StalkerStreamIdentityPolicy {
     /** Playlist id → the identity proven to play, when it is not the default. */
     private val learned = HashMap<String, StreamIdentity>()
 
-    /** (playlist id, content key) → the tune in progress; bounded, oldest dropped first. */
-    private val tunes = object : LinkedHashMap<Pair<String, String>, Tune>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<String, String>, Tune>?): Boolean =
+    private data class TuneKey(val playlistId: String, val contentKey: String, val sessionKey: Long)
+
+    /** (playlist, channel, playback session) → the tune in progress; bounded, oldest dropped first. */
+    private val tunes = object : LinkedHashMap<TuneKey, Tune>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<TuneKey, Tune>?): Boolean =
             size > MAX_TUNES
     }
 
@@ -61,11 +68,12 @@ class StalkerStreamIdentityPolicy {
         trigger: ProviderResolutionTrigger,
         previousFailure: FailureCode?,
         hasUserAgentOverride: Boolean,
+        sessionKey: Long = 0L,
     ): Boolean {
         if (trigger == ProviderResolutionTrigger.INITIAL || hasUserAgentOverride) return false
         if (previousFailure != FailureCode.AUTHORIZATION_REJECTED) return false
-        val tune = tunes[playlistId to contentKey] ?: return false
-        return tune.onPortalHost && !tune.played && other(tune.current) !in tune.tried
+        val tune = tunes[TuneKey(playlistId, contentKey, sessionKey)] ?: return false
+        return tune.onPortalHost && !tune.played && tune.current == tune.start && other(tune.current) !in tune.tried
     }
 
     /**
@@ -80,8 +88,9 @@ class StalkerStreamIdentityPolicy {
         previousFailure: FailureCode?,
         hasUserAgentOverride: Boolean,
         onPortalHost: Boolean,
+        sessionKey: Long = 0L,
     ): StreamIdentity {
-        val key = playlistId to contentKey
+        val key = TuneKey(playlistId, contentKey, sessionKey)
         if (hasUserAgentOverride) {
             tunes.remove(key)
             return StreamIdentity.IDENTITY
@@ -89,12 +98,15 @@ class StalkerStreamIdentityPolicy {
         val existing = tunes[key]
         if (trigger == ProviderResolutionTrigger.INITIAL || existing == null) {
             val start = remembered(playlistId)
-            tunes[key] = Tune(start, mutableSetOf(start), onPortalHost)
+            tunes[key] = Tune(start, start, mutableSetOf(start), onPortalHost)
             return start
         }
-        if (switchesOnRemint(playlistId, contentKey, trigger, previousFailure, hasUserAgentOverride = false)) {
+        if (switchesOnRemint(playlistId, contentKey, trigger, previousFailure, hasUserAgentOverride = false, sessionKey)) {
             existing.current = other(existing.current)
             existing.tried += existing.current
+        } else if (existing.current != existing.start && !existing.played) {
+            // The trial failed before any media: back to the starting identity, spaced as usual.
+            existing.current = existing.start
         }
         existing.onPortalHost = onPortalHost
         return existing.current
@@ -102,8 +114,8 @@ class StalkerStreamIdentityPolicy {
 
     /** The tune showed media: its current identity passed the provider's check. */
     @Synchronized
-    fun onPlaybackStarted(playlistId: String, contentKey: String) {
-        val tune = tunes[playlistId to contentKey] ?: return
+    fun onPlaybackStarted(playlistId: String, contentKey: String, sessionKey: Long = 0L) {
+        val tune = tunes[TuneKey(playlistId, contentKey, sessionKey)] ?: return
         tune.played = true
         if (!tune.onPortalHost) return
         when (tune.current) {

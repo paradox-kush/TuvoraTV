@@ -1575,6 +1575,116 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    /** Records what the session tells a provider resolver; skips spacing only after a refusal at open. */
+    private class RecordingProviderResolver(
+        private val now: () -> Long,
+        private val resolved: (ProviderPlaybackSelection) -> ResolvedPlaybackRequest,
+    ) : ProviderPlaybackResolver {
+        val resolves = mutableListOf<Triple<ProviderResolutionTrigger, FailureCode?, Long>>()
+        val skipQueries = mutableListOf<ProviderResolutionContext>()
+        val started = mutableListOf<ProviderPlaybackSelection>()
+
+        override suspend fun resolve(
+            selection: ProviderPlaybackSelection,
+            context: ProviderResolutionContext,
+        ): PlaybackResult<ResolvedPlaybackRequest> {
+            resolves += Triple(context.trigger, context.previousFailure?.code, now())
+            return PlaybackResult.Success(resolved(selection))
+        }
+
+        override suspend fun remintSkipsSpacing(
+            selection: ProviderPlaybackSelection,
+            context: ProviderResolutionContext,
+        ): Boolean {
+            skipQueries += context
+            return context.previousFailure?.code == FailureCode.AUTHORIZATION_REJECTED && resolves.size == 1
+        }
+
+        override fun onPlaybackStarted(selection: ProviderPlaybackSelection) {
+            started += selection
+        }
+    }
+
+    private fun refusedAtOpen(generation: Long) = PlaybackEvent.Failed(
+        generation,
+        HttpStatusFailures.forStatus(401, FailurePhase.PLAYBACK),
+    )
+
+    // A provider that answers its own create_link stream with 401 to the MAG identity: the 401 at open
+    // reaches the resolver as AUTHORIZATION_REJECTED feedback on a RECOVERY re-mint, that re-mint is not
+    // spaced, and the first frame of the new attempt is reported to the resolver (current generation only).
+    @Test
+    fun `a 401 at open re-mints at once with the refusal as feedback and reports the first frame`() = runTest {
+        val engine = FakeEngine { start, input, events ->
+            when (start) {
+                1 -> events.emit(refusedAtOpen(input.generation))
+                2 -> events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+            }
+        }
+        val resolver = RecordingProviderResolver({ testScheduler.currentTime }, ::singleUseResolved)
+        val selection = providerSelection("refused")
+        val session = session(engine = engine, providerPlaybackResolver = resolver, clock = virtualClock())
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(selection, SessionProfile.FULLSCREEN))
+        runUntil { engine.startCalls == 1 }
+        val refusedAt = testScheduler.currentTime
+        runUntil { engine.startCalls == 2 }
+        runCurrent()
+
+        assertEquals("tune + one re-mint", 2, resolver.resolves.size)
+        val remint = resolver.resolves[1]
+        assertEquals("a reconnect re-mint", ProviderResolutionTrigger.RECOVERY, remint.first)
+        assertEquals("the resolver is told the provider refused", FailureCode.AUTHORIZATION_REJECTED, remint.second)
+        assertTrue(
+            "re-mint ${remint.third - refusedAt} ms after the refusal; must not wait the single-use gap",
+            remint.third - refusedAt < SingleUseRemintSpacingPolicy.MIN_GAP_MS,
+        )
+        assertEquals("the session asked before deciding to wait", 1, resolver.skipQueries.size)
+        assertEquals("the new attempt's first frame is reported", listOf(selection.contentKey), resolver.started.map { it.contentKey })
+
+        engine.emit(PlaybackEvent.FirstVideoFrame(99))
+        runCurrent()
+        assertEquals("a stale generation's frame is not reported", 1, resolver.started.size)
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        close(session)
+    }
+
+    // Each reconnect attempt's own failure is what the next re-mint is told: the loop used to repeat the
+    // failure that opened it, so a 401 on the second attempt reached the resolver as a timeout. Once the
+    // ladder is spent on refusals the viewer is told the provider refused, not that the network failed.
+    @Test
+    fun `each re-mint is told the latest attempt's failure and refusals end as a refusal`() = runTest {
+        val engine = FakeEngine { start, input, events ->
+            when (start) {
+                1 -> events.emit(
+                    PlaybackEvent.Failed(
+                        input.generation,
+                        PlaybackFailure(
+                            FailureCode.NETWORK_TIMEOUT, FailureDomain.NETWORK, FailurePhase.PLAYBACK,
+                            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+                        ),
+                    ),
+                )
+                else -> events.emit(refusedAtOpen(input.generation))
+            }
+        }
+        val resolver = RecordingProviderResolver({ testScheduler.currentTime }, ::singleUseResolved)
+        val session = session(engine = engine, providerPlaybackResolver = resolver, clock = virtualClock())
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(providerSelection("ladder"), SessionProfile.FULLSCREEN))
+        runUntil(maxMs = 300_000) { session.snapshot.value.state == PlaybackState.FAILED }
+
+        assertTrue("at least two re-mints", resolver.resolves.size >= 3)
+        assertEquals("first re-mint: the opening timeout", FailureCode.NETWORK_TIMEOUT, resolver.resolves[1].second)
+        assertEquals("second re-mint: the refusal that attempt got", FailureCode.AUTHORIZATION_REJECTED, resolver.resolves[2].second)
+        assertEquals(
+            "the viewer is told the provider refused",
+            FailureCode.AUTHORIZATION_REJECTED,
+            session.snapshot.value.failure?.code,
+        )
+        close(session)
+    }
+
     // Live pipeline audit 2026-11-04 §3c, fits B52 ("recovers after zapping and waiting 1-2 min"): the
     // rolling reconnect window is session-scoped and cleared only by 30 s of stable playback, so it
     // survived a user Retry and a channel change. A healthy stream after Retry/zap inherited the old

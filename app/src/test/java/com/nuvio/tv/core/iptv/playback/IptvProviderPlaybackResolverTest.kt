@@ -350,6 +350,65 @@ class IptvProviderPlaybackResolverTest {
         assertEquals("the playlist remembers neutral", "Tuvora/9.9 (Linux; Android TV)", retune.userAgent)
     }
 
+    /** Review LOW: only live streams switch and teach; VOD keeps the identity and never learns. */
+    @Test
+    fun `Stalker VOD neither switches the stream identity nor teaches the playlist`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        val identities = com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy()
+        val resolver = resolver(account, appVersion = "9.9", identities = identities) { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://portal.invalid:8000/play/movie.php?stream=42&play_token=abc", stalkerIdentity)
+        }
+        val vod = ProviderPlaybackSelection(
+            sourceType = ProviderSourceType.STALKER,
+            accountId = ProviderSelectionId(account.id),
+            itemId = ProviderSelectionId("42"),
+            contentKey = ProviderSelectionId(XtreamItemRegistry.vodId(account.id, 42)),
+            contentType = ContentType.VOD,
+            providerConnectionLimit = 1,
+        )
+
+        resolver.resolve(vod, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success()
+        assertFalse("VOD re-mint keeps the spacing", resolver.remintSkipsSpacing(vod, refusedAtOpen()))
+        val again = resolver.resolve(vod, refusedAtOpen()).success().request
+        assertEquals("VOD keeps the MAG identity", "MAG-UA", again.userAgent)
+        resolver.onPlaybackStarted(vod)
+        assertEquals(
+            "VOD never teaches the playlist",
+            com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy.StreamIdentity.IDENTITY,
+            identities.remembered(account.id),
+        )
+    }
+
+    /** Review LOW: each resolver is one playback session; a guide preview of the same channel is another. */
+    @Test
+    fun `a second session tuning the same channel does not give the first a second immediate switch`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_STALKER)
+        val identities = com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy()
+        val link: suspend (XtreamAccount, String, Int, Boolean) -> ProviderLinkResult = { _, _, _, _ ->
+            ProviderLinkResult.Resolved("http://portal.invalid:8000/play/live.php?stream=42&play_token=abc", stalkerIdentity)
+        }
+        val fullscreen = resolver(account, identities = identities, link = link)
+        val preview = resolver(account, identities = identities, link = link)
+        val selection = selection(account, ProviderSourceType.STALKER, ContentType.LIVE)
+
+        fullscreen.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success()
+        fullscreen.resolve(selection, refusedAtOpen()).success()
+        preview.resolve(selection, ProviderResolutionContext(ProviderResolutionTrigger.INITIAL)).success()
+
+        assertFalse("the fullscreen trial is spent", fullscreen.remintSkipsSpacing(selection, refusedAtOpen()))
+        assertTrue("the preview has its own trial", preview.remintSkipsSpacing(selection, refusedAtOpen()))
+    }
+
+    private fun refusedAtOpen() = ProviderResolutionContext(
+        ProviderResolutionTrigger.RECOVERY,
+        ProviderResolutionFeedback(
+            FailureCode.AUTHORIZATION_REJECTED,
+            FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
+            FailurePhase.PLAYBACK,
+            ProviderDialectAdvanceEligibility.NONE,
+        ),
+    )
+
     @Test
     fun `Stalker playlist user agent override wins over the MAG preset`() = runTest {
         val account = account(sourceType = XtreamAccount.SOURCE_STALKER).copy(userAgent = "VLC/3.0.20")

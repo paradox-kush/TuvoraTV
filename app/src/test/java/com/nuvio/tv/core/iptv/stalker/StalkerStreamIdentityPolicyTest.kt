@@ -83,18 +83,65 @@ class StalkerStreamIdentityPolicyTest {
         assertEquals("not proven", StreamIdentity.IDENTITY, policy.remembered(playlist))
     }
 
+    /**
+     * Review HIGH 1: a provider that NEEDS the MAG identity can refuse a first open for a passing reason
+     * (the previous connection still held, an expired token). Neutral is then a one-shot trial: when it
+     * is refused too, the rest of the ladder goes back to the tune's starting identity, spaced as before
+     * this change, so the next re-mint can still recover.
+     */
     @Test
-    fun `when neutral is refused too there is no further switch in that tune`() {
+    fun `a refused neutral trial goes back to the starting identity with normal spacing`() {
         val policy = StalkerStreamIdentityPolicy()
         policy.tune()
         policy.remint(FailureCode.AUTHORIZATION_REJECTED)
         val (switches, next) = policy.remint(FailureCode.AUTHORIZATION_REJECTED)
-        assertFalse("each profile once per tune: no flip back", switches)
-        assertEquals("stays on the last profile tried", StreamIdentity.NEUTRAL, next)
+        assertFalse("going back is not an immediate switch: the re-mint keeps the spacing", switches)
+        assertEquals("the rest of the ladder presents the identity again", StreamIdentity.IDENTITY, next)
         val (again, last) = policy.remint(FailureCode.AUTHORIZATION_REJECTED)
-        assertFalse("still no switch", again)
-        assertEquals("still neutral", StreamIdentity.NEUTRAL, last)
+        assertFalse("no second trial in the same tune", again)
+        assertEquals("still the identity", StreamIdentity.IDENTITY, last)
         assertEquals("nothing learned", StreamIdentity.IDENTITY, policy.remembered(playlist))
+    }
+
+    @Test
+    fun `a neutral trial that fails for any other reason before media also goes back`() {
+        val policy = StalkerStreamIdentityPolicy()
+        policy.tune()
+        policy.remint(FailureCode.AUTHORIZATION_REJECTED)
+        val (switches, next) = policy.remint(FailureCode.NETWORK_TIMEOUT)
+        assertFalse("spaced", switches)
+        assertEquals("back to the identity", StreamIdentity.IDENTITY, next)
+    }
+
+    @Test
+    fun `a neutral that played stays for the rest of the tune`() {
+        val policy = StalkerStreamIdentityPolicy()
+        policy.tune()
+        policy.remint(FailureCode.AUTHORIZATION_REJECTED)
+        policy.onPlaybackStarted(playlist, channel)
+        assertEquals("a later drop re-mints neutral", StreamIdentity.NEUTRAL, policy.remint(FailureCode.NETWORK_TIMEOUT).second)
+    }
+
+    /** Review LOW: a guide preview of the same channel is another session and must not reset this tune. */
+    @Test
+    fun `another session tuning the same channel does not reset this session's tune`() {
+        val policy = StalkerStreamIdentityPolicy()
+        val fullscreen = 1L
+        val preview = 2L
+        policy.identityFor(playlist, channel, ProviderResolutionTrigger.INITIAL, null, false, true, sessionKey = fullscreen)
+        policy.identityFor(playlist, channel, ProviderResolutionTrigger.RECOVERY, FailureCode.AUTHORIZATION_REJECTED, false, true, sessionKey = fullscreen)
+
+        policy.identityFor(playlist, channel, ProviderResolutionTrigger.INITIAL, null, false, true, sessionKey = preview)
+
+        assertFalse(
+            "the fullscreen tune already spent its trial",
+            policy.switchesOnRemint(playlist, channel, ProviderResolutionTrigger.RECOVERY, FailureCode.AUTHORIZATION_REJECTED, false, sessionKey = fullscreen),
+        )
+        assertEquals(
+            "fullscreen goes back to the identity, spaced",
+            StreamIdentity.IDENTITY,
+            policy.identityFor(playlist, channel, ProviderResolutionTrigger.RECOVERY, FailureCode.AUTHORIZATION_REJECTED, false, true, sessionKey = fullscreen),
+        )
     }
 
     @Test
@@ -103,6 +150,7 @@ class StalkerStreamIdentityPolicyTest {
         policy.tune()
         policy.remint(FailureCode.AUTHORIZATION_REJECTED)
         policy.remint(FailureCode.AUTHORIZATION_REJECTED)
+        assertFalse("spent", policy.remint(FailureCode.AUTHORIZATION_REJECTED).first)
 
         assertEquals("the viewer's Retry starts over", StreamIdentity.IDENTITY, policy.tune())
         assertTrue("and may switch once more", policy.remint(FailureCode.AUTHORIZATION_REJECTED).first)
