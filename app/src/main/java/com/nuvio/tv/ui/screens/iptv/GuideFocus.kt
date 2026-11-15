@@ -15,3 +15,15 @@ import androidx.compose.ui.focus.FocusRequester
  */
 internal fun FocusRequester.requestFocusOrFalse(): Boolean =
     runCatching { requestFocus(FocusDirection.Enter) }.getOrDefault(false)
+
+/**
+ * Requests focus on a control inside another `focusRestorer` group (the hub header, a guide list) and makes it stick.
+ * A request arriving from outside such a group enters it first, and the group's restorer redirects the enter to its
+ * saved child or fallback (proved in HubContentFocusRestoreTest: a request for row 4 from outside landed on row 1).
+ * The second ask comes from inside the group and reaches the control itself.
+ * Device pass 2, finding C: UP from guide row 1 left no control focused (no ring anywhere).
+ */
+internal fun FocusRequester.requestFocusPastRestorer(): Boolean {
+    val first = requestFocusOrFalse()
+    return requestFocusOrFalse() || first
+}

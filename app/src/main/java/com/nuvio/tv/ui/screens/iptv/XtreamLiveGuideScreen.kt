@@ -1124,7 +1124,7 @@ fun LiveGuide(
                                 },
                                 onRetryHistory = viewModel::retryHistory,
                                 // B254: UP from row one reaches the tabs without the trip through Search.
-                                onUpToTabs = selectedTabRequester?.let { tab -> { tab.requestFocus() } },
+                                onUpToTabs = selectedTabRequester?.let { tab -> { tab.requestFocusPastRestorer() } },
                                 layout = guideLayout,
                                 number = index + 1,
                                 name = ch.name,
