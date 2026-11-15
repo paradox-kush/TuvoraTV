@@ -263,6 +263,15 @@ fun LiveGuide(
         pendingRestoreEntityId = null
     }
 
+    // B11: "Browse All channels" from an empty view puts focus on row 1 once the new list has landed.
+    var pendingFirstRowFocus by remember(account.id) { mutableStateOf(false) }
+    LaunchedEffect(pendingFirstRowFocus, displayChannels) {
+        if (!pendingFirstRowFocus || displayChannels.isEmpty()) return@LaunchedEffect
+        pendingFirstRowFocus = false
+        channelListState.scrollToItem(0)
+        if (!GuideFocusRequestLoop.requestUntilLanded { firstChannelFocus.requestFocusOrFalse() }) channelListFocus.requestFocusOrFalse()
+    }
+
     // UX389: entry focus. Once the list has landed on the hub's first entry, focus goes to the last-watched channel's
     // row (else row 1) - the channel list, not the tab row. Focus only: nothing tunes, so a single-use provider link
     // is not spent by opening the page. Never taken from a viewer who already moved (any key cancels the pending flag).
@@ -761,13 +770,18 @@ fun LiveGuide(
                 val channelsStatus = rememberEffectiveLoadStatus(uiState.channelsLoad)
                 val categoriesStatus = rememberEffectiveLoadStatus(uiState.categoriesLoad)
                 when {
-                    uiState.error != null -> ErrorState(
+                    // B11: a failure names its cause and offers Try again plus Playlist settings (settings first when
+                    // the provider blocked us: a retry will not help). Retry re-runs what failed.
+                    uiState.error != null -> GuideFailureState(
                         message = uiState.error!!,
-                        // Retry = re-run what failed: the category column, else the current category.
-                        onRetry = viewModel::retry
+                        actions = GuideFailureActionsPolicy.actions(uiState.errorBlocked),
+                        focusRequester = channelListFocus,
+                        upFocus = selectedTabRequester,
+                        onRetry = viewModel::retry,
+                        onPlaylistSettings = { onFixGuide(account.id) },
                     )
                     channelsStatus is com.nuvio.tv.core.iptv.LoadStatus.Failed ||
-                        (categoriesStatus is com.nuvio.tv.core.iptv.LoadStatus.Failed && uiState.channels.isEmpty()) -> ErrorState(
+                        (categoriesStatus is com.nuvio.tv.core.iptv.LoadStatus.Failed && uiState.channels.isEmpty()) -> GuideFailureState(
                         message = stringResource(
                             if ((channelsStatus as? com.nuvio.tv.core.iptv.LoadStatus.Failed ?: categoriesStatus as? com.nuvio.tv.core.iptv.LoadStatus.Failed)?.timedOut == true) {
                                 R.string.iptv_hub_error_timeout
@@ -775,27 +789,41 @@ fun LiveGuide(
                                 R.string.iptv_hub_error_unreachable
                             }
                         ),
-                        onRetry = viewModel::retry
+                        actions = GuideFailureActionsPolicy.actions(blockedByProvider = false),
+                        focusRequester = channelListFocus,
+                        upFocus = selectedTabRequester,
+                        onRetry = viewModel::retry,
+                        onPlaylistSettings = { onFixGuide(account.id) },
                     )
                     channelsStatus is com.nuvio.tv.core.iptv.LoadStatus.Loading -> GuideChannelListSkeleton(guideLayout)
                     // Before the category column lands there is nothing selected yet: still loading, not empty.
                     categoriesStatus is com.nuvio.tv.core.iptv.LoadStatus.Loading && uiState.channels.isEmpty() -> GuideChannelListSkeleton(guideLayout)
-                    uiState.selectedCategoryId == XtreamLiveGuideViewModel.SEARCH_ID && uiState.channels.isEmpty() -> EmptyScreenState(
-                        title = if (uiState.searchQuery.isBlank()) stringResource(R.string.iptv_guide_search_empty_title)
-                        else stringResource(R.string.iptv_guide_search_no_match, uiState.searchQuery),
-                        subtitle = stringResource(R.string.iptv_guide_search_hint),
-                        height = 280.dp
-                    )
-                    uiState.channels.isEmpty() -> EmptyScreenState(
-                        // UX13: an empty Favorites view says how to fill it.
-                        title = when (GuideEmptyStatePolicy.kind(
-                            uiState.categories.firstOrNull { it.id == uiState.selectedCategoryId }?.special
-                        )) {
-                            GuideEmptyStatePolicy.Kind.FAVORITES_HINT -> stringResource(R.string.iptv_guide_favorites_empty)
-                            GuideEmptyStatePolicy.Kind.NO_CHANNELS -> stringResource(R.string.iptv_guide_no_channels)
-                        },
-                        height = 280.dp
-                    )
+                    // B11: one cause, one focused action. RIGHT from the group column lands on the action (it carries
+                    // the channel list's requester); nothing here moves focus by itself (A16).
+                    uiState.channels.isEmpty() -> {
+                        val kind = GuideEmptyStatePolicy.kind(
+                            uiState.categories.firstOrNull { it.id == uiState.selectedCategoryId }?.special,
+                            uiState.searchQuery,
+                        )
+                        GuideEmptyActionState(
+                            kind = kind,
+                            searchQuery = uiState.searchQuery,
+                            focusRequester = channelListFocus,
+                            upFocus = selectedTabRequester,
+                            onAction = { action ->
+                                when (action) {
+                                    GuideEmptyStatePolicy.Action.BROWSE_ALL -> {
+                                        pendingFirstRowFocus = true
+                                        viewModel.showAllChannels()
+                                    }
+                                    GuideEmptyStatePolicy.Action.TYPE_SEARCH -> searchDialogOpen = true
+                                    GuideEmptyStatePolicy.Action.CLEAR_SEARCH -> viewModel.clearSearch()
+                                    GuideEmptyStatePolicy.Action.PLAYLIST_SETTINGS -> onFixGuide(account.id)
+                                    GuideEmptyStatePolicy.Action.PICK_GROUP -> exitCategory()
+                                }
+                            },
+                        )
+                    }
                     else -> LazyColumn(
                         state = channelListState,
                         modifier = Modifier.fillMaxSize()
@@ -2005,6 +2033,104 @@ private fun NoGuideBanner(
                     this.up = up ?: FocusRequester.Default
                 },
         ) { Text(stringResource(R.string.iptv_guide_fix_guide)) }
+    }
+}
+
+/**
+ * B11: an empty channel list with its cause and exactly one focused action (03-guide-states). The action carries the
+ * channel list's requester so RIGHT from the group column reaches it; UP goes to the active tab, LEFT to the groups.
+ */
+@Composable
+private fun GuideEmptyActionState(
+    kind: GuideEmptyStatePolicy.Kind,
+    searchQuery: String,
+    focusRequester: FocusRequester,
+    upFocus: FocusRequester?,
+    onAction: (GuideEmptyStatePolicy.Action) -> Unit,
+) {
+    val title = when (kind) {
+        GuideEmptyStatePolicy.Kind.FAVORITES_HINT -> stringResource(R.string.iptv_guide_empty_favorites_title)
+        GuideEmptyStatePolicy.Kind.RECENT_EMPTY -> stringResource(R.string.iptv_guide_empty_recent_title)
+        GuideEmptyStatePolicy.Kind.SEARCH_PROMPT -> stringResource(R.string.iptv_guide_search_empty_title)
+        GuideEmptyStatePolicy.Kind.SEARCH_NO_MATCH -> stringResource(R.string.iptv_guide_search_no_match, searchQuery)
+        GuideEmptyStatePolicy.Kind.PLAYLIST_EMPTY -> stringResource(R.string.iptv_guide_empty_playlist_title)
+        GuideEmptyStatePolicy.Kind.NO_CHANNELS -> stringResource(R.string.iptv_guide_no_channels)
+    }
+    val fact = when (kind) {
+        GuideEmptyStatePolicy.Kind.FAVORITES_HINT -> stringResource(R.string.iptv_guide_favorites_empty)
+        GuideEmptyStatePolicy.Kind.RECENT_EMPTY -> stringResource(R.string.iptv_guide_empty_recent_fact)
+        GuideEmptyStatePolicy.Kind.SEARCH_PROMPT -> stringResource(R.string.iptv_guide_empty_search_fact)
+        GuideEmptyStatePolicy.Kind.SEARCH_NO_MATCH -> stringResource(R.string.iptv_guide_empty_search_miss_fact)
+        GuideEmptyStatePolicy.Kind.PLAYLIST_EMPTY -> stringResource(R.string.iptv_guide_empty_playlist_fact)
+        GuideEmptyStatePolicy.Kind.NO_CHANNELS -> stringResource(R.string.iptv_guide_empty_group_fact)
+    }
+    val action = GuideEmptyStatePolicy.action(kind)
+    val label = stringResource(
+        when (action) {
+            GuideEmptyStatePolicy.Action.BROWSE_ALL -> R.string.iptv_guide_empty_browse_all
+            GuideEmptyStatePolicy.Action.TYPE_SEARCH -> R.string.iptv_guide_search_title
+            GuideEmptyStatePolicy.Action.CLEAR_SEARCH -> R.string.iptv_guide_empty_clear_search
+            GuideEmptyStatePolicy.Action.PLAYLIST_SETTINGS -> R.string.iptv_guide_playlist_settings
+            GuideEmptyStatePolicy.Action.PICK_GROUP -> R.string.iptv_guide_empty_pick_group
+        }
+    )
+    Column(
+        Modifier.fillMaxWidth().padding(top = NuvioTheme.spacing.xxl, start = NuvioTheme.spacing.xl, end = NuvioTheme.spacing.xl),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(title, style = MaterialTheme.typography.headlineSmall, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
+        Spacer(Modifier.height(NuvioTheme.spacing.sm))
+        Text(fact, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary, maxLines = 3)
+        Spacer(Modifier.height(NuvioTheme.spacing.lg))
+        Button(
+            onClick = { onAction(action) },
+            modifier = Modifier.focusRequester(focusRequester).focusProperties { up = upFocus ?: FocusRequester.Default },
+        ) { Text(label) }
+    }
+}
+
+/**
+ * B11: a failed load says what failed and offers its actions in [actions] order (03-guide-states "Load failed"). The
+ * first one carries the channel list's requester, so RIGHT from the group column lands on it.
+ */
+@Composable
+private fun GuideFailureState(
+    message: String,
+    actions: List<GuideFailureActionsPolicy.Action>,
+    focusRequester: FocusRequester,
+    upFocus: FocusRequester?,
+    onRetry: () -> Unit,
+    onPlaylistSettings: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(top = NuvioTheme.spacing.xxl, start = NuvioTheme.spacing.xl, end = NuvioTheme.spacing.xl),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = com.nuvio.tv.ui.components.buildErrorStateAnnotatedMessage(message),
+            style = MaterialTheme.typography.bodyLarge,
+            color = NuvioTheme.colors.TextSecondary,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        Spacer(Modifier.height(NuvioTheme.spacing.lg))
+        Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+            actions.forEachIndexed { index, action ->
+                Button(
+                    onClick = when (action) {
+                        GuideFailureActionsPolicy.Action.TRY_AGAIN -> onRetry
+                        GuideFailureActionsPolicy.Action.PLAYLIST_SETTINGS -> onPlaylistSettings
+                    },
+                    modifier = Modifier
+                        .then(if (index == 0) Modifier.focusRequester(focusRequester) else Modifier)
+                        .focusProperties { up = upFocus ?: FocusRequester.Default },
+                ) {
+                    Text(stringResource(when (action) {
+                        GuideFailureActionsPolicy.Action.TRY_AGAIN -> R.string.action_retry
+                        GuideFailureActionsPolicy.Action.PLAYLIST_SETTINGS -> R.string.iptv_guide_playlist_settings
+                    }))
+                }
+            }
+        }
     }
 }
 

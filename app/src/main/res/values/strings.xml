@@ -3620,6 +3620,19 @@
     <string name="iptv_guide_search_label">Search: “%1$s”</string>
     <string name="iptv_guide_no_guide_group">This playlist sent no guide.</string>
     <string name="iptv_guide_fix_guide">Fix guide</string>
+    <!-- B11 (IPTV redesign 2026-11-15): every empty view names its cause and holds one action. -->
+    <string name="iptv_guide_empty_favorites_title">No favourites yet</string>
+    <string name="iptv_guide_empty_recent_title">Nothing watched yet</string>
+    <string name="iptv_guide_empty_recent_fact">Channels you watch show up here, newest first.</string>
+    <string name="iptv_guide_empty_search_fact">Type part of a channel name. Only this playlist is searched.</string>
+    <string name="iptv_guide_empty_search_miss_fact">Try fewer letters, or another spelling.</string>
+    <string name="iptv_guide_empty_playlist_title">This playlist sent no channels</string>
+    <string name="iptv_guide_empty_playlist_fact">The provider answered, but with an empty list. Check the playlist in its settings.</string>
+    <string name="iptv_guide_empty_group_fact">This group is empty on the provider’s side. Pick another group.</string>
+    <string name="iptv_guide_empty_browse_all">Browse All channels</string>
+    <string name="iptv_guide_empty_clear_search">Clear search</string>
+    <string name="iptv_guide_empty_pick_group">Pick another group</string>
+    <string name="iptv_guide_playlist_settings">Playlist settings</string>
     <string name="iptv_guide_history_loading">Loading this channel’s schedule…</string>
     <string name="iptv_guide_history_failed">Couldn’t load this channel’s schedule. Press OK to try again.</string>
     <string name="iptv_guide_unavailable">Can\'t play</string>
@@ -3638,7 +3651,7 @@
     <string name="iptv_remove_playlist_message_all_devices">Its favourites, Continue Watching entries and watch progress go with it, on all your devices. This can\'t be undone.</string>
     <string name="iptv_remove_playlist_message_if_you_sync">Its favourites, Continue Watching entries and watch progress go with it. If you sync, it is removed from your other devices too. This can\'t be undone.</string>
     <string name="iptv_playlist_removed">Playlist removed</string>
-    <string name="iptv_guide_favorites_empty">Hold OK on a channel to add it to Favorites</string>
+    <string name="iptv_guide_favorites_empty">Press MENU or hold OK on a channel, then choose Add to Favorites.</string>
     <string name="addon_not_synced_yet">Not synced yet</string>
     <string name="auth_qr_phone_hint_scan_or_email">Scan the code with your phone, or sign in with email on this TV.</string>
     <string name="auth_qr_phone_hint_scan_only">Scan the code with your phone to sign in.</string>

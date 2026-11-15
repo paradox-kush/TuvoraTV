@@ -169,6 +169,8 @@ data class LiveGuideUiState(
     val channelsLoad: LoadStatus = LoadStatus.Idle,
     /** Channel-list (or category-column) load failure, rendered in place of the grid with Retry. */
     val error: String? = null,
+    /** B11: [error] is the provider blocking us (a retry will not help), so Playlist settings leads. */
+    val errorBlocked: Boolean = false,
     /** Non-playback action notice, currently used by catch-up availability. */
     val actionError: String? = null,
     /** The replay [actionError] can re-run (Retry); null when the notice has nothing to retry. */
@@ -579,10 +581,28 @@ class XtreamLiveGuideViewModel @Inject constructor(
         }
     }
 
+    /** B11: the group shown before a search, for "Clear search". */
+    private var categoryBeforeSearch: String? = null
+
+    /** B11: "Browse All channels" from an empty Favorites or Recent view. */
+    fun showAllChannels() {
+        val all = _uiState.value.categories.firstOrNull { it.special == GuideSpecial.ALL }?.id ?: return
+        selectCategory(all)
+    }
+
+    /** B11: "Clear search": drop the query and go back to the group shown before it (else All channels). */
+    fun clearSearch() {
+        val back = categoryBeforeSearch?.takeIf { id -> _uiState.value.categories.any { it.id == id } }
+            ?: _uiState.value.categories.firstOrNull { it.special == GuideSpecial.ALL }?.id
+        _uiState.update { it.copy(searchQuery = "") }
+        selectCategory(back)
+    }
+
     /** F01: run [query] on the Search row (OK on "Search" opens the keyboard; submitting lands here). */
     fun searchChannels(query: String) {
         val acc = account ?: return
         val token = accountCommitFence.capture(acc.id) ?: return
+        _uiState.value.selectedCategoryId?.takeIf { it != SEARCH_ID }?.let { categoryBeforeSearch = it }
         _uiState.update { it.copy(searchQuery = query.trim(), selectedCategoryId = SEARCH_ID, channels = emptyList()) }
         selectCategoryFor(acc, SEARCH_ID, force = false, token = token)
     }
@@ -798,6 +818,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
                         categories = visible,
                         categoriesLoad = outcome.status,
                         error = failureText(acc, (outcome as? LoadOutcome.Failed)?.error),
+                        errorBlocked = IptvLoadFailurePolicy.classify(
+                            (outcome as? LoadOutcome.Failed)?.error, IptvPanelGuard.panelOriginUrlOf(acc),
+                        ).kind == IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER,
                     )
                 }
                 return@launch
