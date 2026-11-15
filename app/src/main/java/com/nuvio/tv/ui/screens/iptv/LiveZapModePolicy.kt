@@ -39,4 +39,12 @@ internal object LiveZapModePolicy {
 
     /** The banner shows on a zap only while the control bar is down; with the bar up the bar names the channel. */
     fun showsBanner(controlsVisible: Boolean): Boolean = !controlsVisible
+
+    /**
+     * Device pass 2 (2026-11-15), D1: a channel swap (number, "0" / LAST, CH+ / CH-) with the control bar up drops
+     * the bar and lets the banner name the new channel. Left up, focus stayed on "Channels" and the next stray OK
+     * opened the channel list. Focus does not go to Play/Pause instead: B227 keeps it off that button so OK, OK
+     * never pauses by accident.
+     */
+    fun swapHidesBar(controlsVisible: Boolean): Boolean = controlsVisible
 }

@@ -58,6 +58,18 @@ internal class FullscreenControlsState {
     /** A zap: the banner while the control bar is down, else the bar stays up and names the channel. */
     fun onZap() { if (LiveZapModePolicy.showsBanner(visible)) showBanner() else keepAlive() }
     fun keepAlive() { tick++ }
+
+    /**
+     * Device pass 2, D1: a channel swap (number, "0" / LAST, CH+ / CH-). The bar goes when it was up
+     * ([LiveZapModePolicy.swapHidesBar]) and the banner names the channel. True when the bar went, so the caller
+     * parks focus behind the video.
+     */
+    fun onChannelSwap(): Boolean {
+        val dropBar = LiveZapModePolicy.swapHidesBar(visible)
+        if (dropBar) reset()
+        showBanner()
+        return dropBar
+    }
     fun reset() { visible = false; zapReveal = false; moreOpen = false; bannerVisible = false }
 }
 

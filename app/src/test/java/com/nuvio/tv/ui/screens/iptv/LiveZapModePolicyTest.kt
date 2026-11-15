@@ -41,4 +41,15 @@ class LiveZapModePolicyTest {
         assertEquals("bar down", true, LiveZapModePolicy.showsBanner(controlsVisible = false))
         assertEquals("bar up", false, LiveZapModePolicy.showsBanner(controlsVisible = true))
     }
+
+    /**
+     * Device pass 2, D1: after a number, "0" / LAST or CH+/CH- swap with the control bar up, focus stayed on
+     * "Channels", so the next stray OK opened the channel list. A swap now drops the bar (the banner names the new
+     * channel). Play/Pause is not the answer: B227 keeps first focus off it so OK, OK never pauses by accident.
+     */
+    @Test
+    fun `a channel swap with the bar up drops the bar`() {
+        assertEquals("bar up", true, LiveZapModePolicy.swapHidesBar(controlsVisible = true))
+        assertEquals("bar already down", false, LiveZapModePolicy.swapHidesBar(controlsVisible = false))
+    }
 }

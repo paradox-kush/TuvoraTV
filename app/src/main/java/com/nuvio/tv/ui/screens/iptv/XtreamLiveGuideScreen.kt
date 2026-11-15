@@ -620,6 +620,11 @@ fun LiveGuide(
         }
     }
     LaunchedEffect(fullscreen) { if (!fullscreen && surfAim != null) cancelSurf() }
+    /** D1: after a channel swap the bar goes and the banner names the channel (LiveZapModePolicy.swapHidesBar). */
+    fun afterChannelSwap() {
+        // The bar's buttons leave composition: focus waits behind the video for the next key.
+        if (controls.onChannelSwap()) fullscreenAnchor.requestFocusOrFalse()
+    }
     /** UP / DOWN / CH+ / CH-: switch at once (settled) or aim (surf); the banner names where it landed. */
     fun zap(direction: LiveZapDirection) {
         val selection = when (direction) {
@@ -630,7 +635,7 @@ fun LiveGuide(
             LiveZapModePolicy.Mode.SWITCH -> selection.let(playbackViewModel::requestSettledTune)
             LiveZapModePolicy.Mode.SURF -> { surfAim = selection.value; surfTick++ }
         }
-        controls.onZap()
+        afterChannelSwap()
     }
     var zapBack by remember(account.id) { mutableStateOf(LiveZapBack()) }
     LaunchedEffect(playingContentId) { playingContentId?.let { zapBack = zapBack.onSettled(it) } }
@@ -659,7 +664,7 @@ fun LiveGuide(
         surfAim = null
         val id = zapBack.target(viewModel.zapLineup().map { it.contentId }) ?: return
         viewModel.focusChannel(id)?.let(playbackViewModel::requestTune)
-        if (fullscreen) controls.showBanner()
+        if (fullscreen) afterChannelSwap()
         else pendingRestoreEntityId = displayChannels.firstOrNull { it.contentId == id }?.entityId
     }
     fun commitNumber() {
@@ -672,7 +677,7 @@ fun LiveGuide(
         if (fullscreen) {
             surfAim = null
             viewModel.focusChannel(channel.contentId)?.let(playbackViewModel::requestTune)
-            controls.showBanner()
+            afterChannelSwap()
         } else {
             // In the guide a number only moves the highlight; OK then watches (browsing never tunes).
             pendingRestoreEntityId = channel.entityId
@@ -832,7 +837,7 @@ fun LiveGuide(
                         zapBack.target(viewModel.zapLineup().map { it.contentId })
                             ?.let(viewModel::focusChannel)
                             ?.let(playbackViewModel::requestTune)
-                        controls.onZap()
+                        afterChannelSwap()
                     }
                     // Time-shifted with the controls hidden: LEFT / RIGHT scrub inside the saved window.
                     LiveControlsPolicy.KeyAction.SCRUB_BACK,
