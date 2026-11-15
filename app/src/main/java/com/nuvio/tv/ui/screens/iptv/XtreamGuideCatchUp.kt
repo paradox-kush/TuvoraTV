@@ -221,7 +221,7 @@ internal fun RowScope.GuideProgrammeCells(
                         }
                         // The app's D-pad vocabulary: a focused strip is outlined like a cell.
                         .border(
-                            if (stripFocused) 2.dp else 0.dp,
+                            if (stripFocused) GuideFocusLanguage.RING_DP.dp else 0.dp,
                             if (stripFocused) NuvioTheme.colors.BorderFocused else Color.Transparent,
                             RoundedCornerShape(NuvioTheme.radii.xs),
                         )
@@ -348,7 +348,7 @@ private fun RowScope.GuideCell(
                 }
             )
             .border(
-                if (isFocused) 2.dp else 0.dp,
+                if (isFocused) GuideFocusLanguage.RING_DP.dp else 0.dp,
                 if (isFocused) NuvioTheme.colors.BorderFocused else Color.Transparent,
                 RoundedCornerShape(NuvioTheme.radii.xs)
             )

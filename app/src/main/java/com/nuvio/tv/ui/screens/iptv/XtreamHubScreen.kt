@@ -1042,17 +1042,12 @@ internal fun HubChip(
     // The sidebar's nav-item radius, not a full pill: the hub is app navigation, so it should
     // look like the app's navigation.
     val chipShape = NuvioTheme.shapes.button
-    val surface = hubChipSurface(selected = selected, focused = focused)
-    val containerColor = when (surface) {
-        HubChipSurface.AccentFill -> NuvioTheme.colors.Primary
-        HubChipSurface.SoftFill -> NuvioTheme.colors.FocusBackground
-        HubChipSurface.None -> Color.Transparent
-    }
-    val contentColor = when (surface) {
-        HubChipSurface.AccentFill -> NuvioTheme.colors.OnPrimary
-        HubChipSurface.SoftFill -> NuvioTheme.colors.TextPrimary
-        HubChipSurface.None -> NuvioTheme.colors.TextSecondary
-    }
+    // Redesign change 2: the FocusRing is the cursor, the soft fill marks the active section (GuideFocusLanguage).
+    val look = GuideFocusLanguage.look(focused = focused, selected = selected)
+    val containerColor = if (look.softFill) {
+        NuvioTheme.colors.FocusBackground.copy(alpha = GuideFocusLanguage.SELECTED_FILL_ALPHA)
+    } else Color.Transparent
+    val contentColor = if (focused || selected) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary
     Card(
         onClick = onClick,
         modifier = Modifier
@@ -1065,13 +1060,17 @@ internal fun HubChip(
         shape = CardDefaults.shape(shape = chipShape),
         colors = CardDefaults.colors(
             containerColor = containerColor,
-            focusedContainerColor = NuvioTheme.colors.Primary
+            focusedContainerColor = containerColor,
         ),
         border = CardDefaults.border(
             border = Border.None,
-            focusedBorder = Border.None
+            focusedBorder = Border(
+                border = androidx.compose.foundation.BorderStroke(GuideFocusLanguage.RING_DP.dp, NuvioTheme.colors.FocusRing),
+                shape = chipShape,
+            ),
         ),
-        scale = CardDefaults.scale(focusedScale = 1.02f)
+        // The ring is drawn inside; no scale, so a focused chip never grows into its neighbour.
+        scale = CardDefaults.scale(focusedScale = 1f)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.sm),
@@ -1081,7 +1080,8 @@ internal fun HubChip(
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelLarge,
-                color = contentColor
+                color = contentColor,
+                fontWeight = if (look.boldText) androidx.compose.ui.text.font.FontWeight.Bold else null,
             )
             if (showDropdownIcon) {
                 Icon(

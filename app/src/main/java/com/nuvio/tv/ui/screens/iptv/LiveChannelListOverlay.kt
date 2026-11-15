@@ -162,12 +162,8 @@ private fun ChannelListRow(
             .fillMaxWidth()
             .height(CHANNEL_LIST_ROW_HEIGHT)
             .clip(shape)
-            .background(if (focused) NuvioTheme.colors.Primary.copy(alpha = 0.22f) else Color.Transparent)
-            .border(
-                if (focused) NuvioTheme.spacing.xxs else 0.dp,
-                if (focused) NuvioTheme.colors.Primary else Color.Transparent,
-                shape,
-            )
+            // Redesign change 2: the guide's focus language (ring = cursor, red edge = playing).
+            .guideFocusLook(GuideFocusLanguage.look(focused = focused, selected = false, playing = playing), shape)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
@@ -178,7 +174,7 @@ private fun ChannelListRow(
         Text(
             text = number.toString(),
             style = MaterialTheme.typography.labelMedium,
-            color = NuvioTheme.colors.TextSecondary,
+            color = if (playing) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary,
             modifier = Modifier.width(34.dp),
             maxLines = 1,
         )
@@ -193,14 +189,6 @@ private fun ChannelListRow(
         }
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)) {
-                if (playing) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        tint = NuvioTheme.colors.Primary,
-                        modifier = Modifier.size(NuvioTheme.spacing.lg),
-                    )
-                }
                 Text(
                     text = channel.name,
                     style = MaterialTheme.typography.bodyMedium,

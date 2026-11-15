@@ -78,6 +78,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -1550,15 +1552,8 @@ private fun GuideCategoryRow(
             }
             .padding(vertical = 2.dp)
             .clip(RoundedCornerShape(NuvioTheme.radii.sm))
-            // Focused = solid Primary fill (the app's D-pad vocabulary); the selected-but-unfocused
-            // category keeps the muted elevated fill so the two states never read the same.
-            .background(
-                when {
-                    focused -> NuvioTheme.colors.Primary
-                    selected -> NuvioTheme.colors.BackgroundElevated
-                    else -> Color.Transparent
-                }
-            )
+            // Redesign change 2: ring = cursor, soft fill = the group shown (GuideFocusLanguage).
+            .guideFocusLook(GuideFocusLanguage.look(focused = focused, selected = selected), RoundedCornerShape(NuvioTheme.radii.sm))
             // ponytail: onFocusChanged MUST precede the focus target to observe it. And use
             // clickable (not plain focusable) — plain focusable() didn't reliably take D-pad focus
             // in this LazyColumn, so the category never highlighted and selectCategory never fired
@@ -1588,11 +1583,8 @@ private fun GuideCategoryRow(
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = when {
-                focused -> NuvioTheme.colors.OnPrimary
-                selected -> NuvioTheme.colors.TextPrimary
-                else -> NuvioTheme.colors.TextSecondary
-            }
+            fontWeight = if (selected) FontWeight.Bold else null,
+            color = if (focused || selected) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary,
         )
     }
     } // Column (B4 caption)
@@ -1670,13 +1662,11 @@ internal fun GuideChannelRow(
             .height(layout.rowHeightDp.dp)
             .padding(horizontal = NuvioTheme.spacing.md, vertical = 1.dp)
             .clip(RoundedCornerShape(NuvioTheme.radii.sm))
-            // Focus = Primary fill + 2dp Primary border (the app's D-pad vocabulary) without
-            // hiding the cells; the currently-tuned channel is marked by the play icon instead.
-            .background(if (isFocused) NuvioTheme.colors.Primary.copy(alpha = 0.22f) else Color.Transparent)
-            .border(
-                if (isFocused) NuvioTheme.spacing.xxs else 0.dp,
-                if (isFocused) NuvioTheme.colors.Primary else Color.Transparent,
-                RoundedCornerShape(NuvioTheme.radii.sm)
+            // Redesign change 2: ring = cursor, soft fill = the row whose cells the cursor is in, red edge = playing
+            // (GuideFocusLanguage). Playing never draws a ring and never shortens the name.
+            .guideFocusLook(
+                GuideFocusLanguage.look(focused = isFocused, selected = timelineActive, playing = isPlaying),
+                RoundedCornerShape(NuvioTheme.radii.sm),
             )
             .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
@@ -1739,7 +1729,8 @@ internal fun GuideChannelRow(
             Text(
                 text = number.toString(),
                 style = MaterialTheme.typography.labelMedium,
-                color = NuvioTheme.colors.TextSecondary,
+                color = if (isPlaying) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary,
+                fontWeight = if (isPlaying) FontWeight.Bold else null,
                 modifier = Modifier.width(30.dp),
                 maxLines = 1
             )
@@ -1753,14 +1744,6 @@ internal fun GuideChannelRow(
                     modifier = Modifier.size(30.dp).clip(RoundedCornerShape(NuvioTheme.radii.xs))
                 )
             }
-            if (isPlaying) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    tint = NuvioTheme.colors.Primary,
-                    modifier = Modifier.size(NuvioTheme.spacing.lg)
-                )
-            }
             Text(
                 text = name,
                 style = MaterialTheme.typography.bodySmall,
@@ -1772,6 +1755,8 @@ internal fun GuideChannelRow(
             // Personalization pin marker — matches the favorite star's trailing-glyph style/placement.
             // A distinct glyph from the star (favorite) and the play icon (currently tuned); does not
             // touch the row's focus modifiers, so the D-pad highlight stays intact.
+            // Playing: level bars beside the name (UX328: the old play glyph sat in front and cut the name short).
+            if (isPlaying) PlayingBars()
             if (isPinned) {
                 Icon(
                     imageVector = Icons.Default.PushPin,
@@ -1819,6 +1804,46 @@ internal fun GuideChannelRow(
         )
     }
 }
+
+/**
+ * Redesign change 2: draws a [GuideFocusLanguage.Look] — the FocusRing inside the element for the cursor, the soft
+ * fill for "selected", a red left edge for "playing", and a hairline at rest so rows survive AMOLED black.
+ */
+internal fun Modifier.guideFocusLook(look: GuideFocusLanguage.Look, shape: androidx.compose.ui.graphics.Shape): Modifier = composed {
+    val ring = NuvioTheme.colors.FocusRing
+    val fill = NuvioTheme.colors.FocusBackground.copy(alpha = GuideFocusLanguage.SELECTED_FILL_ALPHA)
+    val rest = NuvioTheme.colors.Border.copy(alpha = 0.6f)
+    val playing = NuvioTheme.colors.Error
+    this
+        .background(if (look.softFill) fill else Color.Transparent, shape)
+        .border(
+            if (look.ring) GuideFocusLanguage.RING_DP.dp else GuideFocusLanguage.REST_OUTLINE_DP.dp,
+            if (look.ring) ring else if (look.restOutline) rest else Color.Transparent,
+            shape,
+        )
+        .then(
+            if (look.playingMarks) Modifier.drawBehind {
+                drawRect(playing, size = androidx.compose.ui.geometry.Size(PLAYING_EDGE_DP.dp.toPx(), size.height))
+            } else Modifier
+        )
+}
+
+/** Three level bars: the "playing" mark beside the name. Static on purpose: no per-frame work on a 2 GB box. */
+@Composable
+private fun PlayingBars() {
+    val color = NuvioTheme.colors.Error
+    Row(
+        modifier = Modifier.height(NuvioTheme.spacing.md),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        listOf(0.55f, 1f, 0.75f).forEach { h ->
+            Box(Modifier.width(3.dp).fillMaxHeight(h).background(color, RoundedCornerShape(1.dp)))
+        }
+    }
+}
+
+private const val PLAYING_EDGE_DP = 4
 
 /** UX64: the channel's first letter on a tile in the app's neutral surface, for a channel with no logo. */
 @Composable
