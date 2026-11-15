@@ -151,13 +151,15 @@ internal fun LastPlayCard(play: TvLastPlay, colors: TeamColors) {
 }
 
 /**
- * Win-chance chart: 50 % dashed line, the home share in the home colour, an end dot. The newest segment draws over COUNT_MS. Phase D: hollow
+ * Win-chance chart: the reference dashed line (50 % / an even third), the leader's chance in the leader's colour, an end dot. The newest segment draws over COUNT_MS. Phase D: hollow
  * dots on the line at real scoring moments (label above the line from 50 %, below under it; a new one scales in over QUICK_MS) and faint
  * period dividers with labels under the chart. One Canvas; nothing loops.
  */
 @Composable
-internal fun WinChart(chart: TvChart, color: Color, awayColor: Color, modifier: Modifier) {
-    val n = chart.homeShare.size
+internal fun WinChart(chart: TvChart, homeColor: Color, awayColor: Color, modifier: Modifier) {
+    // The line is the LEADER's chance, so it takes the leader's colour; markers keep their own team's colour.
+    val color = if (chart.leaderIsAway) awayColor else homeColor
+    val n = chart.values.size
     val draw = remember { Animatable(1f) }
     LaunchedEffect(n) { if (draw.value == 1f && n > 2) { draw.snapTo(0f); draw.animateTo(1f, tween(MotionSpec.COUNT_MS, easing = Standard)) } }
     // A marker that was not there before scales in once; the markers present on first composition are shown as they are.
@@ -172,8 +174,8 @@ internal fun WinChart(chart: TvChart, color: Color, awayColor: Color, modifier: 
     val labelPaint = remember { android.graphics.Paint().apply { isAntiAlias = true; textAlign = android.graphics.Paint.Align.CENTER } }
     Canvas(modifier) {
         val w = size.width; val h = size.height - (if (chart.dividers.isNotEmpty()) 12.dp.toPx() else 0f)
-        fun pt(i: Int) = Offset(w * i / (n - 1).coerceAtLeast(1), h * (1f - chart.homeShare[i]))
-        drawLine(grid, Offset(0f, h / 2), Offset(w, h / 2), 1.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)))
+        fun pt(i: Int) = Offset(w * i / (n - 1).coerceAtLeast(1), h * (1f - chart.values[i]))
+        drawLine(grid, Offset(0f, h * (1f - chart.reference)), Offset(w, h * (1f - chart.reference)), 1.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)))
         labelPaint.textSize = 9.dp.toPx(); labelPaint.color = ink.toArgb()
         chart.dividers.forEach { (x, text) ->
             drawLine(grid.copy(alpha = 0.6f), Offset(w * x, 0f), Offset(w * x, h), 1f)
@@ -187,7 +189,7 @@ internal fun WinChart(chart: TvChart, color: Color, awayColor: Color, modifier: 
         chart.markers.take(ChartMarkers.TV_MAX_MARKERS).forEach { m ->
             val s = if (m.playId in newIds) pop.value else 1f
             val c = Offset(w * m.x, h * (1f - m.y))
-            val markerColor = if (m.side == SideKey.AWAY) awayColor else color
+            val markerColor = if (m.side == SideKey.AWAY) awayColor else homeColor
             drawCircle(markerColor, 6.dp.toPx() * s, c, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
             labelPaint.color = markerColor.toArgb()
             val ty = if (ChartMarkers.labelAbove(m)) c.y - 9.dp.toPx() else c.y + 17.dp.toPx()

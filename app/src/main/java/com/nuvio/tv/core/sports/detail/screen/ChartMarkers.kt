@@ -9,7 +9,8 @@ import com.nuvio.tv.core.sports.detail.WinPoint
 import kotlin.math.abs
 
 /** [x], [y] in 0..1 chart space; [playId] ties a marker to its play so a marker is recognised across snapshots. */
-data class ChartMarker(val x: Float, val y: Float, val label: String, val side: SideKey?, val playId: String? = null)
+/** [y] is in the PLOTTED space of [WinChanceSeries]; [reference] is that chart's reference line, which decides the label side. */
+data class ChartMarker(val x: Float, val y: Float, val label: String, val side: SideKey?, val playId: String? = null, val reference: Float = 0.5f)
 
 /**
  * Scoring moments and period boundaries on the win-chance chart (Phase D; a TV twin of the Mobile `ChartMarkers`). Rule: a play with no
@@ -25,13 +26,14 @@ object ChartMarkers {
     /** Labels closer than this share of the chart width would overlap: the newer one is kept. */
     private const val MIN_GAP_X = 0.05f
 
-    /** The label sits above the line from 50 % and below it under that. */
-    fun labelAbove(m: ChartMarker): Boolean = m.y >= 0.5f
+    /** The label sits above the line from the chart's reference (50 % two-way, an even third three-way) and below it under that. */
+    fun labelAbove(m: ChartMarker): Boolean = m.y >= m.reference
 
     /** football TD / FG, hockey G / PPG, soccer G / RC (red card); basketball none. At most [max] (the newest), returned left to right. */
-    fun markers(history: List<WinPoint>, plays: List<TimelineItem>, sport: String, max: Int = MAX_MARKERS, toleranceMs: Long = TOLERANCE_MS): List<ChartMarker> {
-        val full = history.sortedBy { it.t }
-        val drawn = GameDetailUiPolicy.chartSeries(history) ?: return emptyList()
+    fun markers(history: List<WinPoint>, plays: List<TimelineItem>, sport: String, max: Int = MAX_MARKERS, toleranceMs: Long = TOLERANCE_MS, spec: WinChanceSpec = WinChanceSpec.HOME_TWO_WAY): List<ChartMarker> {
+        val filled = WinChanceSeries.withDrawFilled(history, spec)
+        val full = filled.sortedBy { it.t }
+        val drawn = GameDetailUiPolicy.chartSeries(filled) ?: return emptyList()
         val kept = ArrayList<ChartMarker>()
         for (p in plays.sortedByDescending { it.wallclockMs ?: Long.MIN_VALUE }) {
             if (kept.size >= max) break
@@ -42,7 +44,7 @@ object ChartMarkers {
             val idx = drawn.indices.minBy { abs(drawn[it].t - nearest.t) }
             val x = idx / (drawn.size - 1).toFloat()
             if (kept.any { abs(it.x - x) < MIN_GAP_X }) continue // overlap: the kept one is newer
-            kept += ChartMarker(x, drawn[idx].home.coerceIn(0, 100) / 100f, label, p.side, p.id)
+            kept += ChartMarker(x, WinChanceSeries.valueOf(drawn[idx], spec), label, p.side, p.id, spec.reference)
         }
         return kept.sortedBy { it.x }
     }
@@ -76,9 +78,9 @@ object ChartMarkers {
     /** Markers for a screen: none when the `chartMarkers` switch is off, there is no series (ESPN-only win chance) or no key events. */
     fun markersFor(d: GameDetail, max: Int = MAX_MARKERS): List<ChartMarker> {
         if (SWITCH !in d.uiSwitches) return emptyList()
-        val series = (d.blocks.filterIsInstance<GameBlock.WinProbability>().firstOrNull())?.history ?: return emptyList()
+        val w = d.blocks.filterIsInstance<GameBlock.WinProbability>().firstOrNull() ?: return emptyList()
         val items = d.blocks.filterIsInstance<GameBlock.Plays>().firstOrNull()?.chartItems ?: return emptyList()
-        return markers(series, items, d.sport, max)
+        return markers(w.history, items, d.sport, max, spec = WinChanceSeries.specOf(w))
     }
 
     fun dividersFor(d: GameDetail): List<Pair<Float, String>> {
