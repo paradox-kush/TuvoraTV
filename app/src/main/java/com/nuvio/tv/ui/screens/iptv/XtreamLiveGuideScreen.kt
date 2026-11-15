@@ -233,6 +233,8 @@ fun LiveGuide(
         uiState.categories.map { it.id }, uiState.selectedCategoryId,
     )
     val categoryEntryFocus = remember { FocusRequester() }
+    // Change 8: one requester per group row, for the held-key letter jump.
+    val categoryRowRequesters = remember(account.id) { mutableMapOf<String, FocusRequester>() }
     val categoryListState = rememberLazyListState(initialFirstVisibleItemIndex = categoryEntryIndex)
     var categoriesPositioned by remember(account.id) { mutableStateOf(uiState.categories.isNotEmpty()) }
     LaunchedEffect(uiState.categories.isNotEmpty()) {
@@ -861,6 +863,30 @@ fun LiveGuide(
                             else -> null
                         },
                         entryFocusRequester = if (index == categoryEntryIndex) categoryEntryFocus else null,
+                        focusRequester = categoryRowRequesters.getOrPut(cat.id) { FocusRequester() },
+                        // Change 8: a held UP / DOWN in the groups part jumps a letter at a time (UX358).
+                        onHeldVertical = { down ->
+                            val cats = uiState.categories
+                            val target = GuideLetterJumpPolicy.target(
+                                names = cats.map { it.name },
+                                inGroupsPart = cats.map { it.aliasOf == null && GuideGroupMemoryPolicy.countsAsRecentGroup(it.special) },
+                                current = index,
+                                down = down,
+                            )
+                            when (target) {
+                                null -> false
+                                index -> true
+                                else -> {
+                                    displayScope.launch {
+                                        categoryListState.scrollToItem((target - 3).coerceAtLeast(0))
+                                        GuideFocusRequestLoop.requestUntilLanded {
+                                            categoryRowRequesters[cats[target].id]?.requestFocusOrFalse() == true
+                                        }
+                                    }
+                                    true
+                                }
+                            }
+                        },
                         label = if (cat.special == GuideSpecial.SEARCH && uiState.searchQuery.isNotBlank()) {
                             stringResource(R.string.iptv_guide_search_label, uiState.searchQuery)
                         } else {
@@ -935,6 +961,10 @@ fun LiveGuide(
                     windowStartMs = windowStartMs,
                     nowMs = nowMs,
                     labelWidth = guideLayout.channelWidthDp.dp,
+                    // Change 8: with the group column collapsed, the shown group's name and size sit above the rows.
+                    groupLabel = if (inCategory) uiState.categories.firstOrNull { it.id == uiState.selectedCategoryId }?.let {
+                        stringResource(R.string.iptv_guide_group_label, it.name, displayChannels.size)
+                    } else null,
                 )
                 if (noGuide && displayChannels.isNotEmpty() && uiState.channelsLoad !is com.nuvio.tv.core.iptv.LoadStatus.Loading) {
                     NoGuideBanner(
@@ -1705,6 +1735,9 @@ private fun GuideCategoryRow(
     label: String,
     /** B4: a non-focusable caption drawn above this row ("Recent groups", "Groups"). */
     sectionLabel: String? = null,
+    focusRequester: FocusRequester? = null,
+    /** Change 8: a held UP / DOWN (a key repeat). Returns true when it handled the press (a letter jump). */
+    onHeldVertical: ((down: Boolean) -> Boolean)? = null,
     selected: Boolean,
     rightFocus: FocusRequester,
     upFocus: FocusRequester? = null,
@@ -1730,6 +1763,7 @@ private fun GuideCategoryRow(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (entryFocusRequester != null) Modifier.focusRequester(entryFocusRequester) else Modifier)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .focusProperties {
                 right = rightFocus
                 if (upFocus != null) up = upFocus
@@ -1748,6 +1782,9 @@ private fun GuideCategoryRow(
                 // Focus shows a category only once it settles (GuideCategorySettlePolicy); RIGHT
                 // enters it, so it must be on screen before focus crosses into the channel list.
                 if (event.key == Key.DirectionRight && event.type == KeyEventType.KeyDown) onEnter()
+                if ((event.key == Key.DirectionUp || event.key == Key.DirectionDown) && event.type == KeyEventType.KeyDown &&
+                    event.nativeKeyEvent.repeatCount > 0 && onHeldVertical?.invoke(event.key == Key.DirectionDown) == true
+                ) return@onPreviewKeyEvent true
                 if (onMenu == null || event.key != Key.Menu) return@onPreviewKeyEvent false
                 if (event.type == KeyEventType.KeyDown) onMenu()
                 true

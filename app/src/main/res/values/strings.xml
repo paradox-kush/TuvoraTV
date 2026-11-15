@@ -3652,6 +3652,8 @@
     <string name="iptv_panel_section_guide">Guide</string>
     <string name="iptv_panel_section_tidy">Tidy</string>
     <string name="iptv_panel_section_info">Info</string>
+    <!-- Change 8: the shown group above the rows while the group column is closed. -->
+    <string name="iptv_guide_group_label">%1$s · %2$d</string>
     <!-- B4: captions in the group column. -->
     <string name="iptv_guide_recent_groups">Recent groups</string>
     <string name="iptv_guide_all_groups">Groups</string>

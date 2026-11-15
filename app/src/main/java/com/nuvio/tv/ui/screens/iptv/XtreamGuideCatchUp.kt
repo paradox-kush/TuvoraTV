@@ -408,6 +408,8 @@ internal fun GuideTimeHeaderWithDay(
     windowStartMs: Long,
     nowMs: Long,
     labelWidth: Dp,
+    /** Change 8: the shown group ("Sport · 42") in place of "Today" while at now and the group column is closed. */
+    groupLabel: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -421,7 +423,7 @@ internal fun GuideTimeHeaderWithDay(
         ) {
             val atLive = GuideTimeTravel.isAtLiveEdge(windowStartMs, nowMs)
             Text(
-                text = guideDayLabel(windowStartMs, nowMs),
+                text = groupLabel?.takeIf { atLive } ?: guideDayLabel(windowStartMs, nowMs),
                 style = MaterialTheme.typography.labelSmall,
                 color = if (atLive) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.Primary,
                 fontWeight = if (atLive) FontWeight.Normal else FontWeight.Bold,
