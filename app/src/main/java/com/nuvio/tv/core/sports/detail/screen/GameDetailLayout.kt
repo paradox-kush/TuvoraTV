@@ -135,6 +135,8 @@ object LeftColumnFit {
         val strip: Strip = Strip.NONE,
         val lastPlay: Boolean,
         val winChance: Boolean,
+        /** The situation text line (`2nd & 5`, `Top 5th`) shows in the win-chance card, or alone as its own small card when there is no win chance. */
+        val situation: Boolean = false,
         val chart: Boolean,
         val source: Boolean,
         /** Extra scoreboard height (soccer scorer lines under the team names). */
@@ -165,6 +167,9 @@ object LeftColumnFit {
     const val LAST_PLAY_DP = 38
     const val WIN_CHANCE_DP = 100
     const val CHART_DP = 76
+    const val SITUATION_EXTRA_DP = 30
+    const val COMPACT_SITUATION_DP = 23
+    const val SITUATION_ONLY_DP = 46
     const val SOURCE_DP = 83
 
     fun heightOf(p: Parts, plan: Plan): Int = heightOf(p, plan.showChart, plan.showLastPlay, plan.compactWinChance, plan.tightGaps)
@@ -175,7 +180,10 @@ object LeftColumnFit {
             when (p.strip) { Strip.FOOTBALL -> add(FOOTBALL_STRIP_DP); Strip.SOCCER -> add(SOCCER_STRIP_DP)
                 Strip.BASKETBALL -> add(BASKETBALL_STRIP_DP); Strip.HOCKEY -> add(HOCKEY_STRIP_DP); Strip.NONE -> Unit }
             if (p.lastPlay && showLastPlay) add(LAST_PLAY_DP)
-            if (p.winChance) add(if (compactWinChance) COMPACT_WIN_CHANCE_DP else WIN_CHANCE_DP + if (p.chart && showChart) CHART_DP else 0)
+            if (p.winChance) add(
+                if (compactWinChance) COMPACT_WIN_CHANCE_DP + if (p.situation) COMPACT_SITUATION_DP else 0
+                else WIN_CHANCE_DP + (if (p.situation) SITUATION_EXTRA_DP else 0) + if (p.chart && showChart) CHART_DP else 0,
+            ) else if (p.situation) add(SITUATION_ONLY_DP)
             if (p.source) add(SOURCE_DP)
         }
         return cards.sum() + (if (tightGaps) TIGHT_GAP_DP else GAP_DP) * (cards.size - 1).coerceAtLeast(0)

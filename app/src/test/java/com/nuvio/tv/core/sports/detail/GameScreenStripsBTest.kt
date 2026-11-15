@@ -243,6 +243,20 @@ class LeftColumnFitTest {
             assertTrue("$name: the win-chance numbers stay (compact, not dropped)", parts.winChance)
         }
     }
+    @Test fun `a situation line is budgeted with and without a win chance and still fits 472 dp`() {
+        val situationOnly = full.copy(winChance = false, chart = false, situation = true)
+        assertTrue("situation text alone is a card with a height", LeftColumnFit.heightOf(situationOnly, showChart = false, showLastPlay = false) >
+            LeftColumnFit.heightOf(situationOnly.copy(situation = false), showChart = false, showLastPlay = false))
+        val both = full.copy(situation = true)
+        assertTrue("with a win chance the situation line makes the card taller",
+            LeftColumnFit.heightOf(both, showChart = false, showLastPlay = false) > LeftColumnFit.heightOf(full, showChart = false, showLastPlay = false))
+        for ((name, strip) in listOf("basketball" to LeftColumnFit.Strip.BASKETBALL, "hockey" to LeftColumnFit.Strip.HOCKEY, "none" to LeftColumnFit.Strip.NONE)) {
+            for (p in listOf(both.copy(strip = strip), situationOnly.copy(strip = strip))) {
+                val plan = LeftColumnFit.plan(472, p)
+                assertTrue("$name situation=${p.situation} win=${p.winChance}: ${LeftColumnFit.heightOf(p, plan)} dp must fit 472", LeftColumnFit.heightOf(p, plan) <= 472)
+            }
+        }
+    }
     @Test fun `compaction is the last resort and only when needed`() {
         val roomy = LeftColumnFit.plan(1000, full)
         assertFalse(roomy.compactWinChance); assertFalse(roomy.tightGaps)

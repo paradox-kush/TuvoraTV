@@ -268,7 +268,8 @@ fun GameDetailScreen(
                                 model.basketball != null -> LeftColumnFit.Strip.BASKETBALL; model.hockey != null -> LeftColumnFit.Strip.HOCKEY
                                 else -> LeftColumnFit.Strip.NONE
                             },
-                            lastPlay = sectioned && model.lastPlay != null, winChance = model.winChance != null, chart = model.chart != null,
+                            lastPlay = sectioned && model.lastPlay != null, winChance = model.winChance != null,
+                            situation = model.state != com.nuvio.tv.core.sports.detail.GameState.UPCOMING && model.situation != null, chart = model.chart != null,
                             source = watch.visible, scorerLines = listOf(model.soccer?.homeScorers, model.soccer?.awayScorers).count { !it.isNullOrEmpty() },
                         ),
                     )
@@ -489,7 +490,7 @@ private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentB
 
 @Composable
 private fun SituationCard(model: GameDetailTvModel, colors: TeamColors, showChart: Boolean = true, compact: Boolean = false) {
-    if (compact && model.winChance != null) { CompactWinChanceCard(model.winChance, model, colors); return }
+    if (compact && model.winChance != null) { CompactWinChanceCard(model.winChance, model, colors, model.situation); return }
     Card {
         model.situation?.let {
             Text(it, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
@@ -540,12 +541,14 @@ private fun SituationCard(model: GameDetailTvModel, colors: TeamColors, showChar
 
 /** The win-chance card when the left column is tight: numbers row, bar, and the one-line credit (never dropped). No chart, no extra line. */
 @Composable
-private fun CompactWinChanceCard(w: com.nuvio.tv.core.sports.detail.screen.TvWinChance, model: GameDetailTvModel, colors: TeamColors) {
+private fun CompactWinChanceCard(w: com.nuvio.tv.core.sports.detail.screen.TvWinChance, model: GameDetailTvModel, colors: TeamColors, situation: String?) {
     val foot = listOfNotNull(w.caption, w.staleLabel).joinToString("  ·  ")
     val home = model.sides.getOrNull(0)?.tvName.orEmpty(); val away = model.sides.getOrNull(1)?.tvName.orEmpty()
     val homeShown = animatedPercent(w.homePercent); val awayShown = animatedPercent(w.awayPercent)
     val homeBar = animatedShare(w.homePercent); val awayBar = animatedShare(w.awayPercent)
     Card {
+        // The situation line (football down-and-distance, baseball count) stays in compact mode: one line, smaller.
+        situation?.let { Text(it, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis); Spacer(Modifier.height(3.dp)) }
         Row(Modifier.fillMaxWidth()) {
             Text("$home $homeShown%", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = colors.home, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             w.drawPercent?.let { Text("Draw $it%", fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, modifier = Modifier.padding(horizontal = 12.dp)) }
