@@ -1304,6 +1304,7 @@ fun LiveGuide(
                     epg = uiState.epg,
                     playingContentId = playingContentId,
                     favoriteIds = favoriteIds,
+                    nowMs = nowMs,
                     // Browsing fetches the row's now/next but never tunes or moves the aimed channel.
                     onBrowse = { viewModel.ensureEpg(it.streamId) },
                     onPick = { picked ->

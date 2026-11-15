@@ -73,6 +73,8 @@ internal fun BoxScope.LiveChannelListOverlay(
     /** UX107: the aimed channel — the anchor when the playing channel is no longer a row (it was hidden). */
     aimedContentId: String? = null,
     favoriteIds: Set<String>,
+    /** B5: the clock for each row's progress line. */
+    nowMs: Long = System.currentTimeMillis(),
     onBrowse: (GuideChannel) -> Unit,
     onPick: (GuideChannel) -> Unit,
     onClose: () -> Unit,
@@ -131,6 +133,7 @@ internal fun BoxScope.LiveChannelListOverlay(
                     number = index + 1,
                     channel = channel,
                     nowTitle = epg[channel.streamId]?.now?.title,
+                    nowProgress = epg[channel.streamId]?.now?.let { GuideNowProgress.fraction(it.startMs, it.endMs, nowMs) },
                     playing = channel.contentId == playingContentId,
                     favorite = channel.contentId in favoriteIds,
                     focusRequester = if (index == startIndex) startFocus else null,
@@ -147,6 +150,8 @@ private fun ChannelListRow(
     number: Int,
     channel: GuideChannel,
     nowTitle: String?,
+    /** B5: how far the programme on now has run, or null for no line. */
+    nowProgress: Float? = null,
     playing: Boolean,
     favorite: Boolean,
     focusRequester: FocusRequester?,
@@ -215,6 +220,14 @@ private fun ChannelListRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            nowProgress?.let { fraction ->
+                Box(
+                    Modifier.padding(top = 2.dp).fillMaxWidth().height(2.dp)
+                        .clip(RoundedCornerShape(1.dp)).background(NuvioTheme.colors.Border),
+                ) {
+                    Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().background(NuvioTheme.colors.FocusRing))
+                }
             }
         }
     }
