@@ -155,6 +155,8 @@ fun LiveGuide(
     /** UX389: true on the hub's first entry only. Focus then goes to the channel list (never the tab row, never a tune). */
     entryFocusPending: Boolean = false,
     onEntryFocusConsumed: () -> Unit = {},
+    /** Device pass 1, finding 4: told which region holds focus, so RIGHT out of the side rail returns there. */
+    contentReturn: HubContentReturn? = null,
     /** UX331: "Fix guide" — open this playlist's guide settings. */
     onFixGuide: (accountId: String) -> Unit = {},
     /** Change 15: the header's Guide options was pressed (bumped per press); [onGuideOptionsClosed] hands focus back. */
@@ -891,7 +893,11 @@ fun LiveGuide(
                     .fillMaxHeight()
                     .focusRequester(categoryListFocus)
                     // B254: leaving the column drops a switch still pending for a category only passed.
-                    .onFocusChanged { if (!it.hasFocus) viewModel.onCategoryColumnFocusLost() }
+                    .onFocusChanged {
+                        if (!it.hasFocus) viewModel.onCategoryColumnFocusLost()
+                        // Reopening lands on the group left (else the shown group, the column's restorer fallback).
+                        else contentReturn?.remember { categoryListFocus }
+                    }
                     .guideKeyRepeatGate()
                     .focusRestorer(categoryEntryFocus),
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
@@ -1097,7 +1103,13 @@ fun LiveGuide(
                             .focusRequester(channelListFocus)
                             // Focus arriving anywhere in the guide means the viewer has committed
                             // to this category — give the grid the width.
-                            .onFocusChanged { if (it.hasFocus) inCategory = true }
+                            .onFocusChanged {
+                                if (it.hasFocus) {
+                                    inCategory = true
+                                    // The aimed channel is the row last focused (onChannelFocused).
+                                    contentReturn?.remember { aimedChannel()?.entityId?.let { channelRowRequesters[it] } ?: channelListFocus }
+                                }
+                            }
                             .guideKeyRepeatGate()
                             .focusRestorer(firstChannelFocus),
                         contentPadding = PaddingValues(bottom = NuvioTheme.spacing.xxl)

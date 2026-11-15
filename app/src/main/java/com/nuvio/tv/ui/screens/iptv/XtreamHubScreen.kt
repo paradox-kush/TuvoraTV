@@ -137,6 +137,8 @@ fun XtreamHubScreen(
     // UX389: the first entry puts focus in the channel list (last-watched row, else row 1), not on the tab row.
     // One shot, and cancelled by the viewer's first key so a late list never steals focus from where they went.
     var entryFocusPending by remember { mutableStateOf(true) }
+    // Device pass 1, finding 4: the content region RIGHT out of the side rail returns to.
+    val contentReturn = remember { HubContentReturn() }
     val fixGuideViewModel: GuideFixActionViewModel = hiltViewModel()
 
     // Per-tab focus targets so D-pad UP from the first content row lands back on the
@@ -294,6 +296,8 @@ fun XtreamHubScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(top = if (liveFullscreen) 0.dp else NuvioTheme.spacing.xl)
+            // Device pass 1, finding 4: RIGHT out of the side rail returns to the control the viewer left.
+            .hubContentFocusRestore(contentReturn)
             .onPreviewKeyEvent { event ->
                 if (entryFocusPending && event.type == KeyEventType.KeyDown) entryFocusPending = false
                 false
@@ -318,6 +322,8 @@ fun XtreamHubScreen(
                 .fillMaxWidth()
                 .padding(start = HubRowStartPadding, end = HubRowStartPadding, bottom = NuvioTheme.spacing.md)
                 .hubHeaderFocusScope(headerFocus)
+                // Leaving from the header (LEFT on Live TV) comes back to the header.
+                .onFocusChanged { if (it.hasFocus) contentReturn.remember(null) }
                 .focusRestorer(headerRestoreTarget),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
@@ -383,6 +389,7 @@ fun XtreamHubScreen(
                 onOpenRecordings = onOpenRecordings,
                 entryFocusPending = entryFocusPending && uiState.section == XtreamSection.LIVE,
                 onEntryFocusConsumed = { entryFocusPending = false },
+                contentReturn = contentReturn,
                 onFixGuide = { id -> fixGuideViewModel.openPlaylistSettings(id); onManagePlaylists() },
             )
         } else {
