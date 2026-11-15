@@ -31,7 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -57,6 +56,7 @@ import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.ui.screens.iptv.ChannelListRow
 import com.nuvio.tv.ui.screens.iptv.GuideCategory
 import com.nuvio.tv.ui.screens.iptv.GuideFocusRequestLoop
+import kotlinx.coroutines.launch
 import com.nuvio.tv.ui.screens.iptv.GuideSearchDialog
 import com.nuvio.tv.ui.screens.iptv.GuideSpecial
 import com.nuvio.tv.ui.screens.iptv.XtreamLiveGuideViewModel
@@ -127,17 +127,26 @@ private fun PickerBody(
     val categoryFocus = remember { FocusRequester() }
     val channelsFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // The channel list is replaced when the group commits, so its first row is not attached yet on the key: ask
+    // once per frame until it lands (the guide does the same), never a one-shot request that silently fails.
+    val enterChannels: () -> Unit = {
+        viewModel.commitFocusedCategory()
+        scope.launch { GuideFocusRequestLoop.requestUntilLanded { channelsFocus.requestFocusOrFalse() } }
+    }
 
     // Enter on the selected group once the groups have loaded.
     LaunchedEffect(ui.categories.isNotEmpty()) {
         if (ui.categories.isNotEmpty()) GuideFocusRequestLoop.requestUntilLanded { categoryFocus.requestFocusOrFalse() }
     }
 
+    // No `focusProperties { onExit = cancelFocusChange }` here: it is inherited by every focus target below, so the
+    // group rows could not hand focus to the channel list (the device pass caught this). The tiles behind the panel
+    // are already unfocusable while it is open (`canFocus = !overlayOpen`).
     Column(
         Modifier
             .fillMaxSize()
             .focusGroup()
-            .focusProperties { onExit = { cancelFocusChange() } }
             .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.lg),
         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
     ) {
@@ -180,12 +189,9 @@ private fun PickerBody(
                         onFocused = { if (category.special != GuideSpecial.SEARCH) viewModel.onCategoryFocused(category.id) },
                         onOpen = {
                             if (category.special == GuideSpecial.SEARCH) searchOpen = true
-                            else viewModel.commitFocusedCategory()
+                            else enterChannels()
                         },
-                        onEnterChannels = {
-                            viewModel.commitFocusedCategory()
-                            channelsFocus.requestFocusOrFalse()
-                        },
+                        onEnterChannels = enterChannels,
                     )
                 }
             }
