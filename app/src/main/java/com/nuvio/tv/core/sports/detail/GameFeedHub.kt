@@ -36,7 +36,7 @@ class GameFeedHub(
     private val clock: () -> Long = System::currentTimeMillis,
     private val delayFn: suspend (Long) -> Unit = { delay(it) },
 ) {
-    constructor(scope: CoroutineScope, service: SportsDetailService, clock: () -> Long = System::currentTimeMillis) :
+    constructor(scope: CoroutineScope, service: SportsDetailService, clock: () -> Long = com.nuvio.tv.core.radar.RadarTime::nowMs) :
         this(scope, service::open, service::refreshConfig, clock)
 
     private class Entry(val poller: GameDetailPoller, val shared: MutableSharedFlow<DetailLoad>) {
