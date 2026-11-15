@@ -1,42 +1,33 @@
 package com.nuvio.tv.core.sports.detail
 
 import com.nuvio.tv.core.sports.detail.screen.GameDetailPoller
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 
-/** A consumer's hold on one game's shared feed. [release] is idempotent; after it the [feed] completes. */
-interface GameFeedHandle {
-    /** Latest snapshot first (replay 1), then every tick. Completes once this handle is released. */
-    val feed: Flow<DetailLoad>
-
-    fun release()
-}
-
 /**
- * One shared, ref-counted poller per game (multiview shows several games, each possibly in several tiles).
+ * One shared poller per game (multiview shows several games, each possibly in several tiles), tied to COLLECTION:
  *
- *  - The FIRST [acquire] of a game starts ONE [GameDetailPoller] on a fresh [GameDetailSource]; further acquires share it
- *    (one set of requests, whatever the consumer count).
- *  - The LAST [GameFeedHandle.release] cancels the poller: no request is issued afterwards. Acquiring again starts a new
- *    poller, whose first tick is a full one.
- *  - A late subscriber gets the latest snapshot immediately (replay 1).
- *  - Cadence, backoff and idle handling are the poller's ([GameDetailRefreshPolicy.plan]). A final / postponed / far-off game
- *    stops ITSELF after its first load: no more requests, and the flow HOLDS the last value (it does not complete) until the
- *    last consumer releases.
+ *  - [feed] acquires when a collector starts and releases when it stops - completion, cancellation or an exception, in a `finally` -
+ *    so a cancelled consumer can never leak the poller. There is no handle a caller must remember to release.
+ *  - The FIRST collector of a game starts ONE [GameDetailPoller]; further collectors share it (one set of requests whatever the count).
+ *  - The LAST collector leaving PAUSES the game: the poller is cancelled (no request follows), but the entry keeps its source, its
+ *    poller (with its last-fetch times) and its last snapshot. Collecting again within [PAUSE_KEEP_MS] resumes from them: the snapshot
+ *    replays at once and the next request waits for its slot - no summary + whole-day scoreboard refetch. A game left paused longer
+ *    than that is dropped, and its next collector starts fresh with a full tick.
+ *  - A late collector gets the latest snapshot immediately (replay 1). A final / postponed / far-off game stops ITSELF after its
+ *    first load and the flow holds the last value.
+ *  - [retry] is user / event driven (a Retry button, never a timer): one full tick now, then the normal cadence resumes. A source
+ *    that throws ends that run with `Failed` and the poll stops (no hot loop) until a collector returns or [retry] is called.
  *
- * Lifecycle: the caller owns [scope] (a screen / view-model scope) and calls [GameFeedHandle.release] when its screen stops
- * being RESUMED (`repeatOnLifecycle(RESUMED) { val h = hub.acquire(ref); try { h.feed.collect(...) } finally { h.release() } }`).
- * There is no loop here: the only repeating work is the poller's, and cancelling [scope] cancels it.
+ * Cadence, backoff and idle handling are the poller's ([GameDetailRefreshPolicy.plan]); the only repeating work is the poller's.
  */
 class GameFeedHub(
     private val scope: CoroutineScope,
@@ -48,38 +39,59 @@ class GameFeedHub(
     constructor(scope: CoroutineScope, service: SportsDetailService, clock: () -> Long = System::currentTimeMillis) :
         this(scope, service::open, service::refreshConfig, clock)
 
-    private class Entry(val shared: MutableSharedFlow<DetailLoad>) {
+    private class Entry(val poller: GameDetailPoller, val shared: MutableSharedFlow<DetailLoad>) {
         var refs = 0
         var job: Job? = null
+        var pausedAt: Long? = null
     }
 
     private val lock = Any()
     private val entries = HashMap<String, Entry>()
 
-    fun acquire(ref: GameRef): GameFeedHandle {
-        val entry: Entry
-        val start: Boolean
-        synchronized(lock) {
-            val existing = entries[ref.gameId]
-            entry = existing ?: Entry(MutableSharedFlow(replay = 1, extraBufferCapacity = 0, onBufferOverflow = BufferOverflow.DROP_OLDEST)).also { entries[ref.gameId] = it }
-            entry.refs++
-            start = existing == null
-            if (start) entry.job = launchPoller(ref, entry)
+    /** The feed of [ref]: latest snapshot first (replay 1), then every tick. Collecting acquires, ending the collection releases. */
+    fun feed(ref: GameRef): Flow<DetailLoad> = flow {
+        val entry = retain(ref)
+        try {
+            emitAll(entry.shared)
+        } finally {
+            release(ref.gameId, entry)
         }
-        return Handle(ref.gameId, entry)
     }
 
-    private fun launchPoller(ref: GameRef, entry: Entry): Job = scope.launch {
-        val poller = GameDetailPoller(
-            source = open(ref), startsAtMs = ref.startsAtMs, initialState = ref.seedState, config = config(), clock = clock,
-            delayFn = delayFn, wantsUpcomingSummary = ref.sport.equals("Soccer", ignoreCase = true),
-        )
+    /** User-driven Retry: one full tick now (backoff reset), then the normal cadence. No effect on a game nobody collects. */
+    fun retry(gameId: String) {
+        synchronized(lock) {
+            val entry = entries[gameId]?.takeIf { it.refs > 0 } ?: return
+            entry.job?.cancel()
+            entry.job = launchRun(entry, retryFirst = true)
+        }
+    }
+
+    private fun retain(ref: GameRef): Entry = synchronized(lock) {
+        evictStale()
+        val entry = entries.getOrPut(ref.gameId) {
+            val shared = MutableSharedFlow<DetailLoad>(replay = 1, extraBufferCapacity = 0, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+            val poller = GameDetailPoller(
+                source = open(ref), startsAtMs = ref.startsAtMs, initialState = ref.seedState, config = config(), clock = clock,
+                delayFn = delayFn, wantsUpcomingSummary = ref.sport.equals("Soccer", ignoreCase = true),
+            )
+            Entry(poller, shared)
+        }
+        entry.refs++
+        entry.pausedAt = null
+        if (entry.refs == 1) entry.job = launchRun(entry, retryFirst = false)
+        entry
+    }
+
+    private fun launchRun(entry: Entry, retryFirst: Boolean): Job = scope.launch {
         try {
-            poller.run { entry.shared.tryEmit(it) }
+            if (retryFirst) entry.poller.retry { entry.shared.tryEmit(it) }
+            entry.poller.run { entry.shared.tryEmit(it) }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            // A source must never throw; if one does, the screen keeps its last value and the poll ends (no hot retry loop).
+            // A source must never throw; if one does the feed shows Failed and the run ends (no hot retry loop). A returning collector
+            // or retry() starts the next run.
             entry.shared.tryEmit(DetailLoad.Failed())
         }
     }
@@ -88,30 +100,25 @@ class GameFeedHub(
         val job = synchronized(lock) {
             entry.refs--
             if (entry.refs > 0) return
-            if (entries[gameId] === entry) entries.remove(gameId)
-            entry.job
+            entry.pausedAt = clock()
+            entry.job.also { entry.job = null }
         }
         job?.cancel()
     }
 
-    /** Number of games currently polled (tests, diagnostics). */
-    fun activeGames(): Int = synchronized(lock) { entries.size }
+    private fun evictStale() {
+        val now = clock()
+        entries.entries.removeAll { (_, e) -> e.refs == 0 && e.pausedAt?.let { now - it > PAUSE_KEEP_MS } == true }
+    }
 
-    private inner class Handle(private val gameId: String, private val entry: Entry) : GameFeedHandle {
-        private val released = AtomicBoolean(false)
-        private val done = CompletableDeferred<Unit>()
-        val shared: SharedFlow<DetailLoad> = entry.shared
+    /** Number of games currently polled (at least one collector). */
+    fun activeGames(): Int = synchronized(lock) { entries.values.count { it.refs > 0 } }
 
-        override val feed: Flow<DetailLoad> = channelFlow {
-            val collector = launch { shared.collect { send(it) } }
-            done.await()
-            collector.cancel()
-        }
+    /** Games kept for a quick resume (paused, snapshot and fetch times held). */
+    fun pausedGames(): Int = synchronized(lock) { entries.values.count { it.refs == 0 } }
 
-        override fun release() {
-            if (!released.compareAndSet(false, true)) return
-            done.complete(Unit)
-            release(gameId, entry)
-        }
+    companion object {
+        /** How long a game nobody collects keeps its snapshot and fetch times for a no-refetch resume. */
+        const val PAUSE_KEEP_MS = 10 * 60_000L
     }
 }
