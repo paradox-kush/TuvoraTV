@@ -34,9 +34,11 @@ import javax.inject.Singleton
 class SurfaceCatchUp @Inject constructor(
     @ApplicationContext context: Context,
     private val authManager: AuthManager,
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val startupSyncService: dagger.Lazy<StartupSyncService>,
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     private val preferences = context.getSharedPreferences("nuvio_sync_surface_versions", Context.MODE_PRIVATE)
     private val mutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true }

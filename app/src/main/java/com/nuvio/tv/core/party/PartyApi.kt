@@ -24,8 +24,10 @@ internal data class PartyIdentity(
 
 @Singleton
 class PartyApi @Inject constructor(
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     internal suspend fun create(identity: PartyIdentity, media: PartyMedia, playback: PartyPlayback?): PartySnapshot =
         callWithProfile("watch_party_create", identity.profileIndex, buildJsonObject {
             putIdentity(identity)

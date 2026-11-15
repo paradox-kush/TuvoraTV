@@ -37,9 +37,11 @@ internal data class DeviceClientMetadata(
 class DeviceSessionRegistration @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val authManager: AuthManager,
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val syncClientIdentity: SyncClientIdentity
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val registrationMutex = Mutex()
     private var lastRegistrationAtMs = 0L

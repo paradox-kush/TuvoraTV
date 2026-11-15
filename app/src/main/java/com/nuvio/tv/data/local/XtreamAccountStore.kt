@@ -33,7 +33,7 @@ class XtreamAccountStore @Inject constructor(
     private val profileManager: ProfileManager,
     private val deviceSources: com.nuvio.tv.core.sources.DeviceSources? = null,
 ) {
-    private val gson = Gson()
+    private val gson by lazy { Gson() } // not at injection: Gson's first use class-inits Excluder on Main
     private val accountsKey = stringPreferencesKey("xtream_accounts")
 
     private fun store(pid: Int = profileManager.activeProfileId.value) = factory.get(pid, FEATURE)

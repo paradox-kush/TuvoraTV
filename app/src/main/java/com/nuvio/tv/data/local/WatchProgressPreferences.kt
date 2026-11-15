@@ -65,7 +65,7 @@ class WatchProgressPreferences @Inject constructor(
     private fun archiveStore(profileId: Int = profileManager.activeProfileId.value) =
         factory.get(profileId, WATCH_PROGRESS_ARCHIVE_FEATURE)
 
-    private val gson = Gson()
+    private val gson by lazy { Gson() } // not at injection: Gson's first use class-inits Excluder on Main
     private val lastSuccessfulPushMsKey = longPreferencesKey("last_successful_push_ms")
     private val deltaCursorKey = longPreferencesKey("watch_progress_delta_cursor")
     private val deltaInitializedKey = booleanPreferencesKey("watch_progress_delta_initialized")

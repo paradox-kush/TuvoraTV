@@ -49,7 +49,7 @@ private data class ProviderCredentialScope(
 
 @Singleton
 class ProviderCredentialSyncService @Inject constructor(
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val authManager: AuthManager,
     private val profileManager: ProfileManager,
     private val debridSettingsDataStore: DebridSettingsDataStore,
@@ -57,6 +57,8 @@ class ProviderCredentialSyncService @Inject constructor(
     private val animeSkipSettingsDataStore: AnimeSkipSettingsDataStore,
     private val syncClientIdentity: SyncClientIdentity
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val syncMutex = Mutex()
     private val stateLock = Any()

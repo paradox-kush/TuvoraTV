@@ -47,7 +47,7 @@ class MediaServerSyncServiceTest {
     private val activeProfileId = MutableStateFlow(1)
     private val repository = ServerRepository(MemoryServerPersistence(), listOf(FakeServerProvider()), CoroutineScope(Dispatchers.Unconfined))
     private val service = MediaServerSyncService(
-        postgrest = postgrest(),
+        postgrestLazy = postgrest().let { client -> dagger.Lazy { client } },
         authManager = mockk<AuthManager>(relaxed = true) { every { authState } returns this@MediaServerSyncServiceTest.authState },
         profileManager = mockk<ProfileManager> { every { activeProfileId } returns this@MediaServerSyncServiceTest.activeProfileId },
         repository = repository,

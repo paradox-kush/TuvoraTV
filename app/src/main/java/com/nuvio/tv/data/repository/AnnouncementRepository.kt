@@ -33,11 +33,13 @@ private const val TAG = "Announcements"
  */
 @Singleton
 class AnnouncementRepository @Inject constructor(
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val store: AnnouncementDataStore,
     private val authManager: AuthManager,
     @ApplicationContext private val context: Context,
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     private val refreshMutex = Mutex()
 
     /**

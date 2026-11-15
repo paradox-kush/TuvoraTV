@@ -43,7 +43,7 @@ data class WatchedItemsRemoteSyncResult(
 @Singleton
 class WatchedItemsSyncService @Inject constructor(
     private val authManager: AuthManager,
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val watchedItemsPreferences: WatchedItemsPreferences,
     private val trackingProviderRegistry: TrackingProgressProviderRegistry,
     private val traktSettingsDataStore: TraktSettingsDataStore,
@@ -51,6 +51,8 @@ class WatchedItemsSyncService @Inject constructor(
     private val syncClientIdentity: SyncClientIdentity,
     private val mutationStore: WatchStateMutationStore
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     private val deltaSyncMutex = Mutex()
     private val outboundSyncMutexes = ConcurrentHashMap<Int, Mutex>()
 

@@ -25,10 +25,12 @@ private const val TAG = "SyncDeviceReporter"
 @Singleton
 class SyncDeviceReporter @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val syncClientIdentity: SyncClientIdentity,
     private val authManager: AuthManager,
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     @Volatile
     private var reportedForClientId: String? = null
 

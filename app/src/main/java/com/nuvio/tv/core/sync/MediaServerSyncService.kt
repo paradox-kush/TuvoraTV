@@ -34,13 +34,15 @@ import kotlinx.serialization.json.put
 
 @Singleton
 class MediaServerSyncService @Inject constructor(
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val authManager: AuthManager,
     private val profileManager: ProfileManager,
     private val repository: ServerRepository,
     private val syncClientIdentity: SyncClientIdentity,
     private val managedBridge: com.nuvio.tv.data.mediaserver.ManagedAddonBridge
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val syncMutex = Mutex()
     private var foregroundPullJob: Job? = null

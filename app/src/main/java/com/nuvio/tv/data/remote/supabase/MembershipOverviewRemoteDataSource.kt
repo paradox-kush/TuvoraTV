@@ -10,8 +10,10 @@ import javax.inject.Singleton
 
 @Singleton
 class MembershipOverviewRemoteDataSource @Inject constructor(
-    private val postgrest: Postgrest
+    private val postgrestLazy: dagger.Lazy<Postgrest>
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     suspend fun getMembershipOverview(): MembershipOverview {
         val response = postgrest.rpc("get_my_membership_overview")
             .decodeList<MembershipOverviewResponse>()

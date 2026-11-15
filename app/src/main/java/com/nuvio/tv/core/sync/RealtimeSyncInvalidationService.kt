@@ -50,12 +50,14 @@ private const val REALTIME_HEALTH_CHECK_MS = 5_000L
 class RealtimeSyncInvalidationService @Inject constructor(
     private val authManager: AuthManager,
     private val profileManager: ProfileManager,
-    private val supabaseClient: SupabaseClient,
+    private val supabaseClientLazy: dagger.Lazy<SupabaseClient>,
     private val syncClientIdentity: SyncClientIdentity,
     private val startupSyncService: StartupSyncService,
     private val surfaceCatchUp: dagger.Lazy<SurfaceCatchUp>,
     private val deviceSources: dagger.Lazy<com.nuvio.tv.core.sources.DeviceSources>,
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val supabaseClient: SupabaseClient get() = supabaseClientLazy.get()
     // Invalidation pulls are a convenience; nothing here is worth taking the process down for.
     private val crashGuard = CoroutineExceptionHandler { _, error ->
         Log.e(TAG, "Realtime sync invalidation failed", error)

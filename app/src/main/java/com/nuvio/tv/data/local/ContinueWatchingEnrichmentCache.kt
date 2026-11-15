@@ -127,7 +127,7 @@ class ContinueWatchingEnrichmentCache @Inject constructor(
         private const val MAX_RECORDS = 500
     }
 
-    private val gson = Gson()
+    private val gson by lazy { Gson() } // not at injection: Gson's first use class-inits Excluder on Main
     private val mutex = Mutex()
     @Volatile private var lastNextUpWriteMs = 0L
     @Volatile private var lastInProgressWriteMs = 0L

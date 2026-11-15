@@ -25,9 +25,11 @@ import javax.inject.Singleton
 @Singleton
 class SupabaseLibrarySyncRemoteDataSource @Inject constructor(
     private val authManager: AuthManager,
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val syncClientIdentity: SyncClientIdentity
 ) : LibrarySyncRemoteDataSource {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true

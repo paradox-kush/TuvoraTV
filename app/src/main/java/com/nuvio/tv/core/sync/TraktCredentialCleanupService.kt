@@ -18,11 +18,13 @@ private const val TRAKT_CREDENTIAL_TAG = "TraktCredentialCleanup"
 
 @Singleton
 class TraktCredentialCleanupService @Inject constructor(
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val authManager: AuthManager,
     private val profileManager: ProfileManager,
     private val syncClientIdentity: SyncClientIdentity
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     private val mutex = Mutex()
 
     private suspend fun <T> withJwtRefreshRetry(block: suspend () -> T): T {

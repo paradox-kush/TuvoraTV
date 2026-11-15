@@ -45,11 +45,14 @@ data class ProfileBackgroundCatalogItem(
 
 @Singleton
 class ProfileBackgroundRepository @Inject constructor(
-    private val postgrest: Postgrest,
-    private val storage: Storage,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
+    private val storageLazy: dagger.Lazy<Storage>,
     private val memberCatalogStorage: MemberCatalogStorage,
     @ApplicationContext private val context: Context
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
+    private val storage: Storage get() = storageLazy.get()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val _catalog = MutableStateFlow<List<ProfileBackgroundCatalogItem>>(emptyList())

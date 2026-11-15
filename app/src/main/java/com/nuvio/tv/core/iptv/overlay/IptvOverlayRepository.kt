@@ -32,10 +32,12 @@ import javax.inject.Singleton
 @Singleton
 class IptvOverlayRepository @Inject constructor(
     private val db: IptvOverlayDb,
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val profileManager: ProfileManager,
     private val authManager: AuthManager,
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val _uiState = MutableStateFlow(OverlaySnapshot())

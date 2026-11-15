@@ -21,8 +21,10 @@ internal data class AuthSessionValidationOutcome(
 )
 
 internal class AuthSessionValidator(
-    private val auth: Auth
+    private val authLazy: dagger.Lazy<Auth>
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val auth: Auth get() = authLazy.get()
     private val mutex = Mutex()
     @Volatile
     private var validatedAccessToken: String? = null

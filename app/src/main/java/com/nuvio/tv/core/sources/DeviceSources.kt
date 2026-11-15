@@ -29,6 +29,8 @@ class DeviceSources @Inject constructor(
     private val profiles: dagger.Lazy<ProfileManager>,
 ) {
     private val storage = ProtectedProfilePreferences(context,"device_sources","com.tuvora.device.sources.v1")
+    /** Engine calls that can commit run here when the caller may be on Main (DeviceSourcesHost). */
+    val commits = DeviceSourceStorageDispatch()
     private val json = Json { ignoreUnknownKeys = true }
     private var key: String? = null
     private var controller: DeviceSourceEngine? = null

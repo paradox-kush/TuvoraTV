@@ -147,7 +147,7 @@ class PluginSyncProfileTest {
             profileManager
         )
         val service = PluginSyncService(
-            postgrest,
+            dagger.Lazy { postgrest },
             authManager,
             plugins,
             profileManager,

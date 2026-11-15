@@ -22,13 +22,17 @@ class MdbListRatingsClient @Inject constructor(
     private val api: MDBListApi,
     private val accountApi: MdbListApiClient,
     private val authStore: MdbListAuthStore,
-    moshi: Moshi
+    private val moshi: Moshi
 ) {
-    private val mediaAdapter = moshi.adapter(MDBListMediaResponseDto::class.java)
-    private val batchAdapter = moshi.adapter<List<MDBListMediaResponseDto>>(
-        Types.newParameterizedType(List::class.java, MDBListMediaResponseDto::class.java)
-    )
-    private val requestAdapter = moshi.adapter(MDBListMediaRequestDto::class.java)
+    // Lazy: adapter creation is reflective (KotlinJsonAdapterFactory) and this @Singleton is built
+    // during startup injection on Main.
+    private val mediaAdapter by lazy { moshi.adapter(MDBListMediaResponseDto::class.java) }
+    private val batchAdapter by lazy {
+        moshi.adapter<List<MDBListMediaResponseDto>>(
+            Types.newParameterizedType(List::class.java, MDBListMediaResponseDto::class.java)
+        )
+    }
+    private val requestAdapter by lazy { moshi.adapter(MDBListMediaRequestDto::class.java) }
 
     fun credential(apiKey: String): MdbListRatingsCredential? {
         apiKey.trim().takeIf { it.isNotEmpty() }?.let { return MdbListRatingsCredential.ApiKey(it) }

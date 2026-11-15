@@ -53,6 +53,7 @@ fun DeviceSourcesHost() {
     if (auth == com.nuvio.tv.domain.model.AuthState.Loading) return
     val profile by deps.profiles().activeProfileId.collectAsStateWithLifecycle()
     val engine = remember(auth) { deps.sources().engine() }
+    val commits = remember(deps) { deps.sources().commits }
     val view by engine.state.collectAsStateWithLifecycle()
     val requested by DeviceSources.showSettings.collectAsStateWithLifecycle()
     var visible by remember(engine) { mutableStateOf(false) }
@@ -62,7 +63,7 @@ fun DeviceSourcesHost() {
     val servers by deps.servers().uiState.collectAsStateWithLifecycle()
     LaunchedEffect(engine,profile,lifecycle) {
         lifecycle.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            engine.refresh(profile)
+            commits.run { engine.refresh(profile) }
             awaitCancellation()
         }
     }
@@ -76,22 +77,23 @@ fun DeviceSourcesHost() {
     // "select" is no longer a question for the viewer: a new device sets itself up, and a failed first
     // attempt retries on the next resume. Only states that need a decision open the dialog.
     LaunchedEffect(view.mode) { if (view.mode in listOf("replaced","storage_error")) visible = true }
-    LaunchedEffect(requested) { if (requested) { visible = true; engine.refresh(profile) } }
+    LaunchedEffect(requested) { if (requested) { visible = true; commits.run { engine.refresh(profile) } } }
     LaunchedEffect(engine,profile,addons,playlists,servers.connections) {
         if (engine.state.value.mode == "local") {
             val old = engine.state.value.disk.sources.values.flatten()
             fun source(kind: String, ref: String, label: String, enabled: Boolean) = DeviceSourceDescriptor(
                 old.firstOrNull { it.kind == kind && it.sourceRef == ref }?.sourceId ?: java.util.UUID.randomUUID().toString(),kind,ref,label,enabled,profile)
-            engine.localSources(profile,addons.map { source("addon",it.baseUrl,it.displayName,it.enabled) } +
+            val sources = addons.map { source("addon",it.baseUrl,it.displayName,it.enabled) } +
                 servers.connections.map { source("media_server","${it.providerId}|${it.remoteServerId}|${it.remoteUserId}",it.name,it.enabled) } +
-                playlists.map { source("iptv",it.id,it.name,it.enabled) })
+                playlists.map { source("iptv",it.id,it.name,it.enabled) }
+            commits.run { engine.localSources(profile,sources) }
         }
     }
-    if (visible) DeviceSourceSettings(engine,profile,auth !is com.nuvio.tv.domain.model.AuthState.FullAccount, onSetupComplete = { deps.sync().requestSyncNow() }) { visible = false; DeviceSources.showSettings.value = false }
+    if (visible) DeviceSourceSettings(engine,profile,auth !is com.nuvio.tv.domain.model.AuthState.FullAccount, commits = commits, onSetupComplete = { deps.sync().requestSyncNow() }) { visible = false; DeviceSources.showSettings.value = false }
 }
 
 @Composable
-fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Boolean, onSetupComplete: () -> Unit = {}, onClose: () -> Unit) {
+fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Boolean, commits: DeviceSourceStorageDispatch = DeviceSourceStorageDispatch(), onSetupComplete: () -> Unit = {}, onClose: () -> Unit) {
     val view by engine.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -112,7 +114,7 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
     fun action(block: suspend () -> Unit) {
         if (actionBusy) return
         actionBusy = true
-        scope.launch { try { error = null; block() } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        scope.launch { try { error = null; commits.run { block() } } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (_: Exception) { error = "Could not save your choice. Please retry." }
             finally { actionBusy = false } }
     }

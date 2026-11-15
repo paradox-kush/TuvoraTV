@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.diagnostics
 
 import android.app.Application
+import androidx.annotation.VisibleForTesting
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.data.local.SentrySettingsDataStore
 import io.sentry.Sentry
@@ -11,9 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 object SentryInitializer {
     private val droppedIssueText = listOf(
@@ -24,21 +23,33 @@ object SentryInitializer {
     @Volatile private var started = false
     @Volatile private var active = false
 
-    fun start(application: Application, settings: SentrySettingsDataStore) {
+    fun start(application: Application, settings: SentrySettingsDataStore) =
+        start(application, settings, BuildConfig.SENTRY_DSN)
+
+    /**
+     * Never blocks the caller (Application.onCreate). Without a DSN Sentry can neither start nor has
+     * anything to close, so the setting is not read at all; otherwise the collector reads the stored
+     * value on [scope] and applies it and every later change.
+     */
+    @VisibleForTesting
+    internal fun start(application: Application, settings: SentrySettingsDataStore, dsn: String) {
         if (started) return
         started = true
-        val initialEnabled = runBlocking(Dispatchers.IO) {
-            settings.enabled.first()
-        }
-        applyEnabled(application, initialEnabled)
+        val trimmedDsn = dsn.trim()
+        if (trimmedDsn.isBlank()) return
         scope.launch {
             settings.enabled.distinctUntilChanged().collect { enabled ->
-                applyEnabled(application, enabled)
+                applyEnabled(application, enabled, trimmedDsn)
             }
         }
     }
 
-    private fun applyEnabled(application: Application, enabled: Boolean) {
+    @VisibleForTesting
+    internal fun resetForTest() {
+        started = false
+    }
+
+    private fun applyEnabled(application: Application, enabled: Boolean, dsn: String) {
         if (!enabled) {
             if (Sentry.isEnabled()) {
                 Sentry.close()
@@ -47,8 +58,6 @@ object SentryInitializer {
             return
         }
 
-        val dsn = BuildConfig.SENTRY_DSN.trim()
-        if (dsn.isBlank()) return
         if (active && Sentry.isEnabled()) return
 
         SentryAndroid.init(application) { options ->

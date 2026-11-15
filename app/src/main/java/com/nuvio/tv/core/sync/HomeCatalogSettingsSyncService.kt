@@ -71,7 +71,7 @@ internal fun mergeHomeCatalogSettingsJson(
 
 @Singleton
 class HomeCatalogSettingsSyncService @Inject constructor(
-    private val postgrest: Postgrest,
+    private val postgrestLazy: dagger.Lazy<Postgrest>,
     private val authManager: AuthManager,
     private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
     private val profileManager: ProfileManager,
@@ -79,6 +79,8 @@ class HomeCatalogSettingsSyncService @Inject constructor(
     private val collectionsDataStore: CollectionsDataStore,
     private val syncClientIdentity: SyncClientIdentity
 ) {
+    // Resolved at use, never at construction: building the client is main-thread-expensive (cold-start ANRs).
+    private val postgrest: Postgrest get() = postgrestLazy.get()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json {
         ignoreUnknownKeys = true

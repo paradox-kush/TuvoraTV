@@ -66,7 +66,7 @@ class LayoutPreferenceDataStore @Inject constructor(
     private fun store(profileId: Int = profileManager.activeProfileId.value) =
         factory.get(profileId, FEATURE)
 
-    private val gson = Gson()
+    private val gson by lazy { Gson() } // not at injection: Gson's first use class-inits Excluder on Main
 
     private val layoutKey = stringPreferencesKey("selected_layout")
     private val hasChosenKey = booleanPreferencesKey("has_chosen_layout")

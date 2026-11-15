@@ -20,6 +20,7 @@ import coil3.bitmapFactoryMaxParallelism
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import okio.Path.Companion.toOkioPath
+import com.nuvio.tv.core.analytics.AnalyticsConsentPolicy
 import com.nuvio.tv.core.analytics.AppExitReporter
 import com.nuvio.tv.core.diagnostics.SentryInitializer
 import com.nuvio.tv.core.iptv.refresh.IptvRefreshScheduler
@@ -55,7 +56,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 @HiltAndroidApp
 class NuvioApplication : Application(), SingletonImageLoader.Factory, Configuration.Provider {
@@ -89,6 +89,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var deviceClaimCoordinator: com.nuvio.tv.core.iptv.DeviceClaimCoordinator
     @Inject lateinit var recordingsPort: com.nuvio.tv.core.recordings.api.RecordingsPort
     @Inject lateinit var calendarComingUpContributor: com.nuvio.tv.core.calendar.CalendarComingUpContributor
+    // Lazy: consumers resolve the client at use; onCreate pre-warms it off Main so it is normally ready.
+    @Inject lateinit var supabaseClient: dagger.Lazy<io.github.jan.supabase.SupabaseClient>
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -135,6 +137,12 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         // Before super.onCreate(): Hilt creates injected services there, and the budget is read once.
         MemoryBudget.init(this)
         super.onCreate()
+        // Build the Supabase client (Ktor plugins, kotlin-reflect typeOf) on IO, never on Main. Every
+        // consumer takes it through dagger.Lazy, so this is normally done before their first call.
+        analyticsConsentScope.launch {
+            runCatching { supabaseClient.get() }
+                .onFailure { android.util.Log.w("NuvioApplication", "Supabase client pre-warm failed", it) }
+        }
         appForegroundTracker.register(this)
         // Calendar's optional Home "Coming up" row (off by default); registered before Home first collects changes.
         com.nuvio.tv.core.contracts.HomeSectionContributorRegistry.register(calendarComingUpContributor)
@@ -169,12 +177,10 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         // mode the resolver warm-up + IPTV refresh worker + channel sync withhold their heavy work.
         com.nuvio.tv.core.journal.StartupJournal.decideStartupMode()
         telemetry.start(BuildConfig.VERSION_NAME)
-        val crashReportsEnabled = runBlocking(Dispatchers.IO) {
-            sentrySettingsDataStore.isEnabled()
-        }
-        // As early as consent is known: a crash during the rest of startup still leaves a stack. The
-        // handler goes in before PostHog's, so ours writes the file before its best-effort capture.
-        telemetry.applyConsent(crashReportsEnabled)
+        // Stored consent is read off Main (the collector below), never by blocking on it: onCreate also
+        // runs for JobService/receiver starts, where a blocked Main is a bind/onStartJob ANR. Until the
+        // value lands, local crash recording is off (TelemetryHolder default) and PostHog sends nothing.
+        // The handler goes in before PostHog's, so ours writes the file before its best-effort capture.
         com.nuvio.tv.core.telemetry.CrashRecorder.install(this, BuildConfig.VERSION_NAME)
         // Breadcrumbs persist locally so AppExitReporter can attribute a process death on the
         // NEXT launch; their live-event side goes through PostHog and is consent-gated by the
@@ -205,9 +211,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             ).apply {
                 // Capture uncaught exceptions as $exception events (where the app breaks).
                 errorTrackingConfig.autoCapture = true
-                // Consent is authoritative. Calling optIn/optOut after setup also overrides any
-                // consent value persisted by an older PostHog SDK run.
-                optOut = !crashReportsEnabled
+                // Start opted out: nothing may be sent before the stored consent is known. The
+                // collector below then opts in or keeps it out (AnalyticsConsentPolicy).
+                optOut = AnalyticsConsentPolicy.SDK_STARTS_OPTED_OUT
                 // This consent is for crash diagnostics, not general product analytics.
                 captureApplicationLifecycleEvents = false
                 captureScreenViews = false
@@ -245,6 +251,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 debug = BuildConfig.DEBUG
             }
         )
+        // A persisted "opt-out" pref from the previous run wins over config.optOut (posthog-java
+        // isOptedOut() reads the pref first), so force the opted-out start explicitly.
+        PostHog.optOut()
         PostHog.register(PostHogPrivacy.GEOIP_DISABLE_PROPERTY, true)
         val supportCode = com.nuvio.tv.core.telemetry.SupportCodeStore.get(this)
         PostHog.register("support_code", supportCode)
@@ -266,20 +275,23 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
             override fun onActivityDestroyed(activity: android.app.Activity) = Unit
         })
-        if (crashReportsEnabled) {
-            PostHog.optIn()
-            AppExitReporter.reportPendingExits(this)
-            Thread({
-                runCatching { com.nuvio.tv.core.telemetry.DeviceProfile.extended(this).forEach { (k, v) -> PostHog.register(k, v) } }
-                runCatching { com.nuvio.tv.core.telemetry.CrashRecorder.sendPending(this, supportCode) }
-            }, "pending-crash-send").start()
-        } else {
-            PostHog.optOut()
-        }
+        val consentPolicy = AnalyticsConsentPolicy()
         analyticsConsentScope.launch {
             sentrySettingsDataStore.enabled.distinctUntilChanged().collect { enabled ->
                 telemetry.applyConsent(enabled)
-                if (enabled) PostHog.optIn() else PostHog.optOut()
+                consentPolicy.onStoredConsent(enabled).forEach { action ->
+                    when (action) {
+                        AnalyticsConsentPolicy.Action.OPT_IN -> PostHog.optIn()
+                        AnalyticsConsentPolicy.Action.OPT_OUT -> PostHog.optOut()
+                        AnalyticsConsentPolicy.Action.REPORT_PENDING_EXITS -> {
+                            AppExitReporter.reportPendingExits(this@NuvioApplication)
+                            Thread({
+                                runCatching { com.nuvio.tv.core.telemetry.DeviceProfile.extended(this@NuvioApplication).forEach { (k, v) -> PostHog.register(k, v) } }
+                                runCatching { com.nuvio.tv.core.telemetry.CrashRecorder.sendPending(this@NuvioApplication, supportCode) }
+                            }, "pending-crash-send").start()
+                        }
+                    }
+                }
             }
         }
         // Upstream's Sentry: inert without a SENTRY_DSN (the fork's crash reporter is PostHog);
