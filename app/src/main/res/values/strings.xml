@@ -3665,6 +3665,12 @@
     <string name="iptv_guide_idle_preview_fact">Press OK on a channel to watch it here.</string>
     <!-- Change 10: the schedule pill. -->
     <string name="iptv_guide_schedule_pill">Schedule · %1$s %2$s · Back = now</string>
+    <!-- Change 15: Guide options. -->
+    <string name="iptv_guide_options">Guide options</string>
+    <string name="iptv_guide_options_opening">When the guide opens</string>
+    <string name="iptv_guide_options_resume">Resume the last channel</string>
+    <string name="iptv_guide_options_resume_off">Off: opening the guide plays nothing and spends no connection.</string>
+    <string name="iptv_guide_options_resume_on">On: the last channel plays in the preview when the guide opens.</string>
     <!-- B4: captions in the group column. -->
     <string name="iptv_guide_recent_groups">Recent groups</string>
     <string name="iptv_guide_all_groups">Groups</string>

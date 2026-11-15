@@ -125,6 +125,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /**
@@ -156,6 +157,9 @@ fun LiveGuide(
     onEntryFocusConsumed: () -> Unit = {},
     /** UX331: "Fix guide" — open this playlist's guide settings. */
     onFixGuide: (accountId: String) -> Unit = {},
+    /** Change 15: the header's Guide options was pressed (bumped per press); [onGuideOptionsClosed] hands focus back. */
+    guideOptionsRequest: Int = 0,
+    onGuideOptionsClosed: () -> Unit = {},
     viewModel: XtreamLiveGuideViewModel = hiltViewModel(),
 ) {
     val playbackViewModel: CleanLiveGuidePlaybackViewModel = hiltViewModel()
@@ -178,6 +182,12 @@ fun LiveGuide(
     val guideLayout by displayPreferences.layout.collectAsStateWithLifecycle(initialValue = GuideLayoutPreset.DEFAULT)
     val displayScope = rememberCoroutineScope()
     var layoutPickerOpen by remember { mutableStateOf(false) }
+    // Change 15: the Guide options panel (size + resume-on-open), opened from the hub header.
+    var guideOptionsOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(guideOptionsRequest) { if (guideOptionsRequest > 0) guideOptionsOpen = true }
+    val resumeOnOpen by displayPreferences.resumeOnOpen.collectAsStateWithLifecycle(initialValue = GuideOptionsPolicy.RESUME_ON_OPEN_DEFAULT)
+    // A4: the last-watched channel the first entry may resume (set only with the opt-in on).
+    var resumeEntryTarget by remember(account.id) { mutableStateOf<String?>(null) }
     val previewPaneHeight = guideLayout.previewHeightDp.dp
 
     // Keyed on the whole account (not just id) so option edits (category selections) re-filter.
@@ -299,11 +309,14 @@ fun LiveGuide(
     val entryListLanded = displayChannels.isNotEmpty() && uiState.channelsLoad !is com.nuvio.tv.core.iptv.LoadStatus.Loading
     LaunchedEffect(entryFocusPending, entryListLanded) {
         if (!GuideEntryFocusPolicy.due(entryFocusPending, entryListLanded, focusAlreadyInGuide = inCategory)) return@LaunchedEffect
-        val target = GuideEntryFocusPolicy.target(viewModel.recentContentIds(), displayChannels.map { it.contentId })
+        val recentIds = viewModel.recentContentIds()
+        val target = GuideEntryFocusPolicy.target(recentIds, displayChannels.map { it.contentId })
             ?: return@LaunchedEffect
         val index = displayChannels.indexOfFirst { it.contentId == target }
         val entityId = displayChannels.getOrNull(index)?.entityId ?: return@LaunchedEffect
         onEntryFocusConsumed()
+        // A4: only with the viewer's opt-in does opening the guide tune (it spends a single-use link per visit).
+        if (target in recentIds && displayPreferences.resumeOnOpen.first()) resumeEntryTarget = target
         channelListState.scrollToItem((index - 2).coerceAtLeast(0))
         val landed = GuideFocusRequestLoop.requestUntilLanded {
             channelRowRequesters[entityId]?.requestFocusOrFalse() == true
@@ -496,6 +509,15 @@ fun LiveGuide(
     DisposableEffect(playbackViewModel) {
         onDispose { playbackViewModel.detachGuide() }
     }
+    LaunchedEffect(resumeEntryTarget) {
+        val target = resumeEntryTarget ?: return@LaunchedEffect
+        resumeEntryTarget = null
+        if (GuideOptionsPolicy.resumeOnEntry(
+                resumeOn = true, firstEntry = true, lastWatchedListed = true,
+                somethingPlaying = playingContentId != null || pendingContentId != null,
+            )
+        ) commitPreview(target)
+    }
     // "Watch full screen" from the panel: promote the same surface once the asked channel plays (instant, never
     // re-routed). A failure drops the ask; the preview then says why with OK = Try again.
     LaunchedEffect(pendingFullscreenFor, playingContentId, playbackUi?.openFullscreenEnabled, playbackError != null) {
@@ -638,7 +660,7 @@ fun LiveGuide(
     }
     /** True when the key was one of the remote's shortcuts (and is consumed). */
     fun remoteShortcut(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
-        val overlayUp = channelMenuAsk != null || layoutPickerOpen || searchDialogOpen || sheetProgramme != null ||
+        val overlayUp = channelMenuAsk != null || layoutPickerOpen || guideOptionsOpen || searchDialogOpen || sheetProgramme != null ||
             (fullscreen && livePanelOpen)
         if (overlayUp) return false
         val down = event.type == KeyEventType.KeyDown
@@ -1424,7 +1446,8 @@ fun LiveGuide(
                 favorite = favorite,
                 menuActions = actions,
                 noGuide = noGuide,
-                guideSizeHere = true,
+                // A9: the size lives in Guide options now.
+                guideSizeHere = false,
             )
             val lastRows = remember(channel.contentId) { arrayOf(rows) }
             val focusRow = panelFocusRow?.let { GuideChannelPanelPolicy.focusAfter(it, lastRows[0], rows) }
@@ -1470,6 +1493,40 @@ fun LiveGuide(
                     }
                 },
                 onClose = ::returnFromMenu,
+            )
+        }
+        if (guideOptionsOpen) {
+            fun closeOptions() { guideOptionsOpen = false; onGuideOptionsClosed() }
+            val rows = GuideOptionsPolicy.rows()
+            GuideSidePanel(
+                title = stringResource(R.string.iptv_guide_options),
+                subtitle = null,
+                items = rows.map { row ->
+                    when (row) {
+                        is GuideOptionsPolicy.Row.Size -> GuidePanelItem<GuideOptionsPolicy.Row>(
+                            key = row,
+                            label = stringResource(guideSizeLabel(row.preset)),
+                            sectionLabel = if (row.preset == GuideLayoutPreset.entries.first()) stringResource(R.string.iptv_guide_size) else null,
+                            selected = row.preset == guideLayout,
+                        )
+                        GuideOptionsPolicy.Row.ResumeOnOpen -> GuidePanelItem<GuideOptionsPolicy.Row>(
+                            key = row,
+                            label = stringResource(R.string.iptv_guide_options_resume),
+                            sub = stringResource(if (resumeOnOpen) R.string.iptv_guide_options_resume_on else R.string.iptv_guide_options_resume_off),
+                            sectionLabel = stringResource(R.string.iptv_guide_options_opening),
+                            selected = resumeOnOpen,
+                        )
+                    }
+                },
+                focusKey = GuideOptionsPolicy.entryRow(guideLayout),
+                // OK applies at once and the panel stays open, so sizes can be compared (01).
+                onItem = { row ->
+                    when (row) {
+                        is GuideOptionsPolicy.Row.Size -> displayScope.launch { displayPreferences.setLayout(row.preset) }
+                        GuideOptionsPolicy.Row.ResumeOnOpen -> displayScope.launch { displayPreferences.setResumeOnOpen(!resumeOnOpen) }
+                    }
+                },
+                onClose = ::closeOptions,
             )
         }
         if (layoutPickerOpen) {

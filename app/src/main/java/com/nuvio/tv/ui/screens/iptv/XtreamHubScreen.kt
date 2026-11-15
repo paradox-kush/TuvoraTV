@@ -171,6 +171,9 @@ fun XtreamHubScreen(
     // Live: the guide owns channel search (its Search row); the same chip asks it to open, so Search sits in one place on every section.
     val liveSearchApplies = anyTypeEnabled && account != null && uiState.section == XtreamSection.LIVE
     var liveSearchRequest by remember { mutableStateOf(0) }
+    // Change 15: the guide's options panel, opened from the header while Live TV shows.
+    var guideOptionsRequest by remember { mutableStateOf(0) }
+    val guideOptionsChip = remember { FocusRequester() }
     LaunchedEffect(uiState.selectedAccountId, uiState.section) {
         showSearchDialog = false
         searchViewModel.close()
@@ -333,6 +336,13 @@ fun XtreamHubScreen(
                 onFocusGained = notATab,
                 onClick = { if (liveSearchApplies) liveSearchRequest++ else showSearchDialog = true }
             )
+            if (uiState.section == XtreamSection.LIVE) HubChip(
+                label = stringResource(R.string.iptv_guide_options),
+                selected = false,
+                focusRequester = guideOptionsChip,
+                onFocusGained = notATab,
+                onClick = { guideOptionsRequest++ },
+            )
             HubChip(
                 label = stringResource(R.string.rec_hub_chip),
                 selected = false,
@@ -368,6 +378,8 @@ fun XtreamHubScreen(
                 onPlayCatchUp = onPlayCatchUp,
                 onSwitchAccount = viewModel::selectAccount,
                 searchRequest = liveSearchRequest,
+                guideOptionsRequest = guideOptionsRequest,
+                onGuideOptionsClosed = { guideOptionsChip.requestFocusOrFalse() },
                 onOpenRecordings = onOpenRecordings,
                 entryFocusPending = entryFocusPending && uiState.section == XtreamSection.LIVE,
                 onEntryFocusConsumed = { entryFocusPending = false },
