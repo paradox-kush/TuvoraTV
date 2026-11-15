@@ -3640,6 +3640,7 @@
     <string name="iptv_number_previous_named">Back to %1$s · %2$s</string>
     <!-- Redesign change 4: the zap banner while surfing a single-use playlist. -->
     <string name="iptv_zap_surf_still_watching">Still watching %1$s</string>
+    <string name="iptv_zap_surf_switch_to">Switch to %1$s?</string>
     <string name="iptv_zap_surf_hint">OK tunes now · Back cancels</string>
     <!-- Redesign change 3: the channel options panel. -->
     <string name="iptv_panel_watch_fullscreen">Watch full screen</string>

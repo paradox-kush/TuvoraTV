@@ -101,13 +101,26 @@ internal fun BoxScope.GuideZapBanner(
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = channel.name,
+                    text = when (GuideZapBannerPolicy.heading(surfing)) {
+                        GuideZapBannerPolicy.Heading.SWITCH_TO -> stringResource(R.string.iptv_zap_surf_switch_to, channel.name)
+                        GuideZapBannerPolicy.Heading.NAME -> channel.name
+                    },
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // D4: what still plays sits right under the question.
+                if (GuideZapBannerPolicy.stillWatchingUnderHeading(surfing) && playingName != null) {
+                    Text(
+                        text = stringResource(R.string.iptv_zap_surf_still_watching, playingName),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = NuvioTheme.colors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 Text(
                     text = epg?.now?.let { "${timeRange(it)}  ${it.title}" } ?: stringResource(R.string.iptv_guide_no_information),
                     style = MaterialTheme.typography.bodyMedium,
@@ -144,14 +157,7 @@ internal fun BoxScope.GuideZapBanner(
             // Surf: the picture is still the old channel; the bar runs down to the tune. OK tunes now, Back cancels.
             Spacer(Modifier.height(NuvioTheme.spacing.sm))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
-                Text(
-                    text = playingName?.let { stringResource(R.string.iptv_zap_surf_still_watching, it) }.orEmpty(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Spacer(Modifier.weight(1f))
                 Text(
                     text = stringResource(R.string.iptv_zap_surf_hint),
                     style = MaterialTheme.typography.labelSmall,
