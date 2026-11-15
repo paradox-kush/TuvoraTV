@@ -1304,6 +1304,17 @@ fun LiveGuide(
                             .padding(bottom = NuvioTheme.spacing.lg),
                     )
                 }
+                // B12: the idle preview says what OK does, with the quiet-moment quip.
+                if (playingContentId == null && pillRes == null && pendingContentId == null && playbackError == null) {
+                    Column(Modifier.align(Alignment.Center).padding(NuvioTheme.spacing.md), horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (GuideVoicePolicy.joking(GuideVoicePolicy.Moment.IDLE_PREVIEW)) {
+                            Text(stringResource(R.string.iptv_voice_idle_preview), style = MaterialTheme.typography.titleSmall,
+                                color = NuvioTheme.colors.FocusRing, maxLines = 1)
+                        }
+                        Text(stringResource(R.string.iptv_guide_idle_preview_fact), style = MaterialTheme.typography.labelMedium,
+                            color = NuvioTheme.colors.TextSecondary, maxLines = 2)
+                    }
+                }
                 // "Playing: X" while focus is on another channel, so the picture is never read as the focused row.
                 val playingName = uiState.channels.firstOrNull { it.contentId == playingContentId }?.name
                     ?: requestedName?.takeIf { requestedContentId == playingContentId }
@@ -2313,7 +2324,8 @@ private fun NoGuideBanner(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = stringResource(R.string.iptv_guide_no_guide_group),
+            text = stringResource(R.string.iptv_guide_no_guide_group) +
+                if (GuideVoicePolicy.joking(GuideVoicePolicy.Moment.NO_GUIDE)) " " + stringResource(R.string.iptv_voice_no_guide) else "",
             style = MaterialTheme.typography.labelMedium,
             color = NuvioTheme.colors.TextSecondary,
         )
@@ -2358,6 +2370,17 @@ private fun GuideEmptyActionState(
         GuideEmptyStatePolicy.Kind.PLAYLIST_EMPTY -> stringResource(R.string.iptv_guide_empty_playlist_fact)
         GuideEmptyStatePolicy.Kind.NO_CHANNELS -> stringResource(R.string.iptv_guide_empty_group_fact)
     }
+    // B12 / A7: a quip above the plain lines in the quiet moments; the facts below never change.
+    val quip = if (GuideVoicePolicy.joking(GuideVoicePolicy.momentOf(kind))) {
+        when (kind) {
+            GuideEmptyStatePolicy.Kind.FAVORITES_HINT -> R.string.iptv_voice_empty_favorites
+            GuideEmptyStatePolicy.Kind.RECENT_EMPTY -> R.string.iptv_voice_empty_recent
+            GuideEmptyStatePolicy.Kind.SEARCH_NO_MATCH -> R.string.iptv_voice_search_miss
+            GuideEmptyStatePolicy.Kind.PLAYLIST_EMPTY -> R.string.iptv_voice_empty_playlist
+            GuideEmptyStatePolicy.Kind.NO_CHANNELS -> R.string.iptv_voice_empty_group
+            GuideEmptyStatePolicy.Kind.SEARCH_PROMPT -> null
+        }?.let { stringResource(it) }
+    } else null
     val action = GuideEmptyStatePolicy.action(kind)
     val label = stringResource(
         when (action) {
@@ -2372,6 +2395,10 @@ private fun GuideEmptyActionState(
         Modifier.fillMaxWidth().padding(top = NuvioTheme.spacing.xxl, start = NuvioTheme.spacing.xl, end = NuvioTheme.spacing.xl),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (quip != null) {
+            Text(quip, style = MaterialTheme.typography.titleMedium, color = NuvioTheme.colors.FocusRing, maxLines = 2)
+            Spacer(Modifier.height(NuvioTheme.spacing.xs))
+        }
         Text(title, style = MaterialTheme.typography.headlineSmall, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
         Spacer(Modifier.height(NuvioTheme.spacing.sm))
         Text(fact, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary, maxLines = 3)

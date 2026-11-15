@@ -3654,6 +3654,15 @@
     <string name="iptv_panel_section_info">Info</string>
     <!-- Change 8: the shown group above the rows while the group column is closed. -->
     <string name="iptv_guide_group_label">%1$s · %2$d</string>
+    <!-- B12 / A7: the playful voice, quiet moments only; each quip sits beside a plain fact. -->
+    <string name="iptv_voice_empty_favorites">Nothing starred yet. Your remote has commitment issues.</string>
+    <string name="iptv_voice_empty_recent">No history yet. Your secret is safe.</string>
+    <string name="iptv_voice_search_miss">No channel by that name. It may be hiding under a worse one.</string>
+    <string name="iptv_voice_empty_group">Tumbleweeds.</string>
+    <string name="iptv_voice_empty_playlist">This playlist showed up empty-handed.</string>
+    <string name="iptv_voice_idle_preview">Quiet in here.</string>
+    <string name="iptv_voice_no_guide">It forgot to pack one.</string>
+    <string name="iptv_guide_idle_preview_fact">Press OK on a channel to watch it here.</string>
     <!-- B4: captions in the group column. -->
     <string name="iptv_guide_recent_groups">Recent groups</string>
     <string name="iptv_guide_all_groups">Groups</string>
