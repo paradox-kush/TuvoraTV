@@ -15,6 +15,9 @@ import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.ProviderPlaybackSelection
 import com.nuvio.tv.playback.core.SessionProfile
 import com.nuvio.tv.playback.core.SurfaceMode
+import com.nuvio.tv.playback.core.TileHostConfig
+import com.nuvio.tv.playback.wiring.NoopPlaybackOutputController
+import com.nuvio.tv.playback.wiring.TileHostComposition
 import com.nuvio.tv.playback.core.VideoDimensions
 import com.nuvio.tv.playback.mediasession.CleanMediaSessionMetadata
 import com.nuvio.tv.playback.wiring.ProductionPlaybackSessionFactory
@@ -78,10 +81,12 @@ internal class AndroidCleanLiveHostInput(
     val lifecycle: Lifecycle,
     val surfaceOwner: FrameLayout,
     val previewViewport: VideoDimensions? = null,
+    /** Multiview tile mode (see [TileHostConfig]); null = the single full-screen / guide host. */
+    val tile: TileHostConfig? = null,
 ) {
     override fun toString(): String =
         "AndroidCleanLiveHostInput(profileBound=true, surfaceOwnerBound=true, " +
-            "previewViewportKnown=${previewViewport != null})"
+            "previewViewportKnown=${previewViewport != null}, tile=${tile != null})"
 }
 
 internal fun interface CleanLiveHostFactory {
@@ -95,11 +100,13 @@ internal class AndroidCleanLiveHostFactory @Inject constructor(
     private val userRetry: com.nuvio.tv.playback.core.ProviderUserRetryPort,
 ) : CleanLiveHostFactory {
     override suspend fun create(input: AndroidCleanLiveHostInput): CleanLiveHost {
+        val tilePlan = TileHostComposition.plan(input.tile)
         val surfaces = withContext(Dispatchers.Main.immediate) {
             CleanLiveSurfaceCoordinator(
                 owner = input.surfaceOwner,
                 callbackScope = input.parentScope,
-                constructibleModes = PRODUCTION_CONSTRUCTIBLE_SURFACE_MODES,
+                // A tile can only be Media3: no mpv surface is ever offered to it.
+                constructibleModes = tilePlan.surfaceModes ?: PRODUCTION_CONSTRUCTIBLE_SURFACE_MODES,
                 secureMedia3SurfaceViewSupported = true,
                 media3PlayerViewEnabled = BuildConfig.IS_DEBUG_BUILD && BuildConfig.LIVE_PLAYER_VIEW_PROTOTYPE,
             )
@@ -110,10 +117,15 @@ internal class AndroidCleanLiveHostFactory @Inject constructor(
             parentScope = input.parentScope,
             sessionFactory = sessionFactory,
             surfaces = surfaces,
-            outputController = AndroidPlaybackOutputController(input.activity),
+            outputController = if (tilePlan.switchesDisplayMode) {
+                AndroidPlaybackOutputController(input.activity)
+            } else {
+                NoopPlaybackOutputController
+            },
             lifecycle = AndroidPlaybackLifecyclePort(input.lifecycle),
             previewViewport = input.previewViewport,
             userRetry = userRetry,
+            tile = input.tile,
         )
         return AndroidCleanLiveHost(host)
     }

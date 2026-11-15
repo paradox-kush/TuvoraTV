@@ -133,6 +133,8 @@ internal class AndroidMedia3BackendFactory(
     private val releaseController: Media3ReleaseController = ForkMedia3ReleaseController,
     private val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
     private val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
+    /** Multiview tile mode: own buffer share, no tunnelling, audio decoding off until a tile is audible. */
+    private val tile: com.nuvio.tv.playback.core.TileHostConfig? = null,
 ) : Media3BackendFactory {
     private val applicationContext = context.applicationContext
 
@@ -260,7 +262,9 @@ internal class AndroidMedia3BackendFactory(
             media3LoadErrorPolicyFor(plan.request.transientLoadRetryPolicy)?.let(::setLoadErrorHandlingPolicy)
         }
         val loadControl = DefaultLoadControl.Builder()
-            .setTargetBufferBytes(playerMemoryBudget.exoTargetBufferBytes(Runtime.getRuntime().maxMemory()))
+            .setTargetBufferBytes(
+                tile?.bufferBytes ?: playerMemoryBudget.exoTargetBufferBytes(Runtime.getRuntime().maxMemory()),
+            )
             .setPrioritizeTimeOverSizeThresholds(false)
             .setBufferDurationsMs(
                 plan.buffer.minimumMs,
@@ -270,7 +274,9 @@ internal class AndroidMedia3BackendFactory(
             )
             .build()
         val trackSelector = DefaultTrackSelector(applicationContext).apply {
-            setParameters(buildTrackParameters(parameters.buildUpon(), plan).build())
+            setParameters(buildTrackParameters(parameters.buildUpon(), plan).applyTileMode().build())
+            // Tunnelling is a DefaultTrackSelector parameter, not a TrackSelectionParameters one.
+            if (tile != null) setParameters(buildUponParameters().setTunnelingEnabled(false))
         }
         val codecSelector = when (plan.decoderMode) {
             DecoderMode.HARDWARE -> MediaCodecSelector { mime, secure, tunneling ->
@@ -309,7 +315,7 @@ internal class AndroidMedia3BackendFactory(
         player.trackSelectionParameters = buildTrackParameters(
             player.trackSelectionParameters.buildUpon(),
             plan,
-        ).build()
+        ).applyTileMode().build()
         player.skipSilenceEnabled = plan.skipSilence
         val mediaItem = mediaItemFor(plan)
         return AndroidMedia3Backend(
@@ -354,6 +360,16 @@ internal class AndroidMedia3BackendFactory(
                 )
                 .build(),
         )
+    }
+
+    /**
+     * Tile mode only: audio decoding off from the first frame so a new tile is never briefly audible
+     * ([setAudioEnabled] turns it on for the one audible tile). Tunnelling is switched off on the
+     * track selector itself. Non-tile builders pass through untouched.
+     */
+    private fun TrackSelectionParameters.Builder.applyTileMode(): TrackSelectionParameters.Builder = apply {
+        if (tile == null) return@apply
+        setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
     }
 
     private companion object {

@@ -49,9 +49,16 @@ class TileFailurePolicyTest {
     }
 
     @Test
+    fun `unknown signal is the generic failure with plain text and retry`() {
+        assertEquals(TileFailure.Other, c(TileSignal.Unknown))
+        assertEquals("Something went wrong opening this stream.", TileFailure.Other.text)
+        assertEquals(listOf(TileAction.RETRY, TileAction.REMOVE), TileFailure.Other.actions)
+    }
+
+    @Test
     fun `provider refused is never retried automatically but others may be`() {
         assertFalse(TileFailurePolicy.autoRetryAllowed(TileFailure.ProviderRefused))
-        listOf(TileFailure.DecoderUnavailable, TileFailure.NoData, TileFailure.Unsupported, TileFailure.Network)
+        listOf(TileFailure.DecoderUnavailable, TileFailure.NoData, TileFailure.Unsupported, TileFailure.Network, TileFailure.Other)
             .forEach { assertTrue("$it", TileFailurePolicy.autoRetryAllowed(it)) }
     }
 

@@ -420,12 +420,12 @@ class MultiviewSessionCoreTest {
     }
 
     @Test
-    fun `a player that cannot be created shows a typed decoder failure and does not crash`() {
+    fun `a player that cannot be created shows an honest generic failure and does not crash`() {
         failCreate = true
         val c = core().fill(1)
         c.onForeground()
         assertNull(c.playerAt(0))
-        assertEquals(TileFailure.DecoderUnavailable, c.playbackAt(0).failure)
+        assertEquals("not blamed on the decoder", TileFailure.Other, c.playbackAt(0).failure)
         failCreate = false
         c.retryPane(0)
         assertNotNull(c.playerAt(0))

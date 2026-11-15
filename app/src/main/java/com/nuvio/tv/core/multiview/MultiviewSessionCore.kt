@@ -309,10 +309,10 @@ internal class MultiviewSessionCore<C : MultiviewChannel>(
             player.prepare(channel)
             setupFailures[paneId] = null
         } catch (_: Exception) {
+            // A setup exception carries no decoder evidence (real decoder codes arrive through the
+            // player's own playback state), so it is not reported as a decoder problem.
             releasePane(paneId)
-            setupFailures[paneId] = TileFailurePolicy.classify(
-                TileSignal.Codec(TileFailurePolicy.CODEC_INSUFFICIENT_RESOURCE),
-            )
+            setupFailures[paneId] = TileFailurePolicy.classify(TileSignal.Unknown)
         }
     }
 

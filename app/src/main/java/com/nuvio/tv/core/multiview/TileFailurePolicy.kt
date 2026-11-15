@@ -17,6 +17,9 @@ internal sealed interface TileSignal {
     data object Network : TileSignal
 
     data object UnsupportedFormat : TileSignal
+
+    /** The player reported a problem with no cause that maps to the others, or a tile could not be set up. */
+    data object Unknown : TileSignal
 }
 
 internal enum class TileAction { RETRY, REMOVE }
@@ -27,6 +30,8 @@ internal enum class TileFailure(val text: String, val actions: List<TileAction>)
     NoData("The stream stopped sending data.", listOf(TileAction.RETRY)),
     Unsupported("This device can't play this stream's format.", listOf(TileAction.REMOVE)),
     Network("Couldn't reach the provider.", listOf(TileAction.RETRY)),
+    /** Honest catch-all: the cause is not one of the above. Never presented as a decoder problem. */
+    Other("Something went wrong opening this stream.", listOf(TileAction.RETRY, TileAction.REMOVE)),
 }
 
 internal object TileFailurePolicy {
@@ -51,6 +56,7 @@ internal object TileFailurePolicy {
         is TileSignal.Stall, is TileSignal.OpenTimeout -> TileFailure.NoData
         TileSignal.Network -> TileFailure.Network
         TileSignal.UnsupportedFormat -> TileFailure.Unsupported
+        TileSignal.Unknown -> TileFailure.Other
     }
 
     /** A provider that said no is not asked again on a timer: hammering a full account makes it worse. */

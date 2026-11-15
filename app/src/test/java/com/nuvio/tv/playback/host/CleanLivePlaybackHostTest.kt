@@ -243,6 +243,36 @@ class CleanLivePlaybackHostTest {
     }
 
     @Test
+    fun `a tile host creates no media session and releases through the controller`() = runTest {
+        val fixture = fixture()
+        var sessionsRequested = 0
+        val host = fixture.create(
+            tile = com.nuvio.tv.playback.core.TileHostConfig(bufferBytes = 6 * 1024 * 1024),
+            onMediaSessionRequested = { sessionsRequested++ },
+        )
+
+        assertEquals("tile flag reaches the session composition", 6 * 1024 * 1024, fixture.composedHost.tile?.bufferBytes)
+        assertEquals("a tile never asks for a system media session", 0, sessionsRequested)
+        host.release()
+        assertEquals("the controller is the release authority", 1, fixture.sessionReleaseCount)
+        coVerify(exactly = 0) { fixture.mediaOwner.release() }
+        fixture.parentJob.cancel()
+    }
+
+    @Test
+    fun `a host without the tile flag still creates its media session and has no tile config`() = runTest {
+        val fixture = fixture()
+        var sessionsRequested = 0
+        val host = fixture.create(onMediaSessionRequested = { sessionsRequested++ })
+
+        assertEquals(null, fixture.composedHost.tile)
+        assertEquals("the full-screen host keeps its media session", 1, sessionsRequested)
+        host.release()
+        coVerify(exactly = 1) { fixture.mediaOwner.release() }
+        fixture.parentJob.cancel()
+    }
+
+    @Test
     fun `sanitized metadata cannot break live playback when platform update fails`() = runTest {
         val fixture = fixture()
         every { fixture.mediaOwner.updateMetadata(any()) } throws IllegalStateException("closed")
@@ -440,7 +470,10 @@ class CleanLivePlaybackHostTest {
             }
         }
 
-        suspend fun create(): CleanLivePlaybackHost = CleanLivePlaybackHost.create(
+        suspend fun create(
+            tile: com.nuvio.tv.playback.core.TileHostConfig? = null,
+            onMediaSessionRequested: () -> Unit = {},
+        ): CleanLivePlaybackHost = CleanLivePlaybackHost.create(
             context = RuntimeEnvironment.getApplication(),
             preferenceProfileId = PlaybackProfileId("profile"),
             parentScope = parentScope,
@@ -455,7 +488,9 @@ class CleanLivePlaybackHostTest {
                 userRetries += "${profile.value}:${selection.accountId.value}"
                 operations += "userRetry"
             },
+            tile = tile,
             mediaSessionFactory = CleanMediaSessionOwnerFactory { _, _, _, _, _ ->
+                onMediaSessionRequested()
                 if (mediaSessionCreationFails) error("synthetic creation failure")
                 mediaOwner
             },

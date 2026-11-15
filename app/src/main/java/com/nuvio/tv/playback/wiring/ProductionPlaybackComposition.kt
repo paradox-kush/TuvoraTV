@@ -103,6 +103,8 @@ internal data class ProductionPlaybackHost(
     val resourceBudget: ResourceBudget = ResourceBudget(),
     val routedAudioDevice: () -> AudioDeviceInfo? = { null },
     val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
+    /** Multiview tile mode ([TileHostComposition]); null is the single full-screen / guide host. */
+    val tile: com.nuvio.tv.playback.core.TileHostConfig? = null,
 ) {
     init {
         require(!surfaceCapabilities.secureNativeEmbedSupported) {
@@ -163,7 +165,10 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
         preferenceProfileId: PlaybackProfileId,
         host: ProductionPlaybackHost,
     ): PlaybackSessionController {
-        val bootstrap = preferenceBootstrap.load(preferenceProfileId.value)
+        val tilePlan = TileHostComposition.plan(host.tile)
+        val loaded = preferenceBootstrap.load(preferenceProfileId.value)
+        // A tile narrows the stored preferences for itself only; nothing is written back.
+        val bootstrap = loaded.copy(preferences = TileHostComposition.constrain(loaded.preferences, tilePlan))
         val requested = bootstrap.preferences
         val collector = AndroidRuntimeCapabilityCollector(
             FrameworkAndroidCapabilitySource(appContext, host.routedAudioDevice),
@@ -190,14 +195,19 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
             clock = clock,
             graphProvider = graphProvider,
         )
-        val engines = productionEngines(host)
+        val engines = productionEngines(host, tilePlan)
         val session = PlaybackSession(
             parentScope = host.parentScope,
             requestResolver = concreteRequestResolver,
             providerPlaybackResolver = providerResolverFactory.create(preferenceProfileId),
             environmentProvider = environmentProvider,
             requirementsResolver = DefaultPlaybackRequirementsResolver(
-                liveBufferSeconds = liveBufferSeconds(preferenceProfileId),
+                // A tile keeps the low-latency live default: its memory share is the byte cap below.
+                liveBufferSeconds = if (host.tile != null) {
+                    com.nuvio.tv.playback.core.LiveBufferPolicy.AUTO
+                } else {
+                    liveBufferSeconds(preferenceProfileId)
+                },
             ),
             graphProvider = graphProvider,
             engineRegistry = PlaybackEngineRegistry { engines[it] },
@@ -205,7 +215,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
             clock = clock,
             diagnostics = diagnostics,
             lifecycle = host.lifecycle,
-            audioFocus = AndroidAudioFocusPort(appContext),
+            audioFocus = TileHostComposition.audioFocus(tilePlan) { AndroidAudioFocusPort(appContext) },
             compatibilityRecording = CompatibilityRecordingEnvironment(
                 history = history,
                 runtime = firstAndroid.compatibilityRuntime,
@@ -222,29 +232,42 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
         return PlaybackSessionController(session)
     }
 
-    private fun productionEngines(host: ProductionPlaybackHost): Map<EngineType, PlaybackEngine> = mapOf(
-        EngineType.MEDIA3 to Media3Engine(
-            scope = host.parentScope,
-            surfaceHost = host.media3SurfaceHost,
-            backendFactory = AndroidMedia3BackendFactory(
-                context = appContext,
-                sharedHttpClient = strictPlaybackHttpClient,
-                playerMemoryBudget = playerMemoryBudget,
-                applicationDnsResolver = applicationDnsResolver,
-                sharedClientTlsPolicy = TlsPolicy.STRICT,
-                externalSubtitleResolver = host.externalSubtitleResolver,
+    private fun productionEngines(
+        host: ProductionPlaybackHost,
+        tilePlan: TileHostPlan,
+    ): Map<EngineType, PlaybackEngine> = buildMap {
+        put(
+            EngineType.MEDIA3,
+            Media3Engine(
+                scope = host.parentScope,
+                surfaceHost = host.media3SurfaceHost,
+                backendFactory = AndroidMedia3BackendFactory(
+                    context = appContext,
+                    sharedHttpClient = strictPlaybackHttpClient,
+                    playerMemoryBudget = playerMemoryBudget,
+                    applicationDnsResolver = applicationDnsResolver,
+                    sharedClientTlsPolicy = TlsPolicy.STRICT,
+                    externalSubtitleResolver = host.externalSubtitleResolver,
+                    tile = host.tile,
+                ),
             ),
-        ),
-        EngineType.LIBMPV to MpvEngine(
-            demuxerBudget = playerMemoryBudget.demuxerBytes(),
-            scope = host.parentScope,
-            surfaceHost = host.mpvSurfaceHost,
-            backendFactory = AndroidMpvBackendFactory(
-                context = appContext,
-                externalSubtitleResolver = host.externalSubtitleResolver,
-            ),
-        ),
-    )
+        )
+        // A tile never builds mpv: no fallback engine, so a failed tile fails as a tile.
+        if (EngineType.LIBMPV in tilePlan.enginesAllowed) {
+            put(
+                EngineType.LIBMPV,
+                MpvEngine(
+                    demuxerBudget = playerMemoryBudget.demuxerBytes(),
+                    scope = host.parentScope,
+                    surfaceHost = host.mpvSurfaceHost,
+                    backendFactory = AndroidMpvBackendFactory(
+                        context = appContext,
+                        externalSubtitleResolver = host.externalSubtitleResolver,
+                    ),
+                ),
+            )
+        }
+    }
 
     private companion object {
         const val COMPATIBILITY_PREFERENCES = "clean_playback_compatibility_v2"
