@@ -47,6 +47,7 @@ class ArchitectureTest {
         "/core/livepause/", // live pause / rewind: upstream-absent, reached from the player only via core/contracts/LivePauseControl
         "/core/analytics/", // cross-cutting fork telemetry — its files may reference fork features
         "/ui/screens/iptv/", "/ui/screens/radar/", "/ui/screens/livetv/", "/ui/screens/gamedetail/",
+        "/ui/screens/multiview/", // multiview screen: upstream-absent; it reuses the guide's playlist, group and channel lists
     )
     private fun isForkFile(path: String) = forkPaths.any { path.contains(it) }
 
@@ -58,7 +59,7 @@ class ArchitectureTest {
     // telemetry), so it is not part of this pattern.
     private val forkRef = Regex(
         """\bcom\.nuvio\.tv\.core\.(iptv|epg|radar|rec|recordings|memory|livepause|sports)\.""" +
-            """|\bcom\.nuvio\.tv\.ui\.screens\.(iptv|radar|livetv|gamedetail)\.""",
+            """|\bcom\.nuvio\.tv\.ui\.screens\.(iptv|radar|livetv|gamedetail|multiview)\.""",
     )
 
     // Strip block + WHOLE-LINE // comments only. A naive //.* eats the // in "https://…" literals and

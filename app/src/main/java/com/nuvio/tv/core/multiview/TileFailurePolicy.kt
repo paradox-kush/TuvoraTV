@@ -22,7 +22,7 @@ internal sealed interface TileSignal {
     data object Unknown : TileSignal
 }
 
-internal enum class TileAction { RETRY, REMOVE }
+internal enum class TileAction { RETRY, REMOVE, REPLACE }
 
 internal enum class TileFailure(val text: String, val actions: List<TileAction>) {
     ProviderRefused("The provider refused this stream, maybe a connection limit.", listOf(TileAction.RETRY)),
@@ -30,6 +30,9 @@ internal enum class TileFailure(val text: String, val actions: List<TileAction>)
     NoData("The stream stopped sending data.", listOf(TileAction.RETRY)),
     Unsupported("This device can't play this stream's format.", listOf(TileAction.REMOVE)),
     Network("Couldn't reach the provider.", listOf(TileAction.RETRY)),
+
+    /** The provider answered 404 or 410: it was reached and says the stream is not there. Retrying the same link won't help. */
+    StreamGone("The provider says this stream doesn't exist.", listOf(TileAction.REPLACE, TileAction.REMOVE)),
     /** Honest catch-all: the cause is not one of the above. Never presented as a decoder problem. */
     Other("Something went wrong opening this stream.", listOf(TileAction.RETRY, TileAction.REMOVE)),
 }
@@ -48,9 +51,16 @@ internal object TileFailurePolicy {
 
     val providerRefusedStatuses: Set<Int> = setOf(401, 403, 429, 456, 458, 509)
 
+    /** Not found / gone. 5xx and every other status stay [TileFailure.Network]. */
+    val streamGoneStatuses: Set<Int> = setOf(404, 410)
+
     fun classify(signal: TileSignal): TileFailure = when (signal) {
         is TileSignal.Http ->
-            if (signal.status in providerRefusedStatuses) TileFailure.ProviderRefused else TileFailure.Network
+            when (signal.status) {
+                in providerRefusedStatuses -> TileFailure.ProviderRefused
+                in streamGoneStatuses -> TileFailure.StreamGone
+                else -> TileFailure.Network
+            }
         is TileSignal.Codec ->
             if (signal.code == MEDIA3_FORMAT_UNSUPPORTED) TileFailure.Unsupported else TileFailure.DecoderUnavailable
         is TileSignal.Stall, is TileSignal.OpenTimeout -> TileFailure.NoData
@@ -59,8 +69,15 @@ internal object TileFailurePolicy {
         TileSignal.Unknown -> TileFailure.Other
     }
 
-    /** A provider that said no is not asked again on a timer: hammering a full account makes it worse. */
-    fun autoRetryAllowed(failure: TileFailure): Boolean = failure != TileFailure.ProviderRefused
+    /**
+     * Whether the same link may be tried again without the viewer asking. A provider that said no is not asked again
+     * on a timer (hammering a full account makes it worse), a stream that is gone stays gone, and a format this device
+     * cannot play will not play on the second go either. Those go straight to a backup channel, then to Failed.
+     */
+    fun autoRetryAllowed(failure: TileFailure): Boolean = when (failure) {
+        TileFailure.ProviderRefused, TileFailure.StreamGone, TileFailure.Unsupported -> false
+        else -> true
+    }
 
     /** Whether this failure is evidence for the "decoders this device can run at once" ledger. */
     fun countsTowardDecoderCeiling(failure: TileFailure): Boolean = failure == TileFailure.DecoderUnavailable

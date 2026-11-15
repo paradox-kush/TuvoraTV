@@ -155,11 +155,14 @@ internal fun BoxScope.GuideFullscreenOverlay(
     onOpenPanel: (LivePanel) -> Unit,
     onAspectLabel: (String) -> Unit,
     onOpenChannelList: () -> Unit,
+    /** Multiview with [contentId] (the channel playing) as tile 0. */
+    onOpenMultiview: (String) -> Unit = {},
 ) {
     FullscreenOverlayGate(fullscreen, controls) {
         GuideFullscreenOverlayContent(
             controls, viewModel, playbackViewModel, playbackState, playingContentId, nowMs, favoriteIds,
             livePicture, primaryFocus, onTogglePause, onHide, onOpenPanel, onAspectLabel, onOpenChannelList,
+            onOpenMultiview,
         )
     }
 }
@@ -195,6 +198,7 @@ private fun BoxScope.GuideFullscreenOverlayContent(
     onOpenPanel: (LivePanel) -> Unit,
     onAspectLabel: (String) -> Unit,
     onOpenChannelList: () -> Unit,
+    onOpenMultiview: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -293,6 +297,8 @@ private fun BoxScope.GuideFullscreenOverlayContent(
             onChannelList = onOpenChannelList,
             onToggleFavourite = overlayChannel?.let { ch -> { viewModel.toggleFavorite(ch); controls.keepAlive() } },
             onStreamInfo = { onOpenPanel(LivePanel.STREAM_INFO) }.takeIf { readyPlayback != null },
+            // The channel on screen, not the aimed one: a zap still settling would otherwise open the wrong channel.
+            onMultiview = playingContentId?.let { id -> { onOpenMultiview(id) } },
             onToggleMore = { controls.moreOpen = !controls.moreOpen; controls.keepAlive() },
             onKeepAlive = { controls.keepAlive() },
             onHide = onHide,

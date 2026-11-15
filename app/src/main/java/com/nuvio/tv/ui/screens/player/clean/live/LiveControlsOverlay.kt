@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -131,6 +132,8 @@ internal class LiveOverlayActions(
     val onGoLive: (() -> Unit)? = null,
     /** Telemetry v2: one press sends a report about the error on screen. Null = not offered here. */
     val onSendReport: (() -> Unit)? = null,
+    /** Opens Multiview with the channel on screen as its first tile. Null = not offered here (no channel id, or a replay). */
+    val onMultiview: (() -> Unit)? = null,
 )
 
 /**
@@ -345,6 +348,13 @@ internal fun BoxScope.LiveControlsOverlay(
                                 onClick = it, onDownKey = actions.onHide, onFocused = actions.onKeepAlive,
                             )
                         }
+                    }
+                    actions.onMultiview?.let {
+                        ControlButton(
+                            icon = Icons.Default.GridView,
+                            contentDescription = stringResource(R.string.multiview_entry),
+                            onClick = it, onDownKey = actions.onHide, onFocused = actions.onKeepAlive,
+                        )
                     }
                     // "More": the VOD player's slide-out row, holding the less frequent actions.
                     AnimatedVisibility(

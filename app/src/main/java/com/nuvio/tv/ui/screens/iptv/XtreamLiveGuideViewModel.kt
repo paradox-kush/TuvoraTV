@@ -187,6 +187,8 @@ data class LiveGuideUiState(
     val switchAccountRequest: String? = null,
     /** F03: tune this channel once it is in the list (after such a switch). */
     val pendingTune: String? = null,
+    /** The answer to "Add to Multiview" for the screen to say aloud; null when none is showing. */
+    val multiviewNotice: com.nuvio.tv.core.multiview.QueueResult? = null,
 ) {
     val focusedChannel: GuideChannel? get() = channels.firstOrNull { it.contentId == focusedChannelId }
     val loadingChannels: Boolean get() = channelsLoad is LoadStatus.Loading
@@ -255,6 +257,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
     private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
     private val accountStore: com.nuvio.tv.data.local.XtreamAccountStore,
+    /** "Add to Multiview" fills this; the Multiview screen takes it. One instance app-wide (Hilt singleton). */
+    private val multiviewQueue: com.nuvio.tv.core.multiview.MultiviewQueue = com.nuvio.tv.core.multiview.MultiviewQueue(),
 ) : ViewModel() {
 
     /**
@@ -1217,6 +1221,13 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val favoriteMutationMutex = kotlinx.coroutines.sync.Mutex()
 
     private val favoriteMutations = GuideFavoriteMutations(libraryRepository) { profileManager.activeProfileId.value }
+
+    /** Sets the channel aside for Multiview (keys only, never a stream link) and reports how that went. */
+    fun addToMultiview(channel: GuideChannel) {
+        _uiState.update { it.copy(multiviewNotice = multiviewQueue.add(channel.contentId)) }
+    }
+
+    fun dismissMultiviewNotice() = _uiState.update { it.copy(multiviewNotice = null) }
 
     fun toggleFavorite(channel: GuideChannel) {
         viewModelScope.launch {

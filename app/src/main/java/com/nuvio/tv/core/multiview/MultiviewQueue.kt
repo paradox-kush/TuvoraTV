@@ -1,7 +1,7 @@
 // Ported from homelessbrian/NuvioPlusIPTV @ a86756891 (GPL-3.0), MultiviewQueue.kt (without the LiveTvNotice call).
 package com.nuvio.tv.core.multiview
 
-internal sealed interface QueueResult {
+sealed interface QueueResult {
     data class Added(val count: Int) : QueueResult
     data class AlreadyQueued(val count: Int) : QueueResult
     data object Full : QueueResult
@@ -12,7 +12,7 @@ internal sealed interface QueueResult {
  * each is re-checked against what the active profile may watch when multiview takes them.
  * The caller shows the text for each [QueueResult].
  */
-internal class MultiviewQueue(private val max: Int = MAX) {
+class MultiviewQueue(private val max: Int = MAX) {
     private val keys = ArrayList<String>()
 
     @Synchronized

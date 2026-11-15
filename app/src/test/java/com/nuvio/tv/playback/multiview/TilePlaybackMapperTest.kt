@@ -70,7 +70,7 @@ class TilePlaybackMapperTest {
     @Test
     fun `other http statuses and network codes are network failures`() {
         assertEquals(TileFailure.Network, failed(failure(FailureCode.NETWORK_UNREACHABLE, httpStatus = 502)).failure)
-        assertEquals(TileFailure.Network, failed(failure(FailureCode.SOURCE_NOT_FOUND)).failure)
+        assertEquals("a source that is not found is gone, not unreachable", TileFailure.StreamGone, failed(failure(FailureCode.SOURCE_NOT_FOUND)).failure)
         assertEquals(TileFailure.Network, failed(failure(FailureCode.NETWORK_UNREACHABLE)).failure)
         assertEquals(TileFailure.Network, failed(failure(FailureCode.NETWORK_TIMEOUT)).failure)
         assertEquals(TileFailure.Network, failed(failure(FailureCode.TLS_HANDSHAKE_FAILED, FailureDomain.TLS)).failure)

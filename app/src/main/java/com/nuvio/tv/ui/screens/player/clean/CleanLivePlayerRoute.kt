@@ -35,6 +35,8 @@ import kotlinx.coroutines.withContext
 internal fun CleanLivePlayerRoute(
     routeToken: String?,
     onReleasedExit: () -> Unit,
+    /** Multiview with the playing channel as tile 0; called once the player has released. Null = no Multiview button. */
+    onOpenMultiview: ((contentId: String) -> Unit)? = null,
     viewModel: CleanLivePlayerViewModel = hiltViewModel(),
 ) {
     val routeState by viewModel.routeState.collectAsStateWithLifecycle()
@@ -48,13 +50,14 @@ internal fun CleanLivePlayerRoute(
     val latestReleasedExit by rememberUpdatedState(onReleasedExit)
     val exitGate = remember { CleanLiveExitGate() }
 
-    fun requestReleaseAndExit() {
+    fun requestReleaseAndExit(next: (() -> Unit)? = null) {
         if (!exitGate.tryStart()) return
         scope.launch {
             withContext(NonCancellable) {
                 val released = runCatching { viewModel.releaseBeforeExit() }.isSuccess
                 if (released) {
-                    latestReleasedExit()
+                    // The same release barrier, then either the normal exit or the screen this hands over to.
+                    if (next != null) next() else latestReleasedExit()
                 } else {
                     // Keep the destination alive so the user can retry the release barrier.
                     exitGate.resetAfterFailure()
@@ -113,7 +116,14 @@ internal fun CleanLivePlayerRoute(
         onZapNext = {
             if (!exitGate.isStarted()) viewModel.requestZap(LiveZapDirection.NEXT)
         },
-        onExitRequested = ::requestReleaseAndExit,
+        onExitRequested = { requestReleaseAndExit() },
+        onMultiview = onOpenMultiview?.let { open ->
+            {
+                // The player must be fully released first: Multiview opens its own tiles, and a second live
+                // connection on the same account is what a provider refuses.
+                viewModel.currentContentKey?.let { key -> if (!exitGate.isStarted()) requestReleaseAndExit { open(key) } }
+            }
+        },
         // F28: the shared overlay's audio/subtitle pickers and stream info, from the session's own
         // URL-free snapshot.
         trackCatalog = ready?.snapshot?.trackCatalog ?: PlaybackTrackCatalog(),

@@ -17,9 +17,23 @@ class TileFailurePolicyTest {
 
     @Test
     fun `other http statuses are a network problem not a refusal`() {
-        listOf(404, 410, 500, 502, 503).forEach {
+        listOf(400, 500, 502, 503).forEach {
             assertEquals("HTTP $it", TileFailure.Network, c(TileSignal.Http(it)))
         }
+    }
+
+    @Test
+    fun `404 and 410 mean the stream is gone`() {
+        listOf(404, 410).forEach {
+            assertEquals("HTTP $it", TileFailure.StreamGone, c(TileSignal.Http(it)))
+        }
+    }
+
+    @Test
+    fun `a stream that is gone offers replace and remove and no retry`() {
+        assertEquals("The provider says this stream doesn't exist.", TileFailure.StreamGone.text)
+        assertEquals(listOf(TileAction.REPLACE, TileAction.REMOVE), TileFailure.StreamGone.actions)
+        assertFalse("no retry", TileAction.RETRY in TileFailure.StreamGone.actions)
     }
 
     @Test
@@ -56,9 +70,10 @@ class TileFailurePolicyTest {
     }
 
     @Test
-    fun `provider refused is never retried automatically but others may be`() {
-        assertFalse(TileFailurePolicy.autoRetryAllowed(TileFailure.ProviderRefused))
-        listOf(TileFailure.DecoderUnavailable, TileFailure.NoData, TileFailure.Unsupported, TileFailure.Network, TileFailure.Other)
+    fun `refused gone and unplayable are never retried automatically but others may be`() {
+        listOf(TileFailure.ProviderRefused, TileFailure.StreamGone, TileFailure.Unsupported)
+            .forEach { assertFalse("$it", TileFailurePolicy.autoRetryAllowed(it)) }
+        listOf(TileFailure.DecoderUnavailable, TileFailure.NoData, TileFailure.Network, TileFailure.Other)
             .forEach { assertTrue("$it", TileFailurePolicy.autoRetryAllowed(it)) }
     }
 

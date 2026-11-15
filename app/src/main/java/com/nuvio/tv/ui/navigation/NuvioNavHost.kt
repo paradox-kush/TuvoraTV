@@ -840,6 +840,17 @@ private fun PlaybackNavHost(
                         navController.popBackStack()
                     }
                 },
+                // Hand the playing channel on to Multiview: this player is gone first, so Back from Multiview
+                // returns to where the player was opened from.
+                onOpenMultiview = { contentId ->
+                    if (navController.currentBackStackEntry == backStackEntry) {
+                        navController.popBackStack()
+                        // A channel that is not a playlist channel has no tile to become: the player just closes.
+                        if (com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(contentId)) {
+                            navController.navigate(Screen.Multiview.createRoute(contentId))
+                        }
+                    }
+                },
                 viewModel = androidx.hilt.navigation.compose.hiltViewModel<CleanLivePlayerViewModel>(
                     backStackEntry,
                 ),
@@ -1544,6 +1555,7 @@ private fun PlaybackNavHost(
                 onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) },
                 onEnterSetupCode = { navController.navigate(Screen.IptvSetupCode.route) },
                 onOpenRecordings = { navController.navigate(Screen.Recordings.route) },
+                onOpenMultiview = { startKey -> navController.navigate(Screen.Multiview.createRoute(startKey)) },
                 // Catch-up takes the same proven live route (contentType="live" keeps the live DoH
                 // and engine handling, and routes BACK to this hub), plus the isCatchUp flag that
                 // turns off the three behaviours a recording must not have.
@@ -1574,6 +1586,33 @@ private fun PlaybackNavHost(
                         launchSingleTop = true
                     }
                 }
+            )
+        }
+
+        composable(
+            route = Screen.Multiview.route,
+            arguments = listOf(
+                navArgument(Screen.Multiview.START_ARGUMENT) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { backStackEntry ->
+            com.nuvio.tv.ui.screens.multiview.MultiviewScreen(
+                startKey = backStackEntry.arguments?.getString(Screen.Multiview.START_ARGUMENT),
+                onExit = { navController.popBackStack() },
+                // A failed tile's way out: the normal full-screen player (Exo, then mpv). No non-live meaning here,
+                // so the Sports origin's feedback path is the right one for an unopenable channel.
+                onOpenInPlayer = { contentId ->
+                    dispatchLiveOrElse(
+                        owner = backStackEntry,
+                        contentId = contentId,
+                        origin = CleanLiveLaunchOrigin.SPORTS,
+                        onNonLive = {},
+                    )
+                },
+                viewModel = androidx.hilt.navigation.compose.hiltViewModel(backStackEntry),
             )
         }
 

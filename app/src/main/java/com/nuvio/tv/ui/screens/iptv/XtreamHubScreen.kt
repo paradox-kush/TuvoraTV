@@ -105,6 +105,8 @@ fun XtreamHubScreen(
     onEnterSetupCode: () -> Unit = {},
     /** The Recordings page (scheduled and saved catch-up recordings). */
     onOpenRecordings: () -> Unit = {},
+    /** Multiview: [startKey] is the channel to open as tile 0, or null to open the queued channels / the last grid. */
+    onOpenMultiview: (startKey: String?) -> Unit = {},
     /** Opens a catch-up replay in the full player — see LiveGuide's parameter of the same name. */
     onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit =
         { _, _, _, _, _ -> },
@@ -318,6 +320,12 @@ fun XtreamHubScreen(
                 onFocusGained = notATab,
                 onClick = { if (liveSearchApplies) liveSearchRequest++ else showSearchDialog = true }
             )
+            if (showLive) HubChip(
+                label = stringResource(R.string.multiview_entry),
+                selected = false,
+                onFocusGained = notATab,
+                onClick = { onOpenMultiview(null) },
+            )
             HubChip(
                 label = stringResource(R.string.rec_hub_chip),
                 selected = false,
@@ -354,6 +362,7 @@ fun XtreamHubScreen(
                 onSwitchAccount = viewModel::selectAccount,
                 searchRequest = liveSearchRequest,
                 onOpenRecordings = onOpenRecordings,
+                onOpenMultiview = { onOpenMultiview(it) },
             )
         } else {
             HubBrowseContent(
