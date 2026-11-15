@@ -993,8 +993,8 @@ internal fun Modifier.hubHeaderFocusScope(headerFocus: HubHeaderFocus): Modifier
 private val hubHeaderMainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
 /**
- * A section tab: OK selects it; focus selects it only when the viewer arrowed onto it along the
- * header (B132 — a landing from Back, a restore or the sidebar never switches the section).
+ * A section tab: OK selects it. A2 (redesign 2026-11-15): focus alone never switches the section
+ * ([HubSectionFocusPolicy.SWITCH_ON_FOCUS]); with that flag on, only travel along the header would (B132).
  */
 @Composable
 internal fun HubSectionTab(
@@ -1014,9 +1014,8 @@ internal fun HubSectionTab(
 }
 
 /**
- * Header control for the provider picker + section tabs. Section tabs switch on FOCUS
- * (TiViMate-style) — arrow onto a tab and it selects, no OK needed; OK/click still works.
- * Only travel that starts inside the header counts (B132, [HubSectionTab]).
+ * Header control for the provider picker + section tabs. Section tabs change on OK (A2,
+ * [HubSectionFocusPolicy.SWITCH_ON_FOCUS]); see [HubSectionTab].
  *
  * Speaks the sidebar's dialect ([SidebarNavigation]) rather than a header vocabulary of its own:
  * nothing is drawn at rest, the active section takes a soft neutral fill, and focus takes a solid

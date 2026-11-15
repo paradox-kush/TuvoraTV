@@ -4,14 +4,29 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** B132. JUnit here, so the argument order is (message, expected, actual). */
+/** B132 + A2. JUnit here, so the argument order is (message, expected, actual). */
 class HubSectionFocusPolicyTest {
+
+    // A2 (redesign 2026-11-15): tabs change on OK only. The B132 travel rules below still hold for the owner's
+    // other choice, so they pin switchOnFocus = true explicitly.
+    @Test
+    fun `by default arrowing along the header never switches the section`() {
+        assertEquals("A2 default is OK-only", false, HubSectionFocusPolicy.SWITCH_ON_FOCUS)
+        assertNull(
+            "walking RIGHT past Movies toward Search must not reload Movies",
+            HubSectionFocusPolicy.sectionOnFocus(XtreamSection.MOVIES, XtreamSection.LIVE, cameFromHeader = true),
+        )
+        val header = HubHeaderFocus()
+        assertNull(header.onControlFocused(XtreamSection.LIVE, XtreamSection.LIVE))
+        assertNull("travel onto Movies is not a choice", header.onControlFocused(XtreamSection.MOVIES, XtreamSection.LIVE))
+        assertNull("travel onto Series is not a choice", header.onControlFocused(XtreamSection.SERIES, XtreamSection.LIVE))
+    }
 
     @Test
     fun `focus arriving on another tab from outside the header keeps the section`() {
         assertNull(
             "Back from a Movies detail landing on the Live tab must not switch to Live",
-            HubSectionFocusPolicy.sectionOnFocus(XtreamSection.LIVE, XtreamSection.MOVIES, cameFromHeader = false),
+            HubSectionFocusPolicy.sectionOnFocus(XtreamSection.LIVE, XtreamSection.MOVIES, cameFromHeader = false, switchOnFocus = true),
         )
     }
 
@@ -20,18 +35,18 @@ class HubSectionFocusPolicyTest {
         assertEquals(
             "travel inside the header is the TiViMate-style focus select",
             XtreamSection.LIVE,
-            HubSectionFocusPolicy.sectionOnFocus(XtreamSection.LIVE, XtreamSection.MOVIES, cameFromHeader = true),
+            HubSectionFocusPolicy.sectionOnFocus(XtreamSection.LIVE, XtreamSection.MOVIES, cameFromHeader = true, switchOnFocus = true),
         )
     }
 
     @Test
     fun `a control that is not a tab never switches`() {
-        assertNull(HubSectionFocusPolicy.sectionOnFocus(null, XtreamSection.MOVIES, cameFromHeader = true))
+        assertNull(HubSectionFocusPolicy.sectionOnFocus(null, XtreamSection.MOVIES, cameFromHeader = true, switchOnFocus = true))
     }
 
     @Test
     fun `back from Movies lands on Live and the next arrows along the header still work`() {
-        val header = HubHeaderFocus()
+        val header = HubHeaderFocus(switchOnFocus = true)
         assertNull("landing on Live after Back", header.onControlFocused(XtreamSection.LIVE, XtreamSection.MOVIES))
         assertNull("RIGHT onto the selected Movies tab", header.onControlFocused(XtreamSection.MOVIES, XtreamSection.MOVIES))
         assertEquals(
@@ -43,7 +58,7 @@ class HubSectionFocusPolicyTest {
 
     @Test
     fun `leaving the header makes the next landing an arrival again`() {
-        val header = HubHeaderFocus()
+        val header = HubHeaderFocus(switchOnFocus = true)
         header.onControlFocused(XtreamSection.MOVIES, XtreamSection.MOVIES)
         header.onHeaderFocusLost()
         assertNull(
@@ -58,7 +73,7 @@ class HubSectionFocusPolicyTest {
      */
     @Test
     fun `the row passing through no focus between two tabs is still travel`() {
-        val header = HubHeaderFocus()
+        val header = HubHeaderFocus(switchOnFocus = true)
         val posted = mutableListOf<Runnable>()
         header.onHeaderFocusChanged(true) { posted += it }
         header.onControlFocused(XtreamSection.MOVIES, XtreamSection.MOVIES)
@@ -81,7 +96,7 @@ class HubSectionFocusPolicyTest {
 
     @Test
     fun `travel that starts on Search and goes onto a tab switches`() {
-        val header = HubHeaderFocus()
+        val header = HubHeaderFocus(switchOnFocus = true)
         assertNull(header.onControlFocused(null, XtreamSection.MOVIES))
         assertEquals(XtreamSection.SERIES, header.onControlFocused(XtreamSection.SERIES, XtreamSection.MOVIES))
     }

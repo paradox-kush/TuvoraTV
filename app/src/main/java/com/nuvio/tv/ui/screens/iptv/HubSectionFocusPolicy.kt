@@ -12,16 +12,27 @@ package com.nuvio.tv.ui.screens.iptv
  * a landing from outside leaves it alone, and OK on the tab still selects it.
  */
 internal object HubSectionFocusPolicy {
+    /**
+     * A2 (IPTV redesign 2026-11-15, owner default): section tabs change on OK only. Walking RIGHT toward Search,
+     * Recordings or the playlist passed Movies and Series and reloaded the page each time (UX253, UX338, UX355,
+     * UX292). Flip to true to restore the TiViMate-style switch-on-focus (with the B132 rules below).
+     */
+    const val SWITCH_ON_FOCUS = false
+
     /** The section to switch to, or null to stay. [chip] is null for header controls that are not tabs. */
-    fun sectionOnFocus(chip: XtreamSection?, current: XtreamSection, cameFromHeader: Boolean): XtreamSection? =
-        chip?.takeIf { cameFromHeader && it != current }
+    fun sectionOnFocus(
+        chip: XtreamSection?,
+        current: XtreamSection,
+        cameFromHeader: Boolean,
+        switchOnFocus: Boolean = SWITCH_ON_FOCUS,
+    ): XtreamSection? = chip?.takeIf { switchOnFocus && cameFromHeader && it != current }
 }
 
 /**
  * Remembers whether focus is already travelling inside the hub header. One per composed header;
  * main-thread only (focus callbacks).
  */
-internal class HubHeaderFocus {
+internal class HubHeaderFocus(private val switchOnFocus: Boolean = HubSectionFocusPolicy.SWITCH_ON_FOCUS) {
     private var focusInHeader = false
     private var rowHasFocus = false
 
@@ -44,6 +55,6 @@ internal class HubHeaderFocus {
     fun onControlFocused(chip: XtreamSection?, current: XtreamSection): XtreamSection? {
         val cameFromHeader = focusInHeader
         focusInHeader = true
-        return HubSectionFocusPolicy.sectionOnFocus(chip, current, cameFromHeader)
+        return HubSectionFocusPolicy.sectionOnFocus(chip, current, cameFromHeader, switchOnFocus)
     }
 }
