@@ -38,4 +38,17 @@ class GuideLetterJumpPolicyTest {
         assertEquals("lower case", 'B', GuideLetterJumpPolicy.letterOf("bein"))
         assertEquals("no letter", '#', GuideLetterJumpPolicy.letterOf("★★"))
     }
+
+    /**
+     * Device pass 1, finding 5: the Stalker mock names every group "ITV category N". With one letter for the whole
+     * groups part there is no next letter, so a held DOWN runs to the last group: on screen that looks like plain
+     * travel, which is why the device pass could not tell the jump fired.
+     */
+    @Test
+    fun `one letter for every group runs a held key to the far end`() {
+        val mock = listOf("Search", "All channels") + (1..12).map { "ITV category $it" }
+        val inGroups = listOf(false, false) + List(12) { true }
+        assertEquals("DOWN runs to the last group", 13, GuideLetterJumpPolicy.target(mock, inGroups, current = 2, down = true))
+        assertEquals("UP runs to the first group", 2, GuideLetterJumpPolicy.target(mock, inGroups, current = 9, down = false))
+    }
 }

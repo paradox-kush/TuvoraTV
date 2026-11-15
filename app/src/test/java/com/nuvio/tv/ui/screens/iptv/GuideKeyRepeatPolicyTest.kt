@@ -50,4 +50,26 @@ class GuideKeyRepeatPolicyTest {
             assertEquals(Decision.Pass, p.decide(Key.Horizontal, i, 10L * i, 10L * i))
         }
     }
+
+    /**
+     * Device pass 1, finding 5 (report only): the held-key letter jump (change 8) reads a KeyDown with repeatCount > 0
+     * AFTER this gate (the gate sits on the group LazyColumn, the jump on the row). `adb input keyevent --longpress`
+     * sends ONE repeat at the long-press timeout; a remote sends a stream every ~50 ms. Both shapes must let a repeat
+     * through, or the jump could never fire.
+     */
+    @Test
+    fun `a long-press repeat and a remote's repeat stream both reach the letter jump`() {
+        val adb = policy()
+        adb.decide(Key.Vertical, 0, 0, 0)
+        assertEquals("adb --longpress: one repeat at the 500 ms timeout", Decision.Accept, adb.decide(Key.Vertical, 1, 500, 500))
+
+        val remote = policy()
+        remote.decide(Key.Vertical, 0, 0, 0)
+        // Android's first repeat comes at the key-repeat timeout (~400 ms), then every ~50 ms.
+        val accepted = (1..10).count { i ->
+            val t = 400L + 50L * (i - 1)
+            remote.decide(Key.Vertical, i, t, t) == Decision.Accept
+        }
+        assertEquals("a held remote key gets a repeat through every gate period", 4, accepted)
+    }
 }
