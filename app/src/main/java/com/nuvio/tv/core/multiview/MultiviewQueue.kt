@@ -2,6 +2,9 @@
 package com.nuvio.tv.core.multiview
 
 sealed interface QueueResult {
+    /** Every result's toast offers "Open now": a duplicate or a full queue must not leave the viewer at a dead end. */
+    val offersOpenNow: Boolean get() = true
+
     data class Added(val count: Int) : QueueResult
     data class AlreadyQueued(val count: Int) : QueueResult
     data object Full : QueueResult

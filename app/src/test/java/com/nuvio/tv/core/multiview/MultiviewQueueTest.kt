@@ -39,6 +39,13 @@ class MultiviewQueueTest {
     }
 
     @Test
+    fun `every toast offers Open now so a duplicate or a full queue is never a dead end`() {
+        assertTrue("added", QueueResult.Added(1).offersOpenNow)
+        assertTrue("already set aside", QueueResult.AlreadyQueued(2).offersOpenNow)
+        assertTrue("full", QueueResult.Full.offersOpenNow)
+    }
+
+    @Test
     fun `max is four`() {
         assertEquals(4, MultiviewQueue.MAX)
     }

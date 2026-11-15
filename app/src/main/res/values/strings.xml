@@ -4047,7 +4047,7 @@
     <string name="multiview_picker_loading">Loading channels…</string>
     <string name="multiview_picker_failed_title">Couldn\'t load this playlist\'s channels</string>
     <string name="multiview_notice_added">Added to Multiview (%1$d of %2$d)</string>
-    <string name="multiview_notice_already">Already in Multiview</string>
+    <string name="multiview_notice_already">Already set aside for Multiview</string>
     <string name="multiview_notice_full">Multiview is full</string>
     <string name="multiview_notice_open">Open now</string>
     <string name="multiview_notice_ok">OK</string>

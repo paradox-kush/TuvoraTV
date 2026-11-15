@@ -1187,7 +1187,7 @@ fun LiveGuide(
                     categoryListFocus.requestFocusOrFalse()
                 }
             }
-            val opens = result is com.nuvio.tv.core.multiview.QueueResult.Added
+            val opens = result.offersOpenNow
             NuvioUndoToast(
                 message = when (result) {
                     is com.nuvio.tv.core.multiview.QueueResult.Added ->
