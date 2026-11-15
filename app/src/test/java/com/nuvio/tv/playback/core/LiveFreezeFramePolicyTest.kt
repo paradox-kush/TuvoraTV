@@ -79,6 +79,17 @@ class LiveFreezeFramePolicyTest {
         assertEquals(LiveFreezeFramePolicy.Overlay.HIDDEN, policy.overlay(paused))
     }
 
+    @Test
+    fun `a channel change holds no frame while same-channel interruptions do`() {
+        // Owner (2026-11-15): "channel switch we dont care" - black for a moment on a zap is fine;
+        // a picture of the old channel over the new one is the bug.
+        assertFalse(policy.holdsFrameAcross(LiveFreezeFramePolicy.Interruption.CHANNEL_CHANGE))
+        assertTrue(
+            "reconnect, handoff, suspend and release keep live never-black",
+            policy.holdsFrameAcross(LiveFreezeFramePolicy.Interruption.SAME_CHANNEL),
+        )
+    }
+
     private fun snapshot(
         state: PlaybackState,
         generation: Long,

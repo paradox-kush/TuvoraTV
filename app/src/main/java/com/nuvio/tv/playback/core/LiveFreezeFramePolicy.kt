@@ -23,6 +23,23 @@ object LiveFreezeFramePolicy {
         CLEARED,
     }
 
+    /** Why the engine is tearing the picture down, as only the engine knows it at its boundary. */
+    enum class Interruption {
+        /** Reconnect, recovery, engine handoff, suspend or a full release: the same channel returns. */
+        SAME_CHANNEL,
+
+        /** The source is replaced by another channel (the session's REPLACE_REQUEST release). */
+        CHANNEL_CHANGE,
+    }
+
+    /**
+     * Owner decision (2026-11-15): "channel switch we dont care" — a moment of black on a zap is
+     * fine, a picture of the old channel on the new one is not (emulator: a stall on channel 1
+     * showed channel 2's frame from 24 s earlier). A channel change therefore captures nothing and
+     * drops any frame still held; every same-channel interruption captures and holds as before.
+     */
+    fun holdsFrameAcross(interruption: Interruption): Boolean = interruption == Interruption.SAME_CHANNEL
+
     fun overlay(snapshot: PlaybackSnapshot): Overlay = when {
         // STOPPED is also a suspend (Home, then back): hold the frame for the resume. Really leaving
         // disposes the host, which removes the frame with it.

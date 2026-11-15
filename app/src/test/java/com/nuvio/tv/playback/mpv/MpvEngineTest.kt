@@ -32,6 +32,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withTimeoutOrNull
 import com.nuvio.tv.playback.core.FailureCode
+import com.nuvio.tv.playback.core.LiveFreezeFramePolicy
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -320,6 +321,27 @@ class MpvEngineTest {
     }
 
     @Test
+    fun `a channel switch takes no freeze frame while a same-channel teardown captures one`() = runTest {
+        // Owner (2026-11-15): "channel switch we dont care" - a moment of black on a zap is fine,
+        // a frame of the old channel on the new one is not. Same-channel interruptions keep theirs.
+        val zapHost = CountingSurfaceHost()
+        val zapEngine = MpvEngine(backgroundScope, zapHost, MpvBackendFactory { PlaybackResult.Success(FakeBackend()) })
+        success(zapEngine.attachSurface(41, graph()))
+        success(zapEngine.start(start(41)))
+        success(zapEngine.releaseSource(41))
+        assertEquals("a zap must not copy the outgoing channel", 0, zapHost.leases.single().freezes)
+        assertEquals("a zap drops any frame still held", 1, zapHost.leases.single().drops)
+
+        val teardownHost = CountingSurfaceHost()
+        val teardownEngine = MpvEngine(backgroundScope, teardownHost, MpvBackendFactory { PlaybackResult.Success(FakeBackend()) })
+        success(teardownEngine.attachSurface(42, graph()))
+        success(teardownEngine.start(start(42)))
+        success(teardownEngine.release(42))
+        assertEquals("a same-channel teardown holds its frame", 1, teardownHost.leases.single().freezes)
+        assertEquals(0, teardownHost.leases.single().drops)
+    }
+
+    @Test
     fun `libmpv decoder format and dimensions remain generation facts`() = runTest {
         val backend = FakeBackend()
         val engine = engine(backend, backgroundScope)
@@ -430,6 +452,11 @@ class MpvEngineTest {
         override val surface: Surface get() = error("Fake backend must not access Android Surface")
         private var attached = false
         var abandoned = false
+        var freezes = 0
+        var drops = 0
+        override suspend fun freezeForTransition(interruption: LiveFreezeFramePolicy.Interruption) {
+            if (LiveFreezeFramePolicy.holdsFrameAcross(interruption)) freezes++ else drops++
+        }
         override fun markAttached() { attached = true }
         override fun confirmDetached() { attached = false }
         override fun confirmCoreDestroyed() { attached = false }
