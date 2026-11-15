@@ -26,13 +26,15 @@ enum class BlockType(val wire: String) {
     LEADERS("leaders"), TIMELINE("timeline"), LINEUP("lineup"), RESULTS("results"), STANDINGS("standings"),
     FORM("form"), HIGHLIGHTS("highlights"), NEXT("next"), WIN_PROBABILITY("winProbability"),
     /** Phase A: the full play list (timeline stays the scoring summary) and the generic standings table. */
-    PLAYS("plays"), STANDINGS_TABLE("standingsTable");
+    PLAYS("plays"), STANDINGS_TABLE("standingsTable"),
+    /** Phase B: football live field strip and the soccer live strip (single-event tick). */
+    FIELD("field"), SOCCER_STRIP("soccerStrip");
 
     companion object {
         /** Block types the shared core can assemble from a provider (watch/next/standings are not yet). */
         val assemblable: Set<BlockType> = setOf(
             SITUATION, LINESCORE, STATS, LEADERS, TIMELINE, LINEUP, RESULTS, STANDINGS, FORM, HIGHLIGHTS, WIN_PROBABILITY,
-            PLAYS, STANDINGS_TABLE,
+            PLAYS, STANDINGS_TABLE, FIELD, SOCCER_STRIP,
         )
 
         fun fromWire(s: String?): BlockType? = entries.firstOrNull { it.wire == s }
@@ -97,7 +99,14 @@ data class TimelineItem(
 )
 data class StandingsGroup(val name: String, val columns: List<String>, val rows: List<StandingsTableRow>)
 data class StandingsTableRow(val teamId: String?, val name: String, val cells: List<String>, val isGameTeam: Boolean = false)
-data class LineupPlayer(val number: String?, val name: String, val pos: String?, val starter: Boolean)
+/** [place] is ESPN's `formationPlace` (1 = keeper, then the rows of the formation); null when the feed has none. */
+data class LineupPlayer(val number: String?, val name: String, val pos: String?, val starter: Boolean, val place: Int? = null)
+
+/** [startYardLine] is home-based like the ball; [summary] is the feed's "3 plays, 26 yards, 0:54". */
+data class FieldDrive(val startYardLine: Int?, val summary: String?)
+
+/** kind: goal | yellow | red | sub | corner | penalty | var | shot | offside | foul. [text] is the feed's own words. */
+data class SoccerEvent(val kind: String, val side: SideKey?, val minute: String?, val text: String)
 data class LineupSide(val formation: String?, val players: List<LineupPlayer>)
 data class StandingRow(val pos: String, val name: String, val played: String, val points: String, val gd: String? = null, val form: String? = null)
 
@@ -135,6 +144,35 @@ sealed interface GameBlock {
     }
     data class StandingsTable(override val source: SourceId, val groups: List<StandingsGroup>) : GameBlock {
         override val type get() = BlockType.STANDINGS_TABLE
+    }
+    /**
+     * American football live field strip. [yardLine] is 0..100 yards from the HOME goal line, exactly as the feed gives it.
+     * [possession] null = unknown (no arrow, no drive shading). [line] is the feed's own text, never built by us.
+     */
+    data class Field(
+        override val source: SourceId,
+        val yardLine: Int,
+        val possession: SideKey? = null,
+        val down: Int? = null,
+        val distance: Int? = null,
+        val line: String? = null,
+        val redZone: Boolean = false,
+        val homeTimeouts: Int? = null,
+        val awayTimeouts: Int? = null,
+        val drive: FieldDrive? = null,
+    ) : GameBlock {
+        override val type get() = BlockType.FIELD
+    }
+    /** Soccer live strip: last real event, possession, corners, cards and scorers (single-event scoreboard + summary commentary). */
+    data class SoccerStrip(
+        override val source: SourceId,
+        val lastEvent: SoccerEvent? = null,
+        val homePossession: Int? = null,
+        val homeCorners: Int? = null, val awayCorners: Int? = null,
+        val homeYellow: Int = 0, val awayYellow: Int = 0, val homeRed: Int = 0, val awayRed: Int = 0,
+        val homeScorers: List<String> = emptyList(), val awayScorers: List<String> = emptyList(),
+    ) : GameBlock {
+        override val type get() = BlockType.SOCCER_STRIP
     }
     data class Form(override val source: SourceId, val home: List<String>, val away: List<String>) : GameBlock {
         override val type get() = BlockType.FORM
@@ -201,7 +239,7 @@ object BlockVisibility {
 
     fun visible(type: BlockType, state: GameState): Boolean = when (state) {
         GameState.LIVE -> true
-        GameState.FINAL -> type != BlockType.SITUATION && type != BlockType.WIN_PROBABILITY
+        GameState.FINAL -> type != BlockType.SITUATION && type != BlockType.WIN_PROBABILITY && type != BlockType.FIELD
         GameState.UPCOMING -> type in upcoming
         GameState.POSTPONED -> false
     }

@@ -40,6 +40,9 @@ data class TvLastPlay(val time: String, val text: String, val tag: String?, val 
 /** [leader] is the side whose value wins (flipped for lower-is-better rows); null = tie or not comparable. */
 data class TvStatLine(val label: String, val home: String, val away: String, val homeFraction: Float?, val leader: SideKey?)
 
+/** Lineups on a pitch (both halves); built only when [LineupPitchPolicy] can place a full XI for at least one side. */
+data class TvPitch(val homeFormation: String?, val awayFormation: String?, val home: List<PitchSpot>, val away: List<PitchSpot>)
+
 /** Win-chance chart: home share per point, oldest first, 0..1. Drawn only with >= 2 points; no markers (Phase D). */
 data class TvChart(val homeShare: List<Float>)
 
@@ -95,6 +98,10 @@ data class GameDetailTvModel(
     val leadersAll: List<TvLeader>,
     val standings: GameBlock.StandingsTable?,
     val chart: TvChart?,
+    /** Phase B: live field strip (football), soccer strip, pitch lineups. */
+    val field: GameBlock.Field?,
+    val soccer: GameBlock.SoccerStrip?,
+    val pitch: TvPitch?,
     val kickoffLabel: String?,
     val venue: String?,
     val updatedLabel: String?,
@@ -164,7 +171,15 @@ data class GameDetailTvModel(
                     scoring = it.kind == TimelineKind.GOAL || it.kind == TimelineKind.SCORE,
                 )
             }
-            val sections = GameSectionsPolicy.sections(d).filter { it != GameSection.OVERVIEW && it != GameSection.LINEUPS }
+            val field = d.block(BlockType.FIELD) as? GameBlock.Field
+            val soccer = d.block(BlockType.SOCCER_STRIP) as? GameBlock.SoccerStrip
+            val pitch = (d.block(BlockType.LINEUP) as? GameBlock.Lineup)?.let { l ->
+                val home = l.sides.getOrNull(0); val away = l.sides.getOrNull(1)
+                val h = home?.let { LineupPitchPolicy.positions(it.formation, it.players) }.orEmpty()
+                val a = away?.let { LineupPitchPolicy.positions(it.formation, it.players) }.orEmpty()
+                if (h.isEmpty() && a.isEmpty()) null else TvPitch(home?.formation, away?.formation, h, a)
+            }
+            val sections = GameSectionsPolicy.sections(d).filter { it != GameSection.OVERVIEW && (it != GameSection.LINEUPS || pitch != null) }
             val newest = GameMomentPolicy.newest(d)
             val lastPlay = newest?.let { n ->
                 TvLastPlay(n.time, condensePlay(n.text), sideTag(n.side, sides), n.side, n.kind)
@@ -194,7 +209,8 @@ data class GameDetailTvModel(
                 subtitle = gameSubtitle(d.leagueName, d.round),
                 sides = sides, state = d.state, pill = pill,
                 liveLine = line ?: (d.header as? GameHeader.Event)?.session,
-                isLive = live, situation = situation, homeWinPercent = win, winChance = winChance, linescore = linescore,
+                isLive = live, situation = if (field != null) null else situation, // the field strip carries the same information
+                field = field, soccer = soccer, pitch = pitch, homeWinPercent = win, winChance = winChance, linescore = linescore,
                 leaders = leaders, stats = stats, form = form, latestPlays = plays,
                 sections = sections, lastPlay = lastPlay, playRows = playRows, statLines = statLines,
                 leadersAll = leaders(d, sides, LEADERS_ALL), standings = d.block(BlockType.STANDINGS_TABLE) as? GameBlock.StandingsTable, chart = chart,

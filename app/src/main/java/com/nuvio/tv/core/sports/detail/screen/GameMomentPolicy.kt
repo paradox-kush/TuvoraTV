@@ -13,6 +13,11 @@ sealed interface Moment {
     data class ScoreChange(val side: SideKey, val to: String) : Moment
     data class WinChanceMove(val fromHome: Int, val toHome: Int) : Moment
     data class NewPlay(val item: TimelineItem) : Moment
+    // Phase B
+    data class FieldMove(val fromYard: Int, val toYard: Int, val loss: Boolean, val firstDown: Boolean) : Moment
+    data class Touchdown(val side: SideKey) : Moment
+    data class PossessionChange(val to: SideKey) : Moment
+    data class SoccerMoment(val event: com.nuvio.tv.core.sports.detail.SoccerEvent) : Moment
 }
 
 object GameMomentPolicy {
@@ -24,6 +29,9 @@ object GameMomentPolicy {
             addAll(scoreChanges(prev, next))
             winChance(prev, next)?.let(::add)
             newPlay(prev, next)?.let(::add)
+            touchdown(prev, next)?.let(::add)
+            fieldMove(prev, next)?.let(::add)
+            soccer(prev, next)?.let(::add)
         }
     }
 
@@ -56,6 +64,36 @@ object GameMomentPolicy {
 
     private fun same(a: TimelineItem, b: TimelineItem): Boolean =
         if (a.id != null && b.id != null) a.id == b.id else a.time == b.time && a.text == b.text && a.period == b.period
+
+    private fun intScore(s: String?): Int? = s?.trim()?.toIntOrNull()
+
+    /** A score rise of 6 or more for the side that had the ball in the previous snapshot. */
+    private fun touchdown(prev: GameDetail, next: GameDetail): Moment? {
+        val side = prev.blocks.filterIsInstance<GameBlock.Field>().firstOrNull()?.possession ?: return null
+        val (ph, pa) = scores(prev)
+        val (nh, na) = scores(next)
+        val rise = if (side == SideKey.HOME) (intScore(nh) ?: return null) - (intScore(ph) ?: return null) else (intScore(na) ?: return null) - (intScore(pa) ?: return null)
+        return if (rise >= 6) Moment.Touchdown(side) else null
+    }
+
+    /** One FieldMove for any gain/loss with the same team on the ball (a jump over several plays is still one); a flip is a PossessionChange. */
+    private fun fieldMove(prev: GameDetail, next: GameDetail): Moment? {
+        val a = prev.blocks.filterIsInstance<GameBlock.Field>().firstOrNull() ?: return null
+        val b = next.blocks.filterIsInstance<GameBlock.Field>().firstOrNull() ?: return null
+        val pa = a.possession ?: return null
+        val pb = b.possession ?: return null
+        if (pa != pb) return Moment.PossessionChange(pb)
+        if (a.yardLine == b.yardLine) return null
+        val loss = if (pb == SideKey.HOME) b.yardLine < a.yardLine else b.yardLine > a.yardLine
+        return Moment.FieldMove(a.yardLine, b.yardLine, loss = loss, firstDown = b.down == 1 && a.down != 1)
+    }
+
+    /** A different real last event than before (compared by kind, minute and text); the event disappearing animates nothing. */
+    private fun soccer(prev: GameDetail, next: GameDetail): Moment? {
+        val n = next.blocks.filterIsInstance<GameBlock.SoccerStrip>().firstOrNull()?.lastEvent ?: return null
+        val p = prev.blocks.filterIsInstance<GameBlock.SoccerStrip>().firstOrNull()?.lastEvent
+        return if (p == null || p.kind != n.kind || p.minute != n.minute || p.text != n.text) Moment.SoccerMoment(n) else null
+    }
 
     private fun newPlay(prev: GameDetail, next: GameDetail): Moment? {
         val n = newest(next) ?: return null

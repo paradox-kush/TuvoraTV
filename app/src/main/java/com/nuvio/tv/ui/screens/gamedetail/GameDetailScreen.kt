@@ -62,6 +62,7 @@ import com.nuvio.tv.core.sports.detail.screen.FocusDir
 import com.nuvio.tv.core.sports.detail.screen.GameSection
 import com.nuvio.tv.core.sports.detail.screen.MomentBatch
 import com.nuvio.tv.core.sports.detail.screen.PanelFit
+import com.nuvio.tv.core.sports.detail.screen.LeftColumnFit
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiState
 import com.nuvio.tv.core.sports.detail.screen.PreviewFailure
 import com.nuvio.tv.core.sports.detail.screen.PreviewResolver
@@ -254,15 +255,27 @@ fun GameDetailScreen(
                 val colors = rememberTeamColors(model.sides)
                 val sectioned = chipSections.isNotEmpty()
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Column(Modifier.weight(if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING && model.form == null) 1f else 1.12f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING && model.form == null) 1f else 1.12f).fillMaxHeight()) {
+                    // The left column is a fixed 472 dp: when it cannot hold everything the win-chance chart goes first, then the last-play line.
+                    val plan = LeftColumnFit.plan(
+                        maxHeight.value.toInt(),
+                        LeftColumnFit.Parts(
+                            strip = when { model.field != null -> LeftColumnFit.Strip.FOOTBALL; model.soccer != null -> LeftColumnFit.Strip.SOCCER; else -> LeftColumnFit.Strip.NONE },
+                            lastPlay = sectioned && model.lastPlay != null, winChance = model.winChance != null, chart = model.chart != null,
+                            source = watch.visible, scorerLines = listOf(model.soccer?.homeScorers, model.soccer?.awayScorers).count { !it.isNullOrEmpty() },
+                        ),
+                    )
+                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ScoreboardCard(model, s.stale, colors, moments)
-                        if (sectioned) model.lastPlay?.let { LastPlayCard(it, colors) }
+                        model.field?.let { FootballFieldStrip(it, model.sides, colors, moments) }
+                        model.soccer?.let { SoccerStrip(it, model.sides, colors, moments) }
+                        if (sectioned && plan.showLastPlay) model.lastPlay?.let { LastPlayCard(it, colors) }
                         if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
                             // Before kickoff only the market has a win chance (and its storylines): a small card above the kickoff.
-                            if (model.winChance != null) SituationCard(model, colors)
+                            if (model.winChance != null) SituationCard(model, colors, showChart = false)
                             KickoffCard(model, Modifier.weight(1f))
                         } else {
-                            if (model.situation != null || model.winChance != null) SituationCard(model, colors)
+                            if (model.situation != null || model.winChance != null) SituationCard(model, colors, plan.showChart)
                             if (sectioned) Spacer(Modifier.weight(1f))
                             else model.linescore?.let { ByPeriodCard(it, Modifier.weight(1f)) } ?: Spacer(Modifier.weight(1f))
                         }
@@ -282,6 +295,7 @@ fun GameDetailScreen(
                             },
                             onChannels = { scope.launch { playback.detach(); viewModel.requestMatchSheet(); onOpenMatchSheet() } },
                         )
+                    }
                     }
                     val upcoming = model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING
                     // An upcoming game with no form yet has nothing for a second pane: the left column carries it all.
@@ -415,9 +429,9 @@ private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean, colors: Tea
             val final = model.state == com.nuvio.tv.core.sports.detail.GameState.FINAL
             val a = model.sides[0].score?.toIntOrNull(); val b = model.sides[1].score?.toIntOrNull()
             val showScore = model.state != com.nuvio.tv.core.sports.detail.GameState.UPCOMING
-            TeamRow(model.sides[0], SideKey.HOME, colors.home, moments, dim = final && a != null && b != null && a < b, showScore = showScore)
+            TeamRow(model.sides[0], SideKey.HOME, colors.home, moments, extra = TeamExtra(scorerText(model.soccer?.homeScorers.orEmpty()), model.field?.homeTimeouts), dim = final && a != null && b != null && a < b, showScore = showScore)
             Spacer(Modifier.height(8.dp))
-            TeamRow(model.sides[1], SideKey.AWAY, colors.away, moments, dim = final && a != null && b != null && b < a, showScore = showScore)
+            TeamRow(model.sides[1], SideKey.AWAY, colors.away, moments, extra = TeamExtra(scorerText(model.soccer?.awayScorers.orEmpty()), model.field?.awayTimeouts), dim = final && a != null && b != null && b < a, showScore = showScore)
         } else {
             Text(model.title, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
             model.liveLine?.let { Text(it, fontSize = 20.sp, color = NuvioTheme.colors.TextSecondary) }
@@ -425,9 +439,12 @@ private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean, colors: Tea
     }
 }
 
+/** Soccer scorers (one line) and football timeouts under a team name. */
+private data class TeamExtra(val scorers: String?, val timeouts: Int?)
+
 @Composable
-private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentBatch, dim: Boolean, showScore: Boolean = true) {
-    Row(Modifier.fillMaxWidth().height(58.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentBatch, extra: TeamExtra, dim: Boolean, showScore: Boolean = true) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 58.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.width(4.dp).height(40.dp).clip(RoundedCornerShape(2.dp)).background(teamColor))
         Spacer(Modifier.width(10.dp))
         Badge(side.badgeUrl, side.name, 48.dp)
@@ -439,6 +456,8 @@ private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentB
                 style = androidx.compose.ui.text.TextStyle(fontSize = 23.sp, fontWeight = FontWeight.SemiBold), minFontSize = 15.sp,
             )
             side.record?.let { Text(it, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary) }
+            extra.scorers?.let { Text(it, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            TimeoutDots(extra.timeouts, teamColor)
         }
         side.score?.takeIf { showScore }?.let {
             AnimatedScore(
@@ -450,7 +469,7 @@ private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentB
 }
 
 @Composable
-private fun SituationCard(model: GameDetailTvModel, colors: TeamColors) {
+private fun SituationCard(model: GameDetailTvModel, colors: TeamColors, showChart: Boolean = true) {
     Card {
         model.situation?.let {
             Text(it, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
@@ -483,7 +502,7 @@ private fun SituationCard(model: GameDetailTvModel, colors: TeamColors) {
                 w.drawPercent?.let { Box(Modifier.weight(it.toFloat()).fillMaxHeight().background(NuvioTheme.colors.TextSecondary.copy(alpha = 0.5f))) }
                 if (awayBar > 0f) Box(Modifier.weight(awayBar).fillMaxHeight().background(colors.away))
             }
-            if (model.chart != null) {
+            if (model.chart != null && showChart) {
                 Spacer(Modifier.height(6.dp))
                 WinChart(model.chart, colors.home, Modifier.fillMaxWidth().height(70.dp))
             }

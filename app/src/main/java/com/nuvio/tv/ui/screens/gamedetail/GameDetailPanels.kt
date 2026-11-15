@@ -207,6 +207,7 @@ internal fun SectionChips(
 /** The one panel of the selected section. Rows are capped by [PanelFit] from the measured height: whole rows only, never clipped. */
 @Composable
 internal fun SectionPanel(section: GameSection, model: GameDetailTvModel, hasPreview: Boolean, colors: TeamColors, modifier: Modifier) {
+    if (section == GameSection.LINEUPS) { PitchPanel(model, colors, modifier); return }
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val h = maxHeight.value.toInt()
         Card(Modifier.fillMaxSize()) {
@@ -233,6 +234,7 @@ internal fun SectionPanel(section: GameSection, model: GameDetailTvModel, hasPre
                     CardTitle("Standings")
                     model.standings?.let { StandingsRows(StandingsWindow.window(it, n)) }
                 }
+                GameSection.LINEUPS -> { Spacer(Modifier.height(0.dp)) }
                 else -> Unit
             }
         }
