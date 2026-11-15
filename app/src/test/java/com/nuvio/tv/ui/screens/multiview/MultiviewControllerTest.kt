@@ -9,6 +9,10 @@ import com.nuvio.tv.core.multiview.TileCodec
 import com.nuvio.tv.core.multiview.MultiviewAudioFocus
 import com.nuvio.tv.core.multiview.MultiviewDirection
 import com.nuvio.tv.core.multiview.MultiviewLayout
+import com.nuvio.tv.core.multiview.MultiviewLayoutPolicy
+import com.nuvio.tv.core.multiview.MultiviewNotice
+import com.nuvio.tv.core.multiview.TileAction
+import com.nuvio.tv.core.multiview.TileProgramme
 import com.nuvio.tv.core.multiview.MultiviewGridStore
 import com.nuvio.tv.core.multiview.MultiviewPanePlayback
 import com.nuvio.tv.core.multiview.MultiviewPanePlayer
@@ -63,6 +67,8 @@ class MultiviewControllerTest {
     private lateinit var controller: MultiviewController
     private var facts = DecoderFacts()
     private var memory = MemoryClass.HIGH
+    private val nameSource = HashMap<String, String>()
+    private val programmeSource = HashMap<String, List<TileProgramme>>()
     private var backupFinder: (String, Set<String>) -> TileChannel? = { _, _ -> null }
     private val ceilingStore = object : DecoderCeilingStore {
         val saved = HashMap<TileCodec, Int>()
@@ -70,7 +76,7 @@ class MultiviewControllerTest {
         override suspend fun save(codec: TileCodec, comfortable: Int) { saved[codec] = comfortable }
     }
 
-    private fun controller(): MultiviewController = MultiviewController(
+    private fun controller(clock: () -> Long = { 0L }): MultiviewController = MultiviewController(
         queue = queue,
         store = store,
         scope = CoroutineScope(Dispatchers.Unconfined),
@@ -83,6 +89,9 @@ class MultiviewControllerTest {
         ceilings = ceilingStore,
         memoryClass = { memory },
         findBackup = { key, tried -> backupFinder(key, tried) },
+        nameLookup = { key -> nameSource[key] },
+        programmeLookup = { key, _, _ -> programmeSource[key].orEmpty() },
+        nowMs = clock,
     ).also { controller = it }
 
     private fun started(startKey: String? = null, resumed: Boolean = true): MultiviewController {
@@ -92,6 +101,7 @@ class MultiviewControllerTest {
         return c
     }
 
+    private val MultiviewController.capacity: Int? get() = (state.value.notice as? MultiviewNotice.Capacity)?.about
     private fun MultiviewController.tile(slot: Int) = state.value.tiles.first { it.slot == slot }
     private fun player(slot: Int, from: Int = 0) = created.drop(from).last { it.slot == slot && !it.released }
 
@@ -103,7 +113,7 @@ class MultiviewControllerTest {
         val c = started(startKey = "now")
         assertEquals("keys", listOf("now", "q1", "q2"), c.state.value.tiles.map { it.channelKey })
         assertEquals("tiles", 3, c.state.value.tileCount)
-        assertEquals("default arrangement for three", MultiviewLayout.FOCUS, c.state.value.layout)
+        assertEquals("a new grid of three starts as Same size", MultiviewLayout.GRID, c.state.value.layout)
         assertTrue("the queue was taken", queue.take().isEmpty())
     }
 
@@ -154,6 +164,131 @@ class MultiviewControllerTest {
         val c = started(startKey = "blocked")
         assertNull(c.tile(0).channelKey)
         assertTrue(created.isEmpty())
+    }
+
+    // ---- names, resume and the label rule ----
+
+    @Test
+    fun `a restored tile shows its saved name before anything has loaded`() {
+        store.saved = SavedGrid(MultiviewLayout.SIDE_BY_SIDE, listOf("a", "b"), listOf("XC1 Archive Alpha", "XC2 Archive Beta"))
+        val c = started()
+        assertEquals("XC1 Archive Alpha", c.tile(0).name)
+        assertEquals("XC2 Archive Beta", c.tile(1).name)
+        assertEquals("still loading, but named", TileStatus.LOADING, c.tile(0).status)
+    }
+
+    @Test
+    fun `the live lookup replaces the saved name`() {
+        store.saved = SavedGrid(MultiviewLayout.SIDE_BY_SIDE, listOf("a", null), listOf("Old Name", null))
+        nameSource["a"] = "New Name"
+        val c = started()
+        assertEquals("New Name", c.tile(0).name)
+        assertEquals("and that is what is remembered", "New Name", store.saved?.names?.get(0))
+    }
+
+    @Test
+    fun `a name the lookup finds names a tile that came from the queue`() {
+        nameSource["q"] = "Queued Channel"
+        queue.add("q")
+        val c = started(startKey = "a")
+        assertEquals("Queued Channel", c.tile(1).name)
+        assertNull("a channel nothing knows stays unnamed until it plays", c.tile(0).name)
+    }
+
+    @Test
+    fun `a failed tile keeps the name it was saved with`() {
+        store.saved = SavedGrid(MultiviewLayout.SIDE_BY_SIDE, listOf("gone", null), listOf("Sky Sports", null))
+        val c = started()
+        player(0).fail(TileFailure.ChannelUnavailable)
+        assertEquals("Sky Sports", c.tile(0).name)
+        assertEquals(TileStatus.FAILED, c.tile(0).status)
+    }
+
+    @Test
+    fun `line two is the programme airing now read at draw time and absent when there is none`() {
+        var now = 1_000L
+        programmeSource["a"] = listOf(TileProgramme("News", 0, 5_000), TileProgramme("Film", 5_000, 9_000))
+        val c = controller { now }
+        c.onResume()
+        runBlocking { c.start("a") }
+        assertEquals("News", c.tile(0).nowPlaying)
+        assertNull("a tile whose channel has no guide data has no line two", c.tile(1).nowPlaying)
+        now = 6_000
+        c.focus(0); c.focus(1)
+        assertEquals("the programme that has started, never the old one", "Film", c.tile(0).nowPlaying)
+        now = 20_000
+        c.focus(0)
+        assertNull("nothing airs: absent, not stale", c.tile(0).nowPlaying)
+    }
+
+    @Test
+    fun `the name of a pick is kept with the key even when the lookup knows nothing`() {
+        val c = started(startKey = "a")
+        c.assign(1, ChannelPick("b", "Picked B"))
+        assertEquals(listOf(null, "Picked B"), store.saved?.names)
+    }
+
+    // ---- a guide channel id is a valid multiview channel ----
+
+    @Test
+    fun `a content id shaped like the guide's live channel id is queued and survives the allowed channel check`() {
+        val accountId = "http://host.example:8080|someone"
+        val id = com.nuvio.tv.core.iptv.XtreamItemRegistry.liveId(accountId, 4242)
+        assertTrue("the guide's id is a live content id", com.nuvio.tv.core.iptv.XtreamItemRegistry.isLiveContentId(id))
+        assertEquals(com.nuvio.tv.core.multiview.QueueResult.Added(1), queue.add(id))
+        val prefix = com.nuvio.tv.core.iptv.XtreamItemRegistry.accountPrefix(accountId)
+        allowed = { it.key.startsWith(prefix) }
+        val c = started()
+        assertEquals("the channel took tile 0", id, c.tile(0).channelKey)
+        assertEquals("a player opened for it", id, created.single().prepared?.key)
+        c.assign(1, ChannelPick(com.nuvio.tv.core.iptv.XtreamItemRegistry.liveId("other", 1), "Other"))
+        assertNull("a channel of another playlist is still refused", c.tile(1).channelKey)
+    }
+
+    // ---- leaving ----
+
+    @Test
+    fun `leaving with two channels takes a second back and says so`() {
+        var now = 0L
+        queue.add("b")
+        val c = controller { now }
+        c.onResume()
+        runBlocking { c.start("a") }
+        assertFalse("first back only arms", c.requestLeave())
+        assertEquals(MultiviewNotice.LeaveGuard, c.state.value.notice)
+        now = 2_000
+        assertTrue("second back inside 2.5 s leaves", c.requestLeave())
+    }
+
+    @Test
+    fun `moving the highlight cancels the armed back`() {
+        var now = 0L
+        queue.add("b")
+        val c = controller { now }
+        c.onResume()
+        runBlocking { c.start("a") }
+        c.requestLeave()
+        c.move(MultiviewDirection.RIGHT)
+        assertNull("the notice goes with it", c.state.value.notice)
+        now = 100
+        assertFalse("armed afresh", c.requestLeave())
+    }
+
+    @Test
+    fun `one channel leaves at once`() {
+        val c = started(startKey = "a")
+        assertTrue(c.requestLeave())
+    }
+
+    @Test
+    fun `back from a grid opened from the player returns to the channel being heard`() {
+        queue.add("b")
+        val c = started(startKey = "a")
+        player(0).play(); player(1).play()
+        c.focus(1)
+        assertEquals("b", c.audibleChannelKey())
+        c.pinAudio(0)
+        assertEquals("the kept tile", "a", c.audibleChannelKey())
     }
 
     // ---- lifecycle ----
@@ -283,7 +418,7 @@ class MultiviewControllerTest {
     @Test
     fun `the grid is not remembered as its full screen view`() {
         val c = started(startKey = "a")
-        c.assign(1, ChannelPick("b", ChannelLabel("B")))
+        c.assign(1, ChannelPick("b", "B"))
         val saved = store.saved
         assertEquals("the grid as laid out", listOf("a", "b"), saved?.keys)
         c.enterFullscreen(0)
@@ -297,21 +432,35 @@ class MultiviewControllerTest {
         queue.add("b")
         val c = started(startKey = "a")
         c.enterFullscreen(0)
-        c.setLayout(MultiviewLayout.TWO_STACKED, 2)
+        c.setLayout(MultiviewLayoutPolicy.Family.ONE_BIG)
+        c.addSlot()
         c.remove(0)
         assertEquals(MultiviewLayout.SIDE_BY_SIDE, c.state.value.layout)
         assertEquals(2, c.state.value.tileCount)
     }
 
+    @Test
+    fun `a tile that was closed by full screen says rejoining until it plays`() {
+        queue.add("b")
+        val c = started(startKey = "a")
+        player(0).play(); player(1).play()
+        c.enterFullscreen(1)
+        c.exitFullscreen()
+        assertTrue("the closed tile rejoins", c.tile(0).rejoining)
+        assertFalse("the one that never stopped does not", c.tile(1).rejoining)
+        created.last { it.slot == 0 }.play()
+        assertFalse("playing again", c.tile(0).rejoining)
+    }
+
     // ---- assign / remove / retry / layout ----
 
     @Test
-    fun `assigning fills the slot persists the grid and carries the label`() {
+    fun `assigning fills the slot persists the grid with the name and moves the highlight to the tile`() {
         val c = started(startKey = "a")
-        c.assign(1, ChannelPick("b", ChannelLabel("Channel B", "The News")))
+        c.assign(1, ChannelPick("b", "Channel B"))
         assertEquals("Channel B", c.tile(1).name)
-        assertEquals("The News", c.tile(1).nowPlaying)
-        assertEquals(SavedGrid(MultiviewLayout.SIDE_BY_SIDE, listOf("a", "b")), store.saved)
+        assertEquals(1, c.state.value.focusedSlot)
+        assertEquals(SavedGrid(MultiviewLayout.SIDE_BY_SIDE, listOf("a", "b"), listOf(null, "Channel B")), store.saved)
     }
 
     @Test
@@ -319,7 +468,7 @@ class MultiviewControllerTest {
         queue.add("b")
         val c = started(startKey = "a")
         val opened = created.size
-        c.assign(1, ChannelPick("a", ChannelLabel("A")))
+        c.assign(1, ChannelPick("a", "A"))
         assertEquals("focus moved to the tile that has it", 0, c.state.value.focusedSlot)
         assertEquals("no second player", opened, created.size)
         assertEquals("b", c.tile(1).channelKey)
@@ -337,6 +486,16 @@ class MultiviewControllerTest {
         assertFalse("tile c untouched", p2.released)
         assertEquals("c moved to slot 1 with its own surface", idOfC, c.tile(1).tileId)
         assertEquals(listOf("a", "c"), store.saved?.keys)
+    }
+
+    @Test
+    fun `with two tiles remove empties the tile because a grid never has fewer than two slots`() {
+        queue.add("b")
+        val c = started(startKey = "a")
+        c.remove(0)
+        assertEquals(2, c.state.value.tileCount)
+        assertEquals(TileStatus.EMPTY, c.tile(0).status)
+        assertEquals("b", c.tile(1).channelKey)
     }
 
     @Test
@@ -363,15 +522,129 @@ class MultiviewControllerTest {
     }
 
     @Test
-    fun `changing the layout grows empty slots and keeps playing tiles`() {
+    fun `the layout only arranges the tiles that are there and never changes their number`() {
+        queue.add("b"); queue.add("c")
         val c = started(startKey = "a")
         val p0 = player(0)
-        c.setLayout(MultiviewLayout.GRID, 4)
-        assertEquals(4, c.state.value.tileCount)
+        c.setLayout(MultiviewLayoutPolicy.Family.ONE_BIG)
+        assertEquals(3, c.state.value.tileCount)
+        assertEquals(MultiviewLayout.FOCUS, c.state.value.layout)
+        assertFalse("nothing restarts", p0.released)
+        assertEquals(MultiviewLayout.FOCUS, store.saved?.layout)
+        c.setLayout(MultiviewLayoutPolicy.Family.SAME_SIZE)
         assertEquals(MultiviewLayout.GRID, c.state.value.layout)
-        assertFalse(p0.released)
-        assertEquals(3, c.state.value.tiles.count { it.status == TileStatus.EMPTY })
-        assertEquals(MultiviewLayout.GRID, store.saved?.layout)
+        assertEquals(3, c.state.value.tileCount)
+    }
+
+    @Test
+    fun `add another channel appends an empty slot in the same layout family`() {
+        queue.add("b")
+        val c = started(startKey = "a")
+        c.setLayout(MultiviewLayoutPolicy.Family.ONE_BIG)
+        val p0 = player(0)
+        assertEquals("the new slot", 2, c.addSlot())
+        assertEquals(3, c.state.value.tileCount)
+        assertEquals("One big is kept", MultiviewLayout.FOCUS, c.state.value.layout)
+        assertEquals(TileStatus.EMPTY, c.tile(2).status)
+        assertEquals(2, c.state.value.pendingSlot)
+        assertFalse("the others keep playing", p0.released)
+    }
+
+    @Test
+    fun `no fifth slot`() {
+        queue.add("b"); queue.add("c"); queue.add("d")
+        val c = started(startKey = "a")
+        assertNull(c.addSlot())
+        assertEquals(4, c.state.value.tileCount)
+    }
+
+    @Test
+    fun `backing out of the picker takes the added slot away again`() {
+        queue.add("b")
+        val c = started(startKey = "a")
+        c.addSlot()
+        c.cancelPendingSlot()
+        assertEquals("two tiles again, no stray empty one", 2, c.state.value.tileCount)
+        assertNull(c.state.value.pendingSlot)
+        assertEquals(listOf("a", "b"), store.saved?.keys)
+    }
+
+    @Test
+    fun `a pick on the added slot keeps it`() {
+        queue.add("b")
+        val c = started(startKey = "a")
+        val slot = c.addSlot()!!
+        c.assign(slot, ChannelPick("c", "C"))
+        c.cancelPendingSlot()
+        assertEquals("three tiles", 3, c.state.value.tileCount)
+        assertEquals("c", c.tile(2).channelKey)
+        assertNull(c.state.value.pendingSlot)
+        assertEquals(2, c.state.value.focusedSlot)
+    }
+
+    @Test
+    fun `picking a channel that is already on screen drops the added slot and says where it is`() {
+        queue.add("b")
+        val c = started(startKey = "a")
+        val slot = c.addSlot()!!
+        c.assign(slot, ChannelPick("a", "A"))
+        assertEquals("the added slot is gone", 2, c.state.value.tileCount)
+        assertEquals("focus moved to the tile that has it", 0, c.state.value.focusedSlot)
+        assertEquals(MultiviewNotice.AlreadyOnScreen("A"), c.state.value.notice)
+    }
+
+    @Test
+    fun `a pick this profile may not watch is refused with a notice and no tile is opened`() {
+        allowed = { it.key != "blocked" }
+        val c = started(startKey = "a")
+        val opened = created.size
+        c.assign(1, ChannelPick("blocked", "Blocked One"))
+        assertEquals(TileStatus.EMPTY, c.tile(1).status)
+        assertEquals(opened, created.size)
+        assertEquals(MultiviewNotice.CannotAdd("Blocked One"), c.state.value.notice)
+    }
+
+    @Test
+    fun `a pick that fails at once shows the failure on the tile and says so in a notice`() {
+        val c = started(startKey = "a")
+        c.assign(1, ChannelPick("b", "Channel B"))
+        assertEquals("loading with the name first", TileStatus.LOADING, c.tile(1).status)
+        assertEquals("Channel B", c.tile(1).name)
+        player(1).fail(TileFailure.ChannelUnavailable)
+        assertEquals(TileStatus.FAILED, c.tile(1).status)
+        assertEquals(TileFailure.ChannelUnavailable, c.tile(1).failure)
+        assertEquals("b", c.tile(1).channelKey)
+        assertEquals(MultiviewNotice.PickFailed("Channel B", "Not in your playlist anymore"), c.state.value.notice)
+    }
+
+    @Test
+    fun `a failure long after the pick gets no notice`() {
+        var now = 0L
+        val c = controller(clock = { now })
+        c.onResume()
+        runBlocking { c.start("a") }
+        c.assign(1, ChannelPick("b", "Channel B"))
+        now = 3_000
+        player(1).fail(TileFailure.NoData)
+        assertNull("the card is enough", c.state.value.notice)
+    }
+
+    @Test
+    fun `a channel missing from the playlist is never swapped for a backup`() {
+        backupFinder = { _, tried -> listOf("bk1").map(::backup).firstOrNull { it.key !in tried } }
+        val c = started(startKey = "a")
+        player(0).fail(TileFailure.ChannelUnavailable)
+        assertEquals("the tile keeps the channel it could not find", "a", c.tile(0).channelKey)
+        assertEquals(TileStatus.FAILED, c.tile(0).status)
+    }
+
+    @Test
+    fun `retry is the main action and replaces the tile's player`() {
+        val c = started(startKey = "a")
+        player(0).fail(TileFailure.Network)
+        assertEquals(TileAction.RETRY, c.tile(0).failure?.primary)
+        c.retry(0)
+        assertEquals(TileStatus.LOADING, c.tile(0).status)
     }
 
     @Test
@@ -379,8 +652,10 @@ class MultiviewControllerTest {
         queue.add("b")
         val c = started(startKey = "a")
         assertNull("not measured yet", c.tilePixelSize(0))
-        c.viewportWidthPx = 1920; c.viewportHeightPx = 1080
-        assertEquals(960 to 1080, c.tilePixelSize(0))
+        c.setStage(widthDp = 864f, heightDp = 486f, widthPx = 1728, heightPx = 972)
+        val (w, h) = c.tilePixelSize(0)!!
+        assertEquals("428 dp at 2 px per dp", 856f, w.toFloat(), 2f)
+        assertEquals("16:9", 16f / 9f, w.toFloat() / h, 0.02f)
     }
 
     // ---- capacity notice and ledger ----
@@ -392,24 +667,24 @@ class MultiviewControllerTest {
         facts = onnFacts
         queue.add("b")
         val c = started(startKey = "a")
-        assertNull("two tiles fit", c.state.value.capacityNotice)
-        c.setLayout(MultiviewLayout.GRID, 3)
-        c.assign(2, ChannelPick("c", ChannelLabel("C")))
+        assertNull("two tiles fit", c.capacity)
+        assertEquals(2, c.addSlot())
+        c.assign(2, ChannelPick("c", "C"))
         assertEquals("the add went ahead", "c", c.tile(2).channelKey)
-        assertEquals("about two at full quality", 2, c.state.value.capacityNotice)
-        c.dismissCapacityNotice()
-        assertNull(c.state.value.capacityNotice)
-        c.setLayout(MultiviewLayout.GRID, 4)
-        c.assign(3, ChannelPick("d", ChannelLabel("D")))
+        assertEquals("about two at full quality", 2, c.capacity)
+        c.dismissNotice(c.state.value.noticeSerial)
+        assertNull(c.capacity)
+        assertEquals(3, c.addSlot())
+        c.assign(3, ChannelPick("d", "D"))
         assertEquals("4 tiles added", "d", c.tile(3).channelKey)
-        assertNull("not shown twice in a session", c.state.value.capacityNotice)
+        assertNull("not shown twice in a session", c.capacity)
     }
 
     @Test
     fun `no notice when the box cannot be judged`() {
         queue.add("b"); queue.add("c"); queue.add("d")
         val c = started(startKey = "a")
-        assertNull(c.state.value.capacityNotice)
+        assertNull(c.capacity)
     }
 
     @Test
@@ -417,7 +692,7 @@ class MultiviewControllerTest {
         facts = onnFacts
         queue.add("b"); queue.add("c"); queue.add("d")
         val c = started(startKey = "a")
-        assertEquals(2, c.state.value.capacityNotice)
+        assertEquals(2, c.capacity)
     }
 
     @Test
@@ -444,7 +719,7 @@ class MultiviewControllerTest {
         facts = onnFacts
         queue.add("b")
         val c = started(startKey = "a")
-        assertEquals(1, c.state.value.capacityNotice)
+        assertEquals(1, c.capacity)
     }
 
     // ---- backup chain ----

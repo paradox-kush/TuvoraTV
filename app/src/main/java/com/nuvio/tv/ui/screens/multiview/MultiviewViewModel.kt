@@ -16,6 +16,7 @@ import com.nuvio.tv.core.multiview.MultiviewBufferBudget
 import com.nuvio.tv.core.multiview.MultiviewGridStore
 import com.nuvio.tv.core.multiview.MultiviewQueue
 import com.nuvio.tv.core.multiview.TileLoadBounds
+import com.nuvio.tv.core.multiview.TileProgramme
 import com.nuvio.tv.core.multiview.TileOpenGate
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.XtreamAccountStore
@@ -60,6 +61,10 @@ internal class MultiviewViewModel @Inject constructor(
     decoderFacts: DecoderFactsPort,
     decoderCeilings: DecoderCeilingStore,
     private val accountStore: XtreamAccountStore,
+    private val registry: XtreamItemRegistry,
+    private val displayLookup: com.nuvio.tv.core.iptv.IptvItemDisplayLookup,
+    private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
+    private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
 ) : ViewModel() {
     private val ownerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val surfaces = TileSurfaceRegistry(appContext)
@@ -118,7 +123,31 @@ internal class MultiviewViewModel @Inject constructor(
                 MemoryTier.HIGH -> MemoryClass.HIGH
             }
         },
+        nameLookup = ::channelName,
+        programmeLookup = ::channelProgrammes,
     ).also { controllerRef = it }
+
+    /** The channel's name from the registry the guide fills, then the catalogs this device holds. No network. */
+    private suspend fun channelName(key: String): String? {
+        registry.get(key)?.name?.takeIf { it.isNotBlank() }?.let { return it }
+        val parsed = XtreamItemRegistry.parseId(key)?.takeIf { it.kind == "live" } ?: return null
+        val streamId = parsed.streamId.toIntOrNull() ?: return null
+        return displayLookup.display(parsed.accountId, com.nuvio.tv.core.iptv.XtreamKind.LIVE, streamId)?.name
+    }
+
+    /** The channel's stored programmes, read the way the guide reads them (stored table, XMLTV match, Stalker bulk). */
+    private suspend fun channelProgrammes(key: String, fromMs: Long, toMs: Long): List<TileProgramme> {
+        val parsed = XtreamItemRegistry.parseId(key)?.takeIf { it.kind == "live" } ?: return emptyList()
+        val streamId = parsed.streamId.toIntOrNull() ?: return emptyList()
+        val account = accountStore.accounts.first().firstOrNull { it.id == parsed.accountId } ?: return emptyList()
+        val rows = contentDb.epgWindow(account.id, "sid:$streamId", fromMs, toMs)
+            .ifEmpty { xmltv.storedWindow(account, streamId, fromMs, toMs) }
+            .ifEmpty {
+                if (account.sourceType != XtreamAccount.SOURCE_STALKER) emptyList()
+                else contentDb.epgWindow(account.id, streamId.toString(), fromMs, toMs)
+            }
+        return rows.map { TileProgramme(it.title, it.startMs, it.endMs) }
+    }
 
     /** The profile's playlists, for the channel picker. */
     val accounts: StateFlow<List<XtreamAccount>> = accountStore.accounts

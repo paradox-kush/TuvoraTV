@@ -17,7 +17,14 @@ import com.nuvio.tv.core.multiview.MultiviewFocusPolicy
 import com.nuvio.tv.core.multiview.MultiviewFullscreenPolicy
 import com.nuvio.tv.core.multiview.MultiviewGridStore
 import com.nuvio.tv.core.multiview.MultiviewLayout
+import com.nuvio.tv.core.multiview.MultiviewLayoutChoices
 import com.nuvio.tv.core.multiview.MultiviewLayoutPolicy
+import com.nuvio.tv.core.multiview.MultiviewLeaveGuard
+import com.nuvio.tv.core.multiview.MultiviewNotice
+import com.nuvio.tv.core.multiview.MultiviewTileMenuPolicy
+import com.nuvio.tv.core.multiview.TileFailurePolicy
+import com.nuvio.tv.core.multiview.TileNowPlayingPolicy
+import com.nuvio.tv.core.multiview.TileProgramme
 import com.nuvio.tv.core.multiview.MultiviewPanePlayer
 import com.nuvio.tv.core.multiview.MultiviewQueue
 import com.nuvio.tv.core.multiview.MultiviewSessionCore
@@ -31,16 +38,15 @@ import com.nuvio.tv.playback.core.ProviderSelectionId
 import com.nuvio.tv.playback.multiview.AudibleTileSource
 import com.nuvio.tv.playback.multiview.TileChannel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** What the screen shows for a channel before (or without) the player's own title: from the picker's loaded guide data. */
-internal data class ChannelLabel(val name: String, val nowPlaying: String? = null)
-
-/** A channel chosen in the picker. [key] is the stable channel id; the name and "now" come from guide data already loaded. */
-internal data class ChannelPick(val key: String, val label: ChannelLabel)
+/** A channel chosen in the picker. [key] is the stable channel id; [name] is its display name from the guide data. */
+internal data class ChannelPick(val key: String, val name: String)
 
 internal data class MultiviewTileUi(
     val slot: Int,
@@ -53,11 +59,15 @@ internal data class MultiviewTileUi(
     val status: TileStatus,
     val failure: TileFailure?,
     val reconnecting: Boolean,
+    /** Back from full screen, this tile was closed and is opening again: it says "Rejoining…", not "Tuning in…". */
+    val rejoining: Boolean,
     val focused: Boolean,
     val audible: Boolean,
     val pinned: Boolean,
+    /** Focused, but silent because the sound is kept on another tile: the muted badge says why. */
+    val mutedByPin: Boolean = false,
 ) {
-    /** Retry / Remove, as the typed failure says; empty while the tile is not failed. */
+    /** The failed tile's actions in menu order, first = what OK does; empty while the tile is not failed. */
     val failureActions: List<TileAction> get() = if (status == TileStatus.FAILED) failure?.actions.orEmpty() else emptyList()
 }
 
@@ -71,11 +81,11 @@ internal data class MultiviewUiState(
     val pinnedSlot: Int? = null,
     /** The tile shown alone while the others are closed; null in the grid. */
     val fullscreenSlot: Int? = null,
-    /**
-     * Set once per session when a tile was added and the box is now tight: "about N at full quality". The add
-     * already went ahead; this only says so. Cleared by [MultiviewController.dismissCapacityNotice].
-     */
-    val capacityNotice: Int? = null,
+    /** The one notice showing, if any. [noticeSerial] changes with every new notice so its timer restarts. */
+    val notice: MultiviewNotice? = null,
+    val noticeSerial: Int = 0,
+    /** A slot added by "Add another channel" that no channel has been picked for yet; cancelling the picker drops it. */
+    val pendingSlot: Int? = null,
 ) {
     val tileIds: List<Int> get() = tiles.mapNotNull { t -> t.tileId.takeIf { it >= 0 } }
 }
@@ -111,6 +121,11 @@ internal class MultiviewController(
      * channel or null. TV has no backup source yet, so the default finds none; the chain is ready for one.
      */
     private val findBackup: (failedKey: String, tried: Set<String>) -> TileChannel? = { _, _ -> null },
+    /** The channel's display name from what this device already holds, by key. Null when unknown. */
+    private val nameLookup: suspend (key: String) -> String? = { null },
+    /** The channel's programmes from the guide data already stored on the device, no network. */
+    private val programmeLookup: suspend (key: String, fromMs: Long, toMs: Long) -> List<TileProgramme> = { _, _, _ -> emptyList() },
+    private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
     private val mutableState = MutableStateFlow(MultiviewUiState())
     val state: StateFlow<MultiviewUiState> = mutableState.asStateFlow()
@@ -118,7 +133,20 @@ internal class MultiviewController(
     private var core: MultiviewSessionCore<TileChannel>? = null
     private val tileIds = IntArray(MultiviewBufferBudget.MAX_PANES) { -1 }
     private var nextTileId = 0
-    private val labels = HashMap<String, ChannelLabel>()
+    /** Display names by channel key: the saved name, the picker's, and the live lookup (which wins). */
+    private val names = HashMap<String, String>()
+    private val programmes = HashMap<String, List<TileProgramme>>()
+    private var nowRefreshJob: Job? = null
+    private val leaveGuard = MultiviewLeaveGuard()
+    private var notice: MultiviewNotice? = null
+    private var noticeSerial = 0
+    private var pendingSlot: Int? = null
+
+    /** Tiles opened by a pick: a failure within [PICK_NOTICE_WINDOW_MS] also says so in a notice. */
+    private val pickWatch = HashMap<Int, Pair<String, Long>>()
+
+    /** Tiles that were closed by full screen and are reopening. */
+    private val rejoiningTiles = HashSet<Int>()
     private var fullscreenSlot: Int? = null
 
     /** Channels of the closed tiles while one is full screen: reopened on Back. */
@@ -127,7 +155,6 @@ internal class MultiviewController(
     private var released = false
 
     private var facts = DecoderFacts()
-    private var capacityNotice: Int? = null
     private var capacityNoticeShown = false
     private val ceilingLearnedFrom = HashSet<Int>()
     private val backups = TileBackupPolicy()
@@ -137,6 +164,23 @@ internal class MultiviewController(
     /** Pixel size of the video area, for each tile's decode size hint. 0 = not measured yet. */
     var viewportWidthPx: Int = 0
     var viewportHeightPx: Int = 0
+
+    private var stageWidthDp = MultiviewLayoutPolicy.SAFE_WIDTH_DP
+    private var stageHeightDp = MultiviewLayoutPolicy.SAFE_HEIGHT_DP
+
+    /**
+     * The area the grid is laid out in, in dp and pixels. It shrinks while the tile menu or the layout panel is open
+     * (the grid makes room, so every picture stays visible); only the geometry changes, nothing restarts. The screen
+     * reports it only for the grid, never while a tile is full screen.
+     */
+    fun setStage(widthDp: Float, heightDp: Float, widthPx: Int, heightPx: Int) {
+        viewportWidthPx = widthPx
+        viewportHeightPx = heightPx
+        if (widthDp == stageWidthDp && heightDp == stageHeightDp) return
+        stageWidthDp = widthDp
+        stageHeightDp = heightDp
+        if (core != null) publish()
+    }
 
     /** The slot's current surface id, read when the slot's player is created. */
     fun tileIdAt(slot: Int): Int = tileIds.getOrElse(slot) { -1 }
@@ -157,13 +201,15 @@ internal class MultiviewController(
     suspend fun start(startKey: String?) {
         if (core != null || released) return
         val saved = runCatching { store.load() }.getOrNull()
+        saved?.let { grid -> grid.keys.forEachIndexed { i, key -> if (key != null) grid.names.getOrNull(i)?.let { names[key] = it } } }
         val queued = (listOfNotNull(startKey) + queue.take()).distinct().take(MultiviewLayoutPolicy.MAX_TILES)
         val layout: MultiviewLayout
         val keys: List<String?>
         when {
             queued.isNotEmpty() -> {
                 val count = maxOf(2, queued.size)
-                layout = saved?.layout?.takeIf { it.supports(count) } ?: MultiviewLayoutPolicy.defaultFor(count)
+                layout = saved?.let { MultiviewLayoutPolicy.layoutFor(MultiviewLayoutPolicy.familyOf(it.layout), count) }
+                    ?: MultiviewLayoutPolicy.defaultFor(count)
                 keys = queued + List(count - queued.size) { null }
             }
             saved != null -> {
@@ -196,6 +242,7 @@ internal class MultiviewController(
         // The viewer added these tiles: the same one-time heads-up as adding one later.
         noteIfTight(wasTight = false)
         publish()
+        keys.filterNotNull().forEach(::refreshChannelFacts)
         // What opened is what "resume last grid" brings back, even if the viewer changes nothing.
         persist()
     }
@@ -211,11 +258,14 @@ internal class MultiviewController(
         for (slot in 0 until c.paneCount) if (c.channelAt(slot) != null) tileIds[slot] = nextTileId++
         c.onForeground()
         publish()
+        for (slot in 0 until c.paneCount) c.channelAt(slot)?.key?.let(::refreshChannelFacts)
     }
 
     /** ON_STOP: nothing keeps loading, decoding or holding audio focus in the background. */
     fun onStop() {
         resumed = false
+        nowRefreshJob?.cancel()
+        nowRefreshJob = null
         core?.onBackground()
         publish()
     }
@@ -224,6 +274,7 @@ internal class MultiviewController(
         if (released) return
         released = true
         resumed = false
+        nowRefreshJob?.cancel()
         core?.release()
         showAudible(null)
         publish()
@@ -242,6 +293,8 @@ internal class MultiviewController(
         val c = core ?: return false
         if (fullscreenSlot != null) return false
         val next = MultiviewFocusPolicy.neighbour(currentRects(), c.focusedPane, direction) ?: return false
+        leaveGuard.disarm()
+        if (notice == MultiviewNotice.LeaveGuard) notice = null
         c.focusPane(next)
         return true
     }
@@ -271,6 +324,7 @@ internal class MultiviewController(
         hidden = emptyMap()
         for ((slot, channel) in reopen) {
             tileIds[slot] = nextTileId++
+            rejoiningTiles += tileIds[slot]
             c.assignChannel(slot, channel)
         }
         publish()
@@ -279,29 +333,104 @@ internal class MultiviewController(
 
     // ---- tiles ----
 
-    /** Puts a channel on [slot]. One already on screen is not duplicated: focus goes to its tile (navigation, not a limit). */
+    /**
+     * Puts a channel on [slot]. One already on screen is not duplicated: focus goes to its tile (navigation, not a
+     * limit). A pick this profile may not watch is refused before any tile exists, and says so.
+     */
     fun assign(slot: Int, pick: ChannelPick) {
         val c = core ?: return
         val existing = (0 until c.paneCount).firstOrNull { c.channelAt(it)?.key == pick.key }
         if (existing != null) {
-            if (existing != slot) { c.focusPane(existing); return }
+            if (existing != slot) {
+                dropPendingSlot(except = existing)
+                c.focusPane(existing)
+                postNotice(MultiviewNotice.AlreadyOnScreen(pick.name))
+            }
             return
         }
         val channel = channelOf(pick.key)
-        if (!mayPlay(channel)) return
+        if (!mayPlay(channel)) {
+            pendingSlot = null
+            postNotice(MultiviewNotice.CannotAdd(pick.name))
+            return
+        }
         val wasTight = assessNow() is Capacity.Tight
-        labels[pick.key] = pick.label
+        names[pick.key] = pick.name
+        pendingSlot = null
         tileIds[slot] = nextTileId++
+        pickWatch[tileIds[slot]] = pick.name to nowMs()
         c.assignChannel(slot, channel)
+        // The highlight goes to the tile that received the channel (it is loading, or already says why it failed).
+        if (c.focusedPane != slot) c.focusPane(slot)
         // Adding a tile always goes ahead; at most it says the box may struggle, once.
         noteIfTight(wasTight)
         publish()
         persist()
+        refreshChannelFacts(pick.key)
     }
 
-    fun dismissCapacityNotice() {
-        if (capacityNotice == null) return
-        capacityNotice = null
+    /**
+     * "Add another channel": appends an empty slot in the same layout family and returns its index, or null at four
+     * tiles. [cancelPendingSlot] takes it away again if the picker is backed out of.
+     */
+    fun addSlot(): Int? {
+        val c = core ?: return null
+        if (fullscreenSlot != null || c.paneCount >= MultiviewLayoutPolicy.MAX_TILES) return null
+        val count = c.paneCount + 1
+        val slot = c.paneCount
+        c.setLayout(MultiviewLayoutPolicy.layoutFor(MultiviewLayoutPolicy.familyOf(c.layout), count), count)
+        pendingSlot = slot
+        publish()
+        return slot
+    }
+
+    /** The picker was closed without a pick: a slot it was opened for by [addSlot] goes away, leaving no stray tile. */
+    fun cancelPendingSlot() {
+        if (dropPendingSlot(except = null)) {
+            publish()
+            persist()
+        }
+    }
+
+    private fun dropPendingSlot(except: Int?): Boolean {
+        val c = core ?: return false
+        val slot = pendingSlot ?: return false
+        pendingSlot = null
+        if (slot == except || c.channelAt(slot) != null || slot >= c.paneCount || c.paneCount <= MultiviewTileMenuPolicy.MIN_SLOTS) return false
+        c.removePane(slot)
+        for (id in slot until MultiviewBufferBudget.MAX_PANES - 1) tileIds[id] = tileIds[id + 1]
+        tileIds[MultiviewBufferBudget.MAX_PANES - 1] = -1
+        return true
+    }
+
+    /** Leaving the grid: false when the first Back only armed the guard (the notice says so). */
+    fun requestLeave(): Boolean {
+        val channels = core?.let { c -> (0 until c.paneCount).count { c.channelAt(it) != null } } ?: 0
+        return when (leaveGuard.onBack(nowMs(), channels)) {
+            MultiviewLeaveGuard.Result.LEAVE -> true
+            MultiviewLeaveGuard.Result.ARMED -> {
+                postNotice(MultiviewNotice.LeaveGuard)
+                false
+            }
+        }
+    }
+
+    /** The channel the viewer hears (or the first one on screen): where Back from a grid opened from the player returns. */
+    fun audibleChannelKey(): String? {
+        val c = core ?: return null
+        return c.audibleNow?.let { c.channelAt(it)?.key }
+            ?: (0 until c.paneCount).firstNotNullOfOrNull { c.channelAt(it)?.key }
+    }
+
+    fun dismissNotice(serial: Int) {
+        if (serial != noticeSerial || notice == null) return
+        notice = null
+        publish()
+    }
+
+    private fun postNotice(next: MultiviewNotice) {
+        notice = next
+        noticeSerial++
         publish()
     }
 
@@ -323,7 +452,8 @@ internal class MultiviewController(
         if (assessNow() !is Capacity.Tight) return
         val about = MultiviewCapacityPolicy.comfortableTiles(facts, memoryClass()) ?: return
         capacityNoticeShown = true
-        capacityNotice = about
+        notice = MultiviewNotice.Capacity(about)
+        noticeSerial++
     }
 
     /** A tile that ran out of decoders while others were open teaches the ledger how many this box manages. */
@@ -351,7 +481,8 @@ internal class MultiviewController(
     fun remove(slot: Int) {
         val c = core ?: return
         if (fullscreenSlot != null) return
-        if (c.paneCount <= 1) {
+        // A grid never has fewer than two slots: with two, "remove" empties the tile.
+        if (c.paneCount <= MultiviewTileMenuPolicy.MIN_SLOTS) {
             c.clearPane(slot)
             tileIds[slot] = -1
         } else {
@@ -363,11 +494,14 @@ internal class MultiviewController(
         publish()
     }
 
-    fun setLayout(layout: MultiviewLayout, tileCount: Int) {
+    /** Re-arranges the tiles that are there ("Same size" or "One big"); the tile count never changes here. */
+    fun setLayout(family: MultiviewLayoutPolicy.Family) {
         val c = core ?: return
         if (fullscreenSlot != null) return
-        c.setLayout(layout, tileCount)
+        val choice = MultiviewLayoutChoices.options(c.paneCount).first { MultiviewLayoutPolicy.familyOf(it.layout) == family }
+        c.setLayout(choice.layout, c.paneCount)
         persist()
+        publish()
     }
 
     fun pinAudio(slot: Int) {
@@ -378,9 +512,32 @@ internal class MultiviewController(
         core?.unpinAudio()
     }
 
-    /** The label a picker supplied for a channel, kept for tiles that restore later in the session. */
-    fun noteLabel(key: String, label: ChannelLabel) {
-        labels[key] = label
+    /** Resolves a channel's name and programmes from what the device holds. Both reads are local, never the network. */
+    private fun refreshChannelFacts(key: String) {
+        scope.launch {
+            runCatching { nameLookup(key) }.getOrNull()?.takeIf { it.isNotBlank() }?.let {
+                if (names[key] != it) { names[key] = it; if (!released) publish() }
+            }
+            val now = nowMs()
+            val found = runCatching { programmeLookup(key, now, now + PROGRAMME_WINDOW_MS) }.getOrDefault(emptyList())
+            if (programmes[key] != found) { programmes[key] = found; if (!released) publish() }
+        }
+    }
+
+    /** One wake-up at the next programme change on screen, so line 2 is never a title that has ended. No request. */
+    private fun scheduleNowRefresh(c: MultiviewSessionCore<TileChannel>) {
+        if (!resumed || released) return
+        val now = nowMs()
+        val next = (0 until c.paneCount).mapNotNull { slot ->
+            c.channelAt(slot)?.key?.let { programmes[it] }?.let { TileNowPlayingPolicy.nextChangeAtMs(it, now) }
+        }.minOrNull()
+        nowRefreshJob?.cancel()
+        nowRefreshJob = null
+        if (next == null) return
+        nowRefreshJob = scope.launch {
+            delay((next - now).coerceAtLeast(MIN_NOW_REFRESH_MS))
+            publish()
+        }
     }
 
     // ---- internals ----
@@ -390,7 +547,8 @@ internal class MultiviewController(
     private fun currentRects(): List<TileRect> {
         val c = core ?: return emptyList()
         val only = fullscreenSlot
-        return if (only != null) listOf(TileRect(only, 0f, 0f, 1f, 1f)) else c.bounds()
+        return if (only != null) listOf(TileRect(only, 0f, 0f, 1f, 1f))
+        else MultiviewLayoutPolicy.bounds(c.layout, c.paneCount, stageWidthDp, stageHeightDp)
     }
 
     private fun onCoreChanged() {
@@ -401,7 +559,8 @@ internal class MultiviewController(
         val c = core ?: return
         // The grid is remembered as it is laid out, never as the one-tile view while a tile is full screen.
         if (fullscreenSlot != null || released) return
-        val grid = SavedGrid(c.layout, (0 until c.paneCount).map { c.channelAt(it)?.key })
+        val keys = (0 until c.paneCount).map { c.channelAt(it)?.key }
+        val grid = SavedGrid(c.layout, keys, keys.map { key -> key?.let { names[it] } })
         scope.launch { runCatching { store.save(grid) } }
     }
 
@@ -418,7 +577,6 @@ internal class MultiviewController(
             val channel = c.channelAt(slot)
             val playback = c.playbackAt(slot)
             val status = statusOf(channel != null, c.playerAt(slot) != null, playback.failure, playback.isPlaying, playback.isReconnecting)
-            val label = channel?.let { labels[it.key] }
             val playerTitle = (c.playerAt(slot) as? AudibleTileSource)?.metadata?.title
                 ?.takeIf { it.isNotBlank() && it != PLACEHOLDER_TITLE }
             MultiviewTileUi(
@@ -426,14 +584,16 @@ internal class MultiviewController(
                 tileId = tileIds[slot],
                 rect = rect,
                 channelKey = channel?.key,
-                name = label?.name ?: playerTitle,
-                nowPlaying = label?.nowPlaying,
+                name = channel?.let { names[it.key] } ?: playerTitle,
+                nowPlaying = channel?.let { programmes[it.key] }?.let { TileNowPlayingPolicy.nowTitle(it, nowMs()) },
                 status = status,
                 failure = playback.failure,
                 reconnecting = playback.isReconnecting,
+                rejoining = tileIds[slot] in rejoiningTiles && status == TileStatus.LOADING,
                 focused = c.focusedPane == slot,
                 audible = c.audibleNow == slot,
                 pinned = pinned == slot,
+                mutedByPin = pinned != null && pinned != slot && c.focusedPane == slot,
             )
         }
         mutableState.value = MultiviewUiState(
@@ -445,8 +605,12 @@ internal class MultiviewController(
             audibleSlot = c.audibleNow,
             pinnedSlot = pinned,
             fullscreenSlot = fullscreenSlot,
-            capacityNotice = capacityNotice,
+            notice = notice,
+            noticeSerial = noticeSerial,
+            pendingSlot = pendingSlot,
         )
+        settleTileWatches(tiles)
+        scheduleNowRefresh(c)
         learnCeiling(tiles)
         tryBackups(tiles)
     }
@@ -462,11 +626,13 @@ internal class MultiviewController(
         for (tile in tiles) {
             val key = tile.channelKey ?: continue
             if (tile.status != TileStatus.FAILED || !backupConsidered.add(tile.tileId)) continue
+            // A channel that is not in the playlist has no stream to back up: the viewer replaces or removes it.
+            if (tile.failure?.let(TileFailurePolicy::backupAllowed) == false) continue
             val failed = channelOf(key)
             val pick = backups.next(failed, { tried -> findBackup(key, tried) }, mayPlay) ?: continue
             switchingToBackup = true
             try {
-                labels[key]?.let { labels[pick.key] = it }
+                names[key]?.let { names[pick.key] = it }
                 tileIds[tile.slot] = nextTileId++
                 c.assignChannel(tile.slot, pick)
             } finally {
@@ -478,7 +644,37 @@ internal class MultiviewController(
         }
     }
 
+    /**
+     * A tile opened by a pick that fails within [PICK_NOTICE_WINDOW_MS] says so in a notice as well as on the tile; one that
+     * plays, or is no longer on screen, stops being watched.
+     */
+    private fun settleTileWatches(tiles: List<MultiviewTileUi>) {
+        if (pickWatch.isEmpty() && rejoiningTiles.isEmpty()) return
+        val live = tiles.associateBy { it.tileId }
+        pickWatch.keys.toList().forEach { id ->
+            val tile = live[id]
+            val (name, at) = pickWatch.getValue(id)
+            when {
+                tile == null -> pickWatch.remove(id)
+                tile.status == TileStatus.FAILED -> {
+                    pickWatch.remove(id)
+                    if (nowMs() - at <= PICK_NOTICE_WINDOW_MS) {
+                        notice = MultiviewNotice.PickFailed(name, tile.failure?.shortTitle.orEmpty())
+                        noticeSerial++
+                        mutableState.value = mutableState.value.copy(notice = notice, noticeSerial = noticeSerial)
+                    }
+                }
+                tile.status == TileStatus.PLAYING -> pickWatch.remove(id)
+            }
+        }
+        rejoiningTiles.retainAll { id -> live[id]?.status == TileStatus.LOADING }
+    }
+
     private companion object {
+        const val PICK_NOTICE_WINDOW_MS = 2_000L
+        const val PROGRAMME_WINDOW_MS = 6L * 60L * 60L * 1000L
+        const val MIN_NOW_REFRESH_MS = 1_000L
+
         /** The host's stand-in title before the channel's own is known. */
         const val PLACEHOLDER_TITLE = "Live TV"
 

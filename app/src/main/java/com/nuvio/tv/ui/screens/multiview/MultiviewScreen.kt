@@ -1,6 +1,8 @@
 package com.nuvio.tv.ui.screens.multiview
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -12,52 +14,67 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.tv.R
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.multiview.CenterPressTracker
 import com.nuvio.tv.core.multiview.MultiviewBackAction
 import com.nuvio.tv.core.multiview.MultiviewBackPolicy
+import com.nuvio.tv.core.multiview.MultiviewChromePolicy
 import com.nuvio.tv.core.multiview.MultiviewDirection
+import com.nuvio.tv.core.multiview.MultiviewHintPolicy
+import com.nuvio.tv.core.multiview.MultiviewLayoutPolicy
 import com.nuvio.tv.core.multiview.MultiviewTileMenuPolicy
+import com.nuvio.tv.core.multiview.TileAction
 import com.nuvio.tv.core.multiview.TileMenuItem
 import com.nuvio.tv.core.multiview.TileStatus
 import com.nuvio.tv.ui.screens.iptv.GuideFocusRequestLoop
 import com.nuvio.tv.ui.screens.iptv.requestFocusOrFalse
 import com.nuvio.tv.ui.util.findActivity
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.key as composeKey
 
 /**
  * Several live channels on one screen. Thin by design: the grid is drawn from the controller's state, keys and
- * focus are forwarded, and the panels (tile menu, layout picker, channel picker) are plain composables over the grid.
+ * focus are forwarded, and the panels (tile menu, layout panel, channel picker) are plain composables over the grid.
  * Decisions live in [MultiviewController] and the policies in `core.multiview`.
  *
- * Back, innermost first: a panel closes, a full-screen tile returns to the grid, the grid exits multiview.
+ * Back, innermost first: a picker sub-list or panel closes (the layout panel returns to the tile menu), a full-screen
+ * tile returns to the grid, the grid leaves Multiview (a second Back within 2.5 s when two or more channels are open).
  */
 @Composable
 internal fun MultiviewScreen(
     /** The channel the viewer was watching: it becomes tile 0. Null opens the queued channels, or the last grid. */
     startKey: String?,
-    onExit: () -> Unit,
+    /** Leaves Multiview. Gets the channel being heard, for a grid that was opened from the player. */
+    onExit: (audibleKey: String?) -> Unit,
     /** Plays a channel in the normal full-screen player (a failed tile's way out). */
     onOpenInPlayer: (String) -> Unit,
     viewModel: MultiviewViewModel = hiltViewModel(),
@@ -66,6 +83,7 @@ internal fun MultiviewScreen(
     val state by controller.state.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val density = LocalDensity.current
     val lifecycleOwner = LocalLifecycleOwner.current
     // Before any tile can open: the hosts need the activity and the lifecycle.
     viewModel.bind(context.findActivity(), lifecycleOwner.lifecycle)
@@ -82,13 +100,40 @@ internal fun MultiviewScreen(
     }
 
     var pickerSlot by remember { mutableStateOf<Int?>(null) }
+    /** The tile that had the highlight when the picker opened: where focus goes if the picker is backed out of. */
+    var pickerReturnSlot by remember { mutableIntStateOf(0) }
     var menuSlot by remember { mutableStateOf<Int?>(null) }
+    var menuEntryItem by remember { mutableStateOf<TileMenuItem?>(null) }
     var layoutOpen by remember { mutableStateOf(false) }
     val overlayOpen = pickerSlot != null || menuSlot != null || layoutOpen
     val scope = rememberCoroutineScope()
     val requesters = remember { HashMap<Int, FocusRequester>() }
     val press = remember { CenterPressTracker() }
     val latestState by androidx.compose.runtime.rememberUpdatedState(state)
+
+    // Labels and the hint bar fade after 5 s without a key press and come back on any key; the ring, the sound badge and
+    // a tile's own content stay. The key still does its job: nothing here swallows it.
+    var wakeTick by remember { mutableIntStateOf(0) }
+    var chromeVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(wakeTick) {
+        chromeVisible = true
+        delay(MultiviewChromePolicy.HIDE_AFTER_MS)
+        chromeVisible = false
+    }
+    val fadeMs = remember {
+        val scale = runCatching {
+            android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+        }.getOrDefault(1f)
+        if (scale == 0f) 0 else MultiviewChromePolicy.FADE_MS
+    }
+    val chromeAlpha by animateFloatAsState(if (chromeVisible) 1f else 0f, tween(fadeMs), label = "multiviewChrome")
+
+    // One notice at a time, top centre; each goes after its own time.
+    LaunchedEffect(state.noticeSerial) {
+        val shown = state.notice ?: return@LaunchedEffect
+        delay(shown.durationMs)
+        controller.dismissNotice(state.noticeSerial)
+    }
 
     fun tileKey(tile: MultiviewTileUi) = if (tile.tileId >= 0) tile.tileId else -(tile.slot + 1)
     fun requesterFor(tile: MultiviewTileUi) = requesters.getOrPut(tileKey(tile)) { FocusRequester() }
@@ -103,7 +148,30 @@ internal fun MultiviewScreen(
         }
     }
 
-    LaunchedEffect(state.started) { if (state.started) restoreFocus() }
+    fun openPicker(slot: Int) {
+        pickerReturnSlot = latestState.focusedSlot
+        menuSlot = null
+        layoutOpen = false
+        controller.focus(slot)
+        pickerSlot = slot
+    }
+
+    fun leave() = onExit(controller.audibleChannelKey())
+
+    // Arriving from the player with a free slot: the picker opens on it at once, so the way in is OK, OK.
+    var arrivalHandled by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.started) {
+        if (!state.started) return@LaunchedEffect
+        if (!arrivalHandled && startKey != null) {
+            arrivalHandled = true
+            val free = latestState.tiles.firstOrNull { it.status == TileStatus.EMPTY }
+            if (free != null) {
+                openPicker(free.slot)
+                return@LaunchedEffect
+            }
+        }
+        restoreFocus()
+    }
     // Requesters of tiles that are gone are dropped with them.
     LaunchedEffect(state.tiles.map { tileKey(it) }) {
         val live = latestState.tiles.map { tileKey(it) }.toSet()
@@ -113,8 +181,14 @@ internal fun MultiviewScreen(
     fun activate(tile: MultiviewTileUi) {
         when {
             state.fullscreenSlot != null -> menuSlot = tile.slot
-            tile.status == TileStatus.EMPTY -> pickerSlot = tile.slot
-            tile.status == TileStatus.FAILED -> menuSlot = tile.slot
+            tile.status == TileStatus.EMPTY -> openPicker(tile.slot)
+            // A failed tile runs its failure's main action: Retry, Replace or the full player.
+            tile.status == TileStatus.FAILED -> when (tile.failure?.primary) {
+                TileAction.RETRY -> { controller.retry(tile.slot); restoreFocus() }
+                TileAction.REPLACE -> openPicker(tile.slot)
+                TileAction.OPEN_IN_PLAYER -> tile.channelKey?.let(onOpenInPlayer)
+                TileAction.REMOVE, null -> menuSlot = tile.slot
+            }
             else -> controller.enterFullscreen(tile.slot)
         }
     }
@@ -166,23 +240,48 @@ internal fun MultiviewScreen(
                 fullscreen = state.fullscreenSlot != null,
             )
         ) {
-            MultiviewBackAction.CLOSE_PICKER -> { pickerSlot = null; restoreFocus() }
-            MultiviewBackAction.CLOSE_LAYOUT_PICKER -> { layoutOpen = false; restoreFocus() }
+            MultiviewBackAction.CLOSE_PICKER -> {
+                pickerSlot = null
+                // A slot added by "Add another channel" goes away again, and focus returns to the tile it was added from.
+                controller.cancelPendingSlot()
+                controller.focus(pickerReturnSlot.coerceAtMost(latestState.tileCount - 1).coerceAtLeast(0))
+                restoreFocus()
+            }
+            MultiviewBackAction.LAYOUT_BACK_TO_MENU -> { menuEntryItem = TileMenuItem.CHANGE_LAYOUT; layoutOpen = false }
             MultiviewBackAction.CLOSE_TILE_MENU -> { menuSlot = null; restoreFocus() }
             MultiviewBackAction.EXIT_FULLSCREEN -> { controller.exitFullscreen(); restoreFocus() }
-            MultiviewBackAction.EXIT_MULTIVIEW -> onExit()
+            MultiviewBackAction.LEAVE_GRID -> if (controller.requestLeave()) leave()
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        val fullscreen = state.fullscreenSlot != null
+    val fullscreen = state.fullscreenSlot != null
+    // The tile menu and the layout panel leave the grid visible: it is laid out in the area left of the panel.
+    val panelOpen = !fullscreen && (menuSlot != null || layoutOpen)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown) wakeTick++
+                false
+            },
+    ) {
         BoxWithConstraints(
             Modifier
                 .fillMaxSize()
-                .padding(if (fullscreen) 0.dp else GRID_MARGIN)
+                .padding(
+                    start = if (fullscreen) 0.dp else GRID_MARGIN_X,
+                    top = if (fullscreen) 0.dp else GRID_MARGIN_Y,
+                    bottom = if (fullscreen) 0.dp else GRID_MARGIN_Y,
+                    end = when {
+                        fullscreen -> 0.dp
+                        panelOpen -> MENU_PANEL_WIDTH + PANEL_GAP
+                        else -> GRID_MARGIN_X
+                    },
+                )
                 .onSizeChanged {
-                    controller.viewportWidthPx = it.width
-                    controller.viewportHeightPx = it.height
+                    // The grid's own area only: a full-screen tile does not re-lay-out the grid it will return to.
+                    if (!fullscreen) controller.setStage(it.width / density.density, it.height / density.density, it.width, it.height)
                 },
         ) {
             state.tiles.forEach { tile ->
@@ -192,57 +291,81 @@ internal fun MultiviewScreen(
                         surfaceOwner = if (tile.tileId >= 0) viewModel.surfaceOwner(tile.tileId) else null,
                         focusRequester = requesterFor(tile),
                         canFocus = !overlayOpen,
+                        fullscreen = fullscreen,
+                        small = !fullscreen && MultiviewLayoutPolicy.isSmall((maxWidth * tile.rect.width).value),
+                        picking = pickerSlot == tile.slot,
+                        chromeAlpha = chromeAlpha,
                         onFocused = { controller.focus(tile.slot) },
                         onKey = { event -> onTileKey(tile, event) },
                         modifier = Modifier
                             .offset(x = maxWidth * tile.rect.left, y = maxHeight * tile.rect.top)
-                            .size(maxWidth * tile.rect.width, maxHeight * tile.rect.height)
-                            .padding(if (fullscreen) 0.dp else TILE_GAP),
+                            .size(maxWidth * tile.rect.width, maxHeight * tile.rect.height),
                     )
                 }
             }
         }
 
-        // One line, once per session, after a tile was added and the box may struggle. The add already went ahead.
-        state.capacityNotice?.let { about ->
-            com.nuvio.tv.ui.components.NuvioUndoToast(
-                message = androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.multiview_capacity_notice, about),
-                actionLabel = androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.multiview_notice_ok),
-                onAction = { controller.dismissCapacityNotice(); restoreFocus() },
-                onDismiss = { controller.dismissCapacityNotice(); restoreFocus() },
-                durationMillis = com.nuvio.tv.ui.screens.iptv.GuideHideUndoPolicy.UNDO_WINDOW_MS,
-                key = about,
+        // The hint bar: what OK, Hold OK and Back do for the focused tile. Not while a panel is open.
+        val focusedTile = state.tiles.firstOrNull { it.slot == state.focusedSlot }
+        if (focusedTile != null && !overlayOpen) {
+            val keptOn = state.pinnedSlot?.takeIf { it != focusedTile.slot }
+                ?.let { slot -> state.tiles.firstOrNull { it.slot == slot } }
+            val keptName = keptOn?.let { it.name ?: stringResource(R.string.multiview_tile_unnamed, it.slot + 1) }
+            GridHintBar(
+                hint = MultiviewHintPolicy.forTile(focusedTile.status, focusedTile.failure, fullscreen, keptName),
                 modifier = Modifier
-                    .align(androidx.compose.ui.Alignment.TopCenter)
-                    .padding(vertical = 32.dp, horizontal = 32.dp),
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = GRID_MARGIN_Y)
+                    .graphicsLayer { alpha = chromeAlpha },
+            )
+        }
+
+        // One non-focusable line, top centre: the D-pad keeps moving between tiles while it is up.
+        state.notice?.let { notice ->
+            NoticeLine(
+                notice = notice,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = GRID_MARGIN_Y + 5.dp, start = 32.dp, end = 32.dp),
             )
         }
 
         val menuTile = menuSlot?.let { slot -> state.tiles.firstOrNull { it.slot == slot } }
-        if (menuTile != null) {
+        if (menuTile != null && !layoutOpen) {
+            val items = MultiviewTileMenuPolicy.items(
+                status = menuTile.status,
+                failure = menuTile.failure,
+                pinnedHere = menuTile.pinned,
+                paneCount = state.tileCount,
+                fullscreen = fullscreen,
+            )
             MultiviewTileMenu(
-                title = menuTile.name ?: androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.multiview_title),
-                items = MultiviewTileMenuPolicy.items(
-                    status = menuTile.status,
-                    failure = menuTile.failure,
-                    pinnedHere = menuTile.pinned,
-                    paneCount = state.tileCount,
-                    fullscreen = fullscreen,
-                ),
+                title = menuTile.name ?: stringResource(R.string.multiview_empty_tile),
+                caption = menuTile.failure?.takeIf { menuTile.status == TileStatus.FAILED }?.text,
+                items = items,
+                entryItem = menuEntryItem,
+                layoutLabel = layoutFamilyLabel(MultiviewLayoutPolicy.familyOf(state.layout)),
+                tileCount = state.tileCount,
+                onClose = { menuSlot = null; restoreFocus() },
                 onItem = { item ->
                     val slot = menuTile.slot
-                    menuSlot = null
+                    menuEntryItem = null
                     when (item) {
-                        TileMenuItem.FULL_SCREEN -> { controller.enterFullscreen(slot); restoreFocus() }
-                        TileMenuItem.BACK_TO_GRID -> { controller.exitFullscreen(); restoreFocus() }
-                        TileMenuItem.OPEN_IN_PLAYER -> menuTile.channelKey?.let(onOpenInPlayer)
-                        TileMenuItem.RETRY -> { controller.retry(slot); restoreFocus() }
-                        TileMenuItem.KEEP_SOUND -> { controller.pinAudio(slot); restoreFocus() }
-                        TileMenuItem.FOLLOW_FOCUS -> { controller.unpinAudio(); restoreFocus() }
-                        TileMenuItem.ADD_CHANNEL, TileMenuItem.REPLACE_CHANNEL -> pickerSlot = slot
-                        TileMenuItem.REMOVE -> { controller.remove(slot); restoreFocus() }
+                        TileMenuItem.BACK_TO_GRID -> { menuSlot = null; controller.exitFullscreen(); restoreFocus() }
+                        TileMenuItem.WATCH_IN_PLAYER, TileMenuItem.OPEN_IN_PLAYER -> {
+                            menuSlot = null
+                            menuTile.channelKey?.let(onOpenInPlayer)
+                        }
+                        TileMenuItem.RETRY -> { menuSlot = null; controller.retry(slot); restoreFocus() }
+                        TileMenuItem.KEEP_SOUND -> { menuSlot = null; controller.pinAudio(slot); restoreFocus() }
+                        TileMenuItem.FOLLOW_FOCUS -> { menuSlot = null; controller.unpinAudio(); restoreFocus() }
+                        TileMenuItem.ADD_CHANNEL, TileMenuItem.REPLACE_CHANNEL -> openPicker(slot)
+                        TileMenuItem.REMOVE, TileMenuItem.CLEAR_CHANNEL, TileMenuItem.REMOVE_TILE -> {
+                            menuSlot = null
+                            controller.remove(slot)
+                            restoreFocus()
+                        }
+                        TileMenuItem.ADD_ANOTHER -> controller.addSlot()?.let(::openPicker)
                         TileMenuItem.CHANGE_LAYOUT -> layoutOpen = true
-                        TileMenuItem.EXIT -> onExit()
+                        TileMenuItem.EXIT -> { menuSlot = null; leave() }
                     }
                 },
             )
@@ -251,11 +374,13 @@ internal fun MultiviewScreen(
             MultiviewLayoutPicker(
                 tileCount = state.tileCount,
                 current = state.layout,
-                onPick = { choice ->
+                onPick = { family ->
                     layoutOpen = false
-                    controller.setLayout(choice.layout, choice.tileCount)
+                    menuSlot = null
+                    controller.setLayout(family)
                     restoreFocus()
                 },
+                onBack = { menuEntryItem = TileMenuItem.CHANGE_LAYOUT; layoutOpen = false },
             )
         }
         val pickSlot = pickerSlot
@@ -267,6 +392,7 @@ internal fun MultiviewScreen(
                 preferredAccountId = accounts.firstOrNull { account ->
                     focusedKey?.startsWith(XtreamItemRegistry.accountPrefix(account.id)) == true
                 }?.id,
+                replacingName = state.tiles.firstOrNull { it.slot == pickSlot }?.takeIf { it.channelKey != null }?.name,
                 onPick = { pick ->
                     pickerSlot = null
                     controller.assign(pickSlot, pick)
@@ -277,5 +403,9 @@ internal fun MultiviewScreen(
     }
 }
 
-private val GRID_MARGIN = 24.dp
-private val TILE_GAP = 4.dp
+/** The 5% safe area of a 960 x 540 dp screen: no tile within 27 dp of an edge. */
+private val GRID_MARGIN_X = 48.dp
+private val GRID_MARGIN_Y = 27.dp
+
+/** Space between the grid and a panel that it makes room for. */
+private val PANEL_GAP = 20.dp

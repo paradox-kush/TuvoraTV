@@ -154,10 +154,18 @@ class MultiviewSessionCoreTest {
 
     @Test
     fun `removing down to two panes falls back to a layout that holds two`() {
-        val c = started(MultiviewLayout.FOCUS, 3)
+        val c = started(MultiviewLayout.GRID, 3)
         c.removePane(2)
         assertEquals(2, c.paneCount)
         assertEquals(MultiviewLayout.SIDE_BY_SIDE, c.layout)
+    }
+
+    @Test
+    fun `one big holds two panes so removing down to two keeps it`() {
+        val c = started(MultiviewLayout.FOCUS, 3)
+        c.removePane(2)
+        assertEquals(2, c.paneCount)
+        assertEquals(MultiviewLayout.FOCUS, c.layout)
     }
 
     @Test
