@@ -288,18 +288,127 @@ class CleanLiveSurfaceCoordinatorTest {
 
         val second = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
         assertTrue("the frame stays above the new surface", owner.getChildAt(owner.childCount - 1) === overlay)
-        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.HIDDEN)
-        assertEquals(android.view.View.GONE, overlay.visibility)
 
         coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.DIMMED)
         assertEquals(android.view.View.VISIBLE, overlay.visibility)
         assertTrue("a failure dims the frame under the error", overlay.alpha < 1f)
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+        assertEquals("the same interruption still holds its frame", android.view.View.VISIBLE, overlay.visibility)
 
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.HIDDEN)
+        assertEquals(android.view.View.GONE, overlay.visibility)
+        assertEquals("real video released the frame: nothing left to flash", null, overlay.drawable)
+
+        coordinator.captureFrame()
         coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.CLEARED)
         assertEquals(android.view.View.GONE, overlay.visibility)
         coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
         assertEquals("a cleared frame is never shown again", android.view.View.GONE, overlay.visibility)
         assertTrue(second.release())
+    }
+
+    @Test
+    fun `a frame held for one channel never covers a later stall on another`() = runTest {
+        // Emulator repro (2026-11-15): zap 1-2-3-4-3-2-1, then a stall on channel 1 showed the
+        // picture captured when leaving channel 2 — 24 s old — for the whole stall.
+        val owner = owner().apply { layoutAs(1920, 1080) }
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.SURFACE_VIEW),
+            frameCapturer = SurfaceFrameCapturer { _, into, done ->
+                into.eraseColor(android.graphics.Color.RED)
+                done(true)
+            },
+        )
+        start(coordinator)
+        val channelA = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+        channelA.freezeForTransition()
+        val overlay = owner.getChildAt(owner.childCount - 1) as android.widget.ImageView
+        assertEquals("the zap is covered by channel A's frame", android.view.View.VISIBLE, overlay.visibility)
+        assertTrue(channelA.release())
+
+        val channelB = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.HIDDEN)
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+
+        assertEquals("a stall on channel B must not show channel A", android.view.View.GONE, overlay.visibility)
+        assertEquals("channel A's picture is gone, not merely hidden", null, overlay.drawable)
+        assertTrue(channelB.release())
+    }
+
+    @Test
+    fun `a failed capture after real video shows no frame rather than an older one`() = runTest {
+        val owner = owner().apply { layoutAs(1920, 1080) }
+        var succeed = true
+        val targets = mutableListOf<android.graphics.Bitmap>()
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.SURFACE_VIEW),
+            frameCapturer = SurfaceFrameCapturer { _, into, done ->
+                targets += into
+                into.eraseColor(if (succeed) android.graphics.Color.GREEN else android.graphics.Color.BLACK)
+                done(succeed)
+            },
+        )
+        start(coordinator)
+        val lease = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+        coordinator.captureFrame()
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+        val overlay = owner.getChildAt(owner.childCount - 1) as android.widget.ImageView
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.HIDDEN)
+
+        succeed = false
+        coordinator.captureFrame()
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+
+        assertEquals("a failed capture must not resurrect the earlier frame", android.view.View.GONE, overlay.visibility)
+        assertEquals(null, overlay.drawable)
+        assertTrue("the released frame's bitmap is reused, not reallocated", targets[1] === targets[0])
+
+        succeed = true
+        coordinator.captureFrame()
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+        assertEquals("the next good capture covers its interruption", android.view.View.VISIBLE, overlay.visibility)
+        val shown = (overlay.drawable as android.graphics.drawable.BitmapDrawable).bitmap
+        assertEquals(android.graphics.Color.GREEN, shown.getPixel(0, 0))
+        assertTrue(lease.release())
+    }
+
+    @Test
+    fun `a capture skipped while one is in flight shows no frame rather than an older one`() = runTest {
+        val owner = owner().apply { layoutAs(1920, 1080) }
+        var pending: ((Boolean) -> Unit)? = null
+        var calls = 0
+        val coordinator = coordinator(
+            owner = owner,
+            modes = setOf(SurfaceMode.SURFACE_VIEW),
+            frameCapturer = SurfaceFrameCapturer { _, into, done ->
+                calls++
+                if (calls == 1) {
+                    into.eraseColor(android.graphics.Color.RED)
+                    done(true)
+                } else {
+                    pending = done
+                }
+            },
+        )
+        start(coordinator)
+        val lease = media3Lease(coordinator, SurfaceMode.SURFACE_VIEW)
+        coordinator.captureFrame()
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+        val overlay = owner.getChildAt(owner.childCount - 1) as android.widget.ImageView
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.HIDDEN)
+
+        val stuck = launch(Dispatchers.Unconfined) { coordinator.captureFrame() }
+        coordinator.captureFrame()
+        assertEquals("the second capture was skipped while the first is in flight", 2, calls)
+        coordinator.presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
+
+        assertEquals("a skipped capture must not resurrect the earlier frame", android.view.View.GONE, overlay.visibility)
+        assertEquals(null, overlay.drawable)
+        pending?.invoke(false)
+        stuck.join()
+        assertTrue(lease.release())
     }
 
     @Test

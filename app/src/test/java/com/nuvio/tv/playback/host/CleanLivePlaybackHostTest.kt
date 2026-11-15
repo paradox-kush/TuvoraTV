@@ -323,6 +323,46 @@ class CleanLivePlaybackHostTest {
     }
 
     @Test
+    fun `a stall after real video returned shows no stale frame`() = runTest {
+        // Emulator repro (2026-11-15): after zaps, a plain buffering stall on the playing channel
+        // was covered by a frame captured on another channel 24 s earlier.
+        val fixture = fixture()
+        fixture.owner.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+        )
+        fixture.owner.layout(0, 0, 1920, 1080)
+        val host = fixture.create()
+        val lease = (fixture.surfaces.media3SurfaceHost.acquire(SurfaceMode.SURFACE_VIEW, secure = false)
+            as PlaybackResult.Success).value
+        val playing = PlaybackSnapshot(
+            generation = 1,
+            state = PlaybackState.PLAYING,
+            isPlaying = true,
+            progress = com.nuvio.tv.playback.core.PlaybackProgressEvidence(renderedVideoFrame = true),
+        )
+        fixture.snapshot.value = playing
+        runCurrent()
+        lease.freezeForTransition()
+        fixture.snapshot.value = PlaybackSnapshot(generation = 2, state = PlaybackState.STARTING_PRIMARY)
+        runCurrent()
+        val overlay = fixture.owner.getChildAt(fixture.owner.childCount - 1)
+        assertTrue(overlay is android.widget.ImageView)
+        assertEquals("the zap is covered", android.view.View.VISIBLE, overlay.visibility)
+
+        fixture.snapshot.value = playing.copy(generation = 2)
+        runCurrent()
+        fixture.snapshot.value = playing.copy(generation = 2, isPlaying = false, isBuffering = true)
+        runCurrent()
+
+        assertEquals("the stall must not show the previous channel", android.view.View.GONE, overlay.visibility)
+        assertEquals(null, (overlay as android.widget.ImageView).drawable)
+        assertTrue(lease.release())
+        host.release()
+        fixture.parentJob.cancel()
+    }
+
+    @Test
     fun `one playback quality summary is reported when the host is released`() = runTest {
         val fixture = fixture()
         val host = fixture.create()

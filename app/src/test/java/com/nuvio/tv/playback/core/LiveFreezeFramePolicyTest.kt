@@ -79,6 +79,28 @@ class LiveFreezeFramePolicyTest {
         assertEquals(LiveFreezeFramePolicy.Overlay.HIDDEN, policy.overlay(paused))
     }
 
+    @Test
+    fun `a held frame lives only as long as its interruption`() {
+        // Emulator (2026-11-15): a stall on channel 1 showed channel 2's picture from 24 s earlier.
+        assertTrue(policy.keepsHeldFrame(LiveFreezeFramePolicy.Overlay.FROZEN))
+        assertTrue("a failure keeps its frame under the error", policy.keepsHeldFrame(LiveFreezeFramePolicy.Overlay.DIMMED))
+        assertFalse("real video ends the interruption", policy.keepsHeldFrame(LiveFreezeFramePolicy.Overlay.HIDDEN))
+        assertFalse(policy.keepsHeldFrame(LiveFreezeFramePolicy.Overlay.CLEARED))
+
+        val stallAfterVideo = listOf(
+            snapshot(PlaybackState.STARTING_PRIMARY, generation = 2, rendered = false),
+            snapshot(PlaybackState.PLAYING, generation = 2, rendered = true, playing = true),
+            snapshot(PlaybackState.PLAYING, generation = 2, rendered = true, buffering = true),
+        ).map(policy::overlay)
+        val released = stallAfterVideo.indexOfFirst { !policy.keepsHeldFrame(it) }
+        assertTrue("the first real frame releases the zap's frame before the later stall", released in 0 until 2)
+    }
+
+    @Test
+    fun `a suspend keeps its frame for the resume`() {
+        assertTrue(policy.keepsHeldFrame(policy.overlay(snapshot(PlaybackState.STOPPED, generation = 3, rendered = false))))
+    }
+
     private fun snapshot(
         state: PlaybackState,
         generation: Long,

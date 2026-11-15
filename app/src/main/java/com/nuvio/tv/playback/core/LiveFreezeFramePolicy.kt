@@ -32,6 +32,15 @@ object LiveFreezeFramePolicy {
         else -> Overlay.FROZEN
     }
 
+    /**
+     * A held frame belongs to the one interruption it was captured for. Once real video is back
+     * (HIDDEN) or nothing has played (CLEARED) it is released, so it can never cover a later stall
+     * or another channel (emulator 2026-11-15: a stall on channel 1 showed channel 2's 24 s old
+     * picture). Every interruption captures its own frame at its boundary; a capture that fails or
+     * is skipped then leaves no frame rather than an older one.
+     */
+    fun keepsHeldFrame(overlay: Overlay): Boolean = overlay == Overlay.FROZEN || overlay == Overlay.DIMMED
+
     /** Only capture a picture that is actually moving: never a stalled, recovering or blank surface. */
     fun mayCapture(snapshot: PlaybackSnapshot): Boolean =
         showsRealVideo(snapshot) && snapshot.isPlaying && !snapshot.isReconnecting

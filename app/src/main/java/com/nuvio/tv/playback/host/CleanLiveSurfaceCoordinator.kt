@@ -282,7 +282,9 @@ internal class CleanLiveSurfaceCoordinator(
 
     /**
      * Copies the outgoing picture into the freeze frame (downscaled) at an interruption boundary.
-     * A failed copy keeps the previous frame; moving playback must never call this on a timer.
+     * A failed copy keeps a frame only if it is still held for this same interruption (real video
+     * since then released it, see [LiveFreezeFramePolicy.keepsHeldFrame]); moving playback must
+     * never call this on a timer.
      */
     suspend fun captureFrame() = withContext(mainDispatcher) {
         val slot = current ?: return@withContext
@@ -341,11 +343,11 @@ internal class CleanLiveSurfaceCoordinator(
     /** Shows, dims, hides or drops the freeze frame above the surface (never below a new surface). */
     suspend fun presentFreezeFrame(overlay: LiveFreezeFramePolicy.Overlay) = withContext(mainDispatcher) {
         when (overlay) {
-            LiveFreezeFramePolicy.Overlay.HIDDEN -> freezeView?.visibility = View.GONE
-            LiveFreezeFramePolicy.Overlay.CLEARED -> {
+            LiveFreezeFramePolicy.Overlay.HIDDEN,
+            LiveFreezeFramePolicy.Overlay.CLEARED,
+            -> {
                 freezeView?.visibility = View.GONE
-                freezeView?.setImageDrawable(null)
-                frozenFrame = null
+                if (!LiveFreezeFramePolicy.keepsHeldFrame(overlay)) releaseHeldFrame()
             }
             LiveFreezeFramePolicy.Overlay.FROZEN,
             LiveFreezeFramePolicy.Overlay.DIMMED,
@@ -364,6 +366,15 @@ internal class CleanLiveSurfaceCoordinator(
                 view.visibility = View.VISIBLE
             }
         }
+    }
+
+    /** The interruption is over: the frame can never be shown again; its bitmap is kept for reuse. */
+    private fun releaseHeldFrame() {
+        val held = frozenFrame ?: shownFrame ?: return
+        freezeView?.setImageDrawable(null)
+        shownFrame = null
+        frozenFrame = null
+        spareFrame = held
     }
 
     private fun createFreezeView(): ImageView = ImageView(owner.context).apply {
