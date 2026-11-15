@@ -323,7 +323,7 @@ fun XtreamHubScreen(
                 .padding(start = HubRowStartPadding, end = HubRowStartPadding, bottom = NuvioTheme.spacing.md)
                 .hubHeaderFocusScope(headerFocus)
                 // Leaving from the header (LEFT on Live TV) comes back to the header.
-                .onFocusChanged { if (it.hasFocus) contentReturn.remember(null) }
+                .onFocusChanged { if (it.hasFocus) contentReturn.onHeaderFocused() }
                 .focusRestorer(headerRestoreTarget),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)

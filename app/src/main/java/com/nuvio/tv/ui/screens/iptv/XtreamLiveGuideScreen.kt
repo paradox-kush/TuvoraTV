@@ -1101,7 +1101,12 @@ fun LiveGuide(
                                 if (it.hasFocus) {
                                     inCategory = true
                                     // The aimed channel is the row last focused (onChannelFocused).
-                                    contentReturn?.remember { aimedChannel()?.entityId?.let { channelRowRequesters[it] } ?: channelListFocus }
+                                    contentReturn?.remember {
+                                        // An `enter` redirect to a row the lazy list has disposed would leave focus nowhere.
+                                        val aimed = aimedChannel()?.contentId
+                                        val composed = aimed != null && channelListState.layoutInfo.visibleItemsInfo.any { it.key == aimed }
+                                        aimedChannel()?.entityId?.takeIf { composed }?.let { channelRowRequesters[it] } ?: channelListFocus
+                                    }
                                 }
                             }
                             .guideKeyRepeatGate()

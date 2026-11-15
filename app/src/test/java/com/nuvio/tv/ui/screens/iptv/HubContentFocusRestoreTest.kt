@@ -70,7 +70,7 @@ class HubContentFocusRestoreTest {
                             .named("rail").focusable()
                     )
                     Column(Modifier.hubContentFocusRestore(contentReturn)) {
-                        Row(Modifier.focusRestorer(liveTab).onFocusChanged { if (it.hasFocus) contentReturn.remember(null) }) {
+                        Row(Modifier.focusRestorer(liveTab).onFocusChanged { if (it.hasFocus) contentReturn.onHeaderFocused() }) {
                             Box(Modifier.size(40.dp).focusRequester(liveTab).named("live").focusable())
                             Box(Modifier.size(40.dp).named("movies").focusable())
                         }
@@ -107,10 +107,10 @@ class HubContentFocusRestoreTest {
         rule.runOnIdle { assertEquals("back on the row the viewer left, not the tab row; history=$history", "row3", focused) }
     }
 
+    /** Device pass 3, finding 1 + 01-hub-entry: RIGHT or OK on the rail goes into the content, "never onto the tab row". */
     @Test
-    fun `leaving from the tab row comes back to the tab row`() {
+    fun `leaving from the tab row still comes back into the content`() {
         setHub()
-        // The viewer walks down the list to row 4 (a request from outside would land on the list's restorer fallback).
         rule.runOnIdle { assertTrue(rows[0].requestFocusOrFalse()) }
         repeat(3) { rule.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
         rule.runOnIdle { assertEquals("history=$history", "row3", focused) }
@@ -119,6 +119,6 @@ class HubContentFocusRestoreTest {
         rule.runOnIdle { railFocusable = false }
         rule.waitForIdle()
         if (focused == null || focused == "rail") rule.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
-        rule.runOnIdle { assertEquals("LEFT on Live TV went to the rail; RIGHT returns there", "live", focused) }
+        rule.runOnIdle { assertEquals("history=$history", "row3", focused) }
     }
 }
