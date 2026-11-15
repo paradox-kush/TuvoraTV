@@ -14,7 +14,10 @@ import androidx.compose.ui.focus.focusProperties
  * `requestFocus` (MainActivity pendingSidebarFocusRequest), which saves no child. So the hub remembers the content
  * region the viewer was last in and enters there (01-hub-entry: "later visits: exactly where you left"). Leaving from
  * the header still comes back into the content (01: "never onto the tab row").
- * Main-thread only.
+ *
+ * It is also the hub's focus safety net (device pass 3, finding 3): when the focused control leaves composition
+ * (a list swapped under it, a panel closed), Compose re-enters from the root, and this `enter` puts focus back on
+ * the region the viewer was in instead of the first control on screen. Main-thread only.
  */
 class HubContentReturn {
     private var target: (() -> FocusRequester?)? = null
