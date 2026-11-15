@@ -5,6 +5,7 @@ import android.widget.FrameLayout
 import androidx.media3.common.util.UnstableApi
 import com.nuvio.tv.playback.core.ActiveWorkReleaseReason
 import com.nuvio.tv.playback.core.ContentType
+import com.nuvio.tv.playback.core.LiveFreezeFramePolicy
 import com.nuvio.tv.playback.core.PlaybackCommand
 import com.nuvio.tv.playback.ui.LivePlaybackUiPresenter
 import com.nuvio.tv.playback.core.PlaybackLifecyclePort
@@ -323,9 +324,7 @@ class CleanLivePlaybackHostTest {
     }
 
     @Test
-    fun `a stall after real video returned shows no stale frame`() = runTest {
-        // Emulator repro (2026-11-15): after zaps, a plain buffering stall on the playing channel
-        // was covered by a frame captured on another channel 24 s earlier.
+    fun `a reconnect keeps its frame when a stray playing snapshot lands after the capture`() = runTest {
         val fixture = fixture()
         fixture.owner.measure(
             android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY),
@@ -344,11 +343,57 @@ class CleanLivePlaybackHostTest {
         fixture.snapshot.value = playing
         runCurrent()
         lease.freezeForTransition()
+        // The outgoing generation's last progress tick is presented after the engine's capture.
+        fixture.snapshot.value = playing.copy(positionMs = 1_000)
+        runCurrent()
+        fixture.snapshot.value = playing.copy(
+            positionMs = 1_000,
+            state = PlaybackState.LIVE_RECONNECTING,
+            isPlaying = false,
+            isReconnecting = true,
+        )
+        runCurrent()
+
+        val overlay = fixture.owner.getChildAt(fixture.owner.childCount - 1)
+        assertTrue(overlay is android.widget.ImageView)
+        assertEquals("the reconnect is never black", android.view.View.VISIBLE, overlay.visibility)
+        assertTrue(lease.release())
+        host.release()
+        fixture.parentJob.cancel()
+    }
+
+    @Test
+    fun `a zap drops the old channel's frame so a later stall on the new one shows none`() = runTest {
+        // Emulator repro (2026-11-15): after zaps, a plain buffering stall on the playing channel
+        // was covered by a frame captured on another channel 24 s earlier. Owner: a black moment on
+        // a channel switch is fine; the old channel's picture is not.
+        val fixture = fixture()
+        fixture.owner.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+        )
+        fixture.owner.layout(0, 0, 1920, 1080)
+        val host = fixture.create()
+        val lease = (fixture.surfaces.media3SurfaceHost.acquire(SurfaceMode.SURFACE_VIEW, secure = false)
+            as PlaybackResult.Success).value
+        val playing = PlaybackSnapshot(
+            generation = 1,
+            state = PlaybackState.PLAYING,
+            isPlaying = true,
+            progress = com.nuvio.tv.playback.core.PlaybackProgressEvidence(renderedVideoFrame = true),
+        )
+        fixture.snapshot.value = playing
+        runCurrent()
+        lease.freezeForTransition() // an earlier same-channel interruption left a frame held
+        fixture.snapshot.value = playing.copy(positionMs = 5_000)
+        runCurrent()
+
+        lease.freezeForTransition(LiveFreezeFramePolicy.Interruption.CHANNEL_CHANGE)
         fixture.snapshot.value = PlaybackSnapshot(generation = 2, state = PlaybackState.STARTING_PRIMARY)
         runCurrent()
         val overlay = fixture.owner.getChildAt(fixture.owner.childCount - 1)
         assertTrue(overlay is android.widget.ImageView)
-        assertEquals("the zap is covered", android.view.View.VISIBLE, overlay.visibility)
+        assertEquals("the zap shows no frame of the old channel", android.view.View.GONE, overlay.visibility)
 
         fixture.snapshot.value = playing.copy(generation = 2)
         runCurrent()
@@ -357,6 +402,7 @@ class CleanLivePlaybackHostTest {
 
         assertEquals("the stall must not show the previous channel", android.view.View.GONE, overlay.visibility)
         assertEquals(null, (overlay as android.widget.ImageView).drawable)
+        assertEquals("only the same-channel interruption was copied", 1, fixture.captures)
         assertTrue(lease.release())
         host.release()
         fixture.parentJob.cancel()

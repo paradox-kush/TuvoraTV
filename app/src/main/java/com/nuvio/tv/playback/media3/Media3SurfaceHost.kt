@@ -7,6 +7,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
+import com.nuvio.tv.playback.core.LiveFreezeFramePolicy
 import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.Retryability
@@ -21,8 +22,13 @@ interface Media3SurfaceLease {
     val secure: Boolean
 
     fun attach(player: ExoPlayer)
-    /** Optional host snapshot, requested only when playback is about to be interrupted. */
-    suspend fun freezeForTransition() = Unit
+    /**
+     * Optional host snapshot, requested only when playback is about to be interrupted. A
+     * [LiveFreezeFramePolicy.Interruption.CHANNEL_CHANGE] captures nothing and drops any held frame.
+     */
+    suspend fun freezeForTransition(
+        interruption: LiveFreezeFramePolicy.Interruption = LiveFreezeFramePolicy.Interruption.SAME_CHANNEL,
+    ) = Unit
     /** True only when the renderer has acknowledged that it no longer owns this surface. */
     fun detach(player: ExoPlayer): Boolean
 

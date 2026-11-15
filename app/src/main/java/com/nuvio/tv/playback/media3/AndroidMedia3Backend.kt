@@ -55,6 +55,7 @@ import com.nuvio.tv.playback.core.PlaybackTrackId
 import com.nuvio.tv.playback.core.PlaybackTrackType
 import com.nuvio.tv.playback.core.ExternalSubtitleId
 import com.nuvio.tv.playback.core.ExternalSubtitleResolver
+import com.nuvio.tv.playback.core.LiveFreezeFramePolicy
 import com.nuvio.tv.playback.core.RestorableTrackSelection
 import com.nuvio.tv.playback.core.VodRestorationCheckpoint
 import com.nuvio.tv.playback.core.ProxyMode
@@ -938,7 +939,9 @@ private class AndroidMedia3Backend(
         timelineJob = null
         runCatching {
             player.playWhenReady = false
-            freezeBeforeTransition()
+            // Only Media3Engine.releaseSource (REPLACE_REQUEST) stops the source: another channel
+            // follows, so no copy of this one (owner 2026-11-15).
+            freezeBeforeTransition(LiveFreezeFramePolicy.Interruption.CHANNEL_CHANGE)
             player.stop()
             player.clearMediaItems()
             calls.cancelAll()
@@ -1202,10 +1205,19 @@ private class AndroidMedia3Backend(
         }
     }
 
-    private suspend fun freezeBeforeTransition() {
+    private suspend fun freezeBeforeTransition(
+        interruption: LiveFreezeFramePolicy.Interruption = LiveFreezeFramePolicy.Interruption.SAME_CHANNEL,
+    ) {
+        if (!LiveFreezeFramePolicy.holdsFrameAcross(interruption)) {
+            // Always drop, even if this source already captured once; the flag then also stops the
+            // next channel's replaceSource from copying the stopped one.
+            frozenForTransition = true
+            surface?.freezeForTransition(interruption)
+            return
+        }
         if (frozenForTransition || !firstVideoReported.get()) return
         frozenForTransition = true
-        surface?.freezeForTransition()
+        surface?.freezeForTransition(interruption)
     }
 
     private companion object {

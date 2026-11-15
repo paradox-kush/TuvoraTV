@@ -214,7 +214,8 @@ internal class CleanLiveSurfaceCoordinator(
                     is PlaybackResult.Failure -> result
                     is PlaybackResult.Success -> PlaybackResult.Success(
                         object : Media3SurfaceLease by result.value {
-                            override suspend fun freezeForTransition() = captureForTransition(slot, secure)
+                            override suspend fun freezeForTransition(interruption: LiveFreezeFramePolicy.Interruption) =
+                                captureForTransition(slot, interruption, secure)
                         },
                     )
                 }
@@ -282,9 +283,7 @@ internal class CleanLiveSurfaceCoordinator(
 
     /**
      * Copies the outgoing picture into the freeze frame (downscaled) at an interruption boundary.
-     * A failed copy keeps a frame only if it is still held for this same interruption (real video
-     * since then released it, see [LiveFreezeFramePolicy.keepsHeldFrame]); moving playback must
-     * never call this on a timer.
+     * A failed copy keeps the previous frame; moving playback must never call this on a timer.
      */
     suspend fun captureFrame() = withContext(mainDispatcher) {
         val slot = current ?: return@withContext
@@ -326,7 +325,15 @@ internal class CleanLiveSurfaceCoordinator(
         }
     }
 
-    private suspend fun captureForTransition(slot: SurfaceSlot, secure: Boolean = false) = withContext(mainDispatcher) {
+    private suspend fun captureForTransition(
+        slot: SurfaceSlot,
+        interruption: LiveFreezeFramePolicy.Interruption,
+        secure: Boolean = false,
+    ) = withContext(mainDispatcher) {
+        if (!LiveFreezeFramePolicy.holdsFrameAcross(interruption)) {
+            dropHeldFrame()
+            return@withContext
+        }
         if (current !== slot || slot.released || secure) return@withContext
         // Reading a 4K decoder surface can block its buffer queue for over a second on Amlogic.
         // Do this only at an interruption boundary, never on a timer during moving playback.
@@ -343,11 +350,11 @@ internal class CleanLiveSurfaceCoordinator(
     /** Shows, dims, hides or drops the freeze frame above the surface (never below a new surface). */
     suspend fun presentFreezeFrame(overlay: LiveFreezeFramePolicy.Overlay) = withContext(mainDispatcher) {
         when (overlay) {
-            LiveFreezeFramePolicy.Overlay.HIDDEN,
-            LiveFreezeFramePolicy.Overlay.CLEARED,
-            -> {
+            LiveFreezeFramePolicy.Overlay.HIDDEN -> freezeView?.visibility = View.GONE
+            LiveFreezeFramePolicy.Overlay.CLEARED -> {
                 freezeView?.visibility = View.GONE
-                if (!LiveFreezeFramePolicy.keepsHeldFrame(overlay)) releaseHeldFrame()
+                freezeView?.setImageDrawable(null)
+                frozenFrame = null
             }
             LiveFreezeFramePolicy.Overlay.FROZEN,
             LiveFreezeFramePolicy.Overlay.DIMMED,
@@ -368,13 +375,13 @@ internal class CleanLiveSurfaceCoordinator(
         }
     }
 
-    /** The interruption is over: the frame can never be shown again; its bitmap is kept for reuse. */
-    private fun releaseHeldFrame() {
-        val held = frozenFrame ?: shownFrame ?: return
+    /** A channel change: the old channel's picture can never be shown again; its bitmap is reused. */
+    private fun dropHeldFrame() {
+        freezeView?.visibility = View.GONE
         freezeView?.setImageDrawable(null)
         shownFrame = null
+        frozenFrame?.let { spareFrame = it }
         frozenFrame = null
-        spareFrame = held
     }
 
     private fun createFreezeView(): ImageView = ImageView(owner.context).apply {
@@ -606,7 +613,8 @@ internal class CleanLiveSurfaceCoordinator(
         private val slot: SurfaceSlot,
         override val surface: Surface,
     ) : MpvSurfaceLease {
-        override suspend fun freezeForTransition() = captureForTransition(slot)
+        override suspend fun freezeForTransition(interruption: LiveFreezeFramePolicy.Interruption) =
+            captureForTransition(slot, interruption)
         override val mode: SurfaceMode = slot.mode
         override val secure: Boolean = false
         private var state = MpvLeaseState.ACQUIRED

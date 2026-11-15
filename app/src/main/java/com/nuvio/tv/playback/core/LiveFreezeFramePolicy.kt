@@ -23,6 +23,23 @@ object LiveFreezeFramePolicy {
         CLEARED,
     }
 
+    /** Why the engine is tearing the picture down, as only the engine knows it at its boundary. */
+    enum class Interruption {
+        /** Reconnect, recovery, engine handoff, suspend or a full release: the same channel returns. */
+        SAME_CHANNEL,
+
+        /** The source is replaced by another channel (the session's REPLACE_REQUEST release). */
+        CHANNEL_CHANGE,
+    }
+
+    /**
+     * Owner decision (2026-11-15): "channel switch we dont care" — a moment of black on a zap is
+     * fine, a picture of the old channel on the new one is not (emulator: a stall on channel 1
+     * showed channel 2's frame from 24 s earlier). A channel change therefore captures nothing and
+     * drops any frame still held; every same-channel interruption captures and holds as before.
+     */
+    fun holdsFrameAcross(interruption: Interruption): Boolean = interruption == Interruption.SAME_CHANNEL
+
     fun overlay(snapshot: PlaybackSnapshot): Overlay = when {
         // STOPPED is also a suspend (Home, then back): hold the frame for the resume. Really leaving
         // disposes the host, which removes the frame with it.
@@ -31,15 +48,6 @@ object LiveFreezeFramePolicy {
         showsRealVideo(snapshot) -> Overlay.HIDDEN
         else -> Overlay.FROZEN
     }
-
-    /**
-     * A held frame belongs to the one interruption it was captured for. Once real video is back
-     * (HIDDEN) or nothing has played (CLEARED) it is released, so it can never cover a later stall
-     * or another channel (emulator 2026-11-15: a stall on channel 1 showed channel 2's 24 s old
-     * picture). Every interruption captures its own frame at its boundary; a capture that fails or
-     * is skipped then leaves no frame rather than an older one.
-     */
-    fun keepsHeldFrame(overlay: Overlay): Boolean = overlay == Overlay.FROZEN || overlay == Overlay.DIMMED
 
     /** Only capture a picture that is actually moving: never a stalled, recovering or blank surface. */
     fun mayCapture(snapshot: PlaybackSnapshot): Boolean =

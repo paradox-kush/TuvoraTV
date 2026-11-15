@@ -4,6 +4,7 @@ import android.view.Surface
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
+import com.nuvio.tv.playback.core.LiveFreezeFramePolicy
 import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.core.Retryability
@@ -20,8 +21,13 @@ internal interface MpvSurfaceLease {
     val mode: SurfaceMode
     val secure: Boolean
     val surface: Surface
-    /** Optional host snapshot, requested only when playback is about to be interrupted. */
-    suspend fun freezeForTransition() = Unit
+    /**
+     * Optional host snapshot, requested only when playback is about to be interrupted. A
+     * [LiveFreezeFramePolicy.Interruption.CHANNEL_CHANGE] captures nothing and drops any held frame.
+     */
+    suspend fun freezeForTransition(
+        interruption: LiveFreezeFramePolicy.Interruption = LiveFreezeFramePolicy.Interruption.SAME_CHANNEL,
+    ) = Unit
     fun markAttached()
     fun confirmDetached()
     fun confirmCoreDestroyed()

@@ -4,6 +4,7 @@ import com.nuvio.tv.playback.core.EngineType
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
+import com.nuvio.tv.playback.core.LiveFreezeFramePolicy
 import com.nuvio.tv.playback.core.PlaybackEngine
 import com.nuvio.tv.playback.core.PlaybackEngineMetricsSnapshot
 import com.nuvio.tv.playback.core.PlaybackEngineStart
@@ -316,7 +317,8 @@ class MpvEngine internal constructor(
     override suspend fun releaseSource(generation: Long): PlaybackResult<Unit> = lock.withLock {
         if (this.generation != generation) return@withLock stale(FailurePhase.RELEASE)
         val current = backend ?: return@withLock PlaybackResult.Success(Unit)
-        if (!sourceReleased) lease?.freezeForTransition()
+        // REPLACE_REQUEST: another channel follows. No copy of this one (owner 2026-11-15).
+        if (!sourceReleased) lease?.freezeForTransition(LiveFreezeFramePolicy.Interruption.CHANNEL_CHANGE)
         when (val stopped = current.stopSource()) {
             is PlaybackResult.Failure -> stopped
             is PlaybackResult.Success -> {
