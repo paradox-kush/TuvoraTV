@@ -50,6 +50,45 @@ class TilePlaybackMapperTest {
     }
 
     @Test
+    fun `a rebuffer on a tile that already has its picture is still playing`() {
+        // The engine flips between READY and BUFFERING many times a second on a weak box; the picture never left.
+        val rebuffering = snap(
+            PlaybackState.DEGRADED,
+            isPlaying = false,
+            isBuffering = true,
+            playWhenReady = true,
+            progress = playingSnapshot().progress,
+        )
+        val p = TilePlaybackMapper.map(rebuffering, false, stall)
+        assertTrue("picture stays", p.isPlaying)
+        assertFalse("not tuning in again", p.isBuffering)
+        assertFalse(p.isReconnecting)
+        assertEquals(null, p.failure)
+    }
+
+    @Test
+    fun `buffering before the first frame is still loading`() {
+        val opening = snap(
+            PlaybackState.PLAYING,
+            isPlaying = false,
+            isBuffering = true,
+            playWhenReady = true,
+            progress = PlaybackProgressEvidence(receivedBytes = true, decoderReady = true),
+        )
+        val p = TilePlaybackMapper.map(opening, false, stall)
+        assertFalse(p.isPlaying)
+        assertTrue(p.isBuffering)
+    }
+
+    @Test
+    fun `a reconnect is not hidden by the picture of the dropped stream`() {
+        val dropped = playingSnapshot().copy(state = PlaybackState.LIVE_RECONNECTING, isPlaying = false, isReconnecting = true)
+        val p = TilePlaybackMapper.map(dropped, false, stall)
+        assertTrue(p.isReconnecting)
+        assertFalse("a reconnecting state does not carry a picture", p.isPlaying)
+    }
+
+    @Test
     fun `a tile paused on its first frame is neither playing nor buffering`() {
         val p = TilePlaybackMapper.map(playingSnapshot(playWhenReady = false), false, stall)
         assertFalse(p.isPlaying)

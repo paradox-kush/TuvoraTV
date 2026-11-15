@@ -97,6 +97,27 @@ class TileHostPanePlayerTest {
     }
 
     @Test
+    fun `a rebuffering picture does not flap the tile between playing and loading`() = runTest {
+        val r = rig()
+        r.open()
+        r.host.state.value = playingSnapshot(generation = 1)
+        runCurrent()
+        val base = r.changes
+        repeat(5) {
+            r.host.state.value = snap(
+                PlaybackState.DEGRADED, generation = 1, isPlaying = false, isBuffering = true,
+                playWhenReady = true, progress = playingSnapshot().progress,
+            )
+            runCurrent()
+            r.host.state.value = playingSnapshot(generation = 1)
+            runCurrent()
+        }
+        assertTrue("still showing its picture", r.player.playback.isPlaying)
+        assertFalse(r.player.playback.isBuffering)
+        assertEquals("a rebuffer is not a state change the grid redraws for", base, r.changes)
+    }
+
+    @Test
     fun `a mute asked for before the picture is applied once the session can take it`() = runTest {
         val r = rig()
         r.open()

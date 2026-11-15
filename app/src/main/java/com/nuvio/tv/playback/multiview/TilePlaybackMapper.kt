@@ -113,7 +113,10 @@ internal object TilePlaybackMapper {
             return MultiviewPanePlayback(failure = failureOf(snapshot.failure, stallMs, priorCause))
         }
         if (stalled) return MultiviewPanePlayback(failure = TileFailure.NoData)
-        val playing = snapshot.state in carriesPicture && snapshot.isPlaying
+        // A tile that has drawn its picture and means to play keeps it through a rebuffer: the engine flips between
+        // READY and BUFFERING many times a second on a weak box, and that is not "tuning in" again.
+        val hasPicture = snapshot.progress.renderedVideoFrame && snapshot.playWhenReady
+        val playing = snapshot.state in carriesPicture && (snapshot.isPlaying || hasPicture)
         val reconnecting = snapshot.isReconnecting || snapshot.state == PlaybackState.LIVE_RECONNECTING
         val waiting = phaseOf(snapshot) != TilePhase.PLAYING
         return MultiviewPanePlayback(
