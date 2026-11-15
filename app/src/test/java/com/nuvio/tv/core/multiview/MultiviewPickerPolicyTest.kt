@@ -62,4 +62,44 @@ class MultiviewPickerPolicyTest {
         assertEquals("the playlist row", PickerEmpty.PLAYLIST_ROW, f(PickerEmptyPolicy.Row.PLAYLIST, PickerEmptyPolicy.Selected.OTHER, "", true))
         assertNull("a group with channels has no empty text", f(other, PickerEmptyPolicy.Selected.OTHER, "", true))
     }
+
+    // ---- entering the channel list ----
+
+    private fun entry(
+        pending: String? = "g",
+        selected: String? = "g",
+        loading: Boolean = false,
+        keys: List<String> = listOf("a", "b", "c"),
+        entryKey: String? = null,
+        onScreen: Set<String> = none,
+    ) = PickerEntryPolicy.step(pending, selected, loading, keys, entryKey, onScreen)
+
+    @Test
+    fun `nothing asked for means nothing to do`() {
+        assertEquals(PickerEntryPolicy.Step.Idle, entry(pending = null))
+    }
+
+    @Test
+    fun `entry waits until the group has committed and its channels have loaded`() {
+        assertEquals("another group is selected", PickerEntryPolicy.Step.Wait, entry(selected = "other"))
+        assertEquals("nothing selected yet", PickerEntryPolicy.Step.Wait, entry(selected = null))
+        assertEquals("still loading", PickerEntryPolicy.Step.Wait, entry(loading = true))
+    }
+
+    @Test
+    fun `an empty group keeps focus on the group`() {
+        assertEquals(PickerEntryPolicy.Step.StayOnGroup, entry(keys = emptyList()))
+    }
+
+    @Test
+    fun `entry lands on the first channel that is not on screen`() {
+        assertEquals(PickerEntryPolicy.Step.Enter(1), entry(onScreen = setOf("a")))
+        assertEquals("all on screen: the first one", PickerEntryPolicy.Step.Enter(0), entry(onScreen = setOf("a", "b", "c")))
+    }
+
+    @Test
+    fun `the remembered entry row wins over the first off-screen one`() {
+        assertEquals(PickerEntryPolicy.Step.Enter(2), entry(entryKey = "c", onScreen = setOf("a")))
+        assertEquals("a key that left the list is ignored", PickerEntryPolicy.Step.Enter(1), entry(entryKey = "zzz", onScreen = setOf("a")))
+    }
 }

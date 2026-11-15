@@ -32,6 +32,42 @@ internal object PickerOpeningPolicy {
     }
 }
 
+/** Entering a group's channel list (RIGHT or OK on a group, a search, the opening landing): when, and on which row. */
+internal object PickerEntryPolicy {
+    sealed interface Step {
+        /** Nothing was asked for. */
+        data object Idle : Step
+
+        /** Asked for, but the group has not committed or its channels are still loading: look again when that changes. */
+        data object Wait : Step
+
+        /** The group has no channels: focus stays on the group. */
+        data object StayOnGroup : Step
+
+        /** Focus the channel row at [index]. */
+        data class Enter(val index: Int) : Step
+    }
+
+    /** The row [entryKey] when it is in the list, else the first channel not on screen, else the first one. */
+    fun step(
+        pendingGroup: String?,
+        selectedGroup: String?,
+        loading: Boolean,
+        keys: List<String>,
+        entryKey: String?,
+        onScreen: Set<String>,
+    ): Step = when {
+        pendingGroup == null -> Step.Idle
+        selectedGroup != pendingGroup || loading -> Step.Wait
+        keys.isEmpty() -> Step.StayOnGroup
+        else -> Step.Enter(
+            entryKey?.let { key -> keys.indexOf(key) }?.takeIf { it >= 0 }
+                ?: PickerOpeningPolicy.firstOffScreen(keys, onScreen)
+                ?: 0,
+        )
+    }
+}
+
 /** What the channel column says when it has nothing to list. */
 internal enum class PickerEmpty { SEARCH_IDLE, SEARCH_NONE, FAVORITES, RECENT, GROUP, PLAYLIST_ROW }
 

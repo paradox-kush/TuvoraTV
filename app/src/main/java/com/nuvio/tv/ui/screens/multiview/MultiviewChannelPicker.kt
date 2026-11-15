@@ -53,6 +53,7 @@ import com.nuvio.tv.core.iptv.PlaylistDisplayPolicy
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.multiview.PickerEmpty
 import com.nuvio.tv.core.multiview.PickerEmptyPolicy
+import com.nuvio.tv.core.multiview.PickerEntryPolicy
 import com.nuvio.tv.core.multiview.PickerGroup
 import com.nuvio.tv.core.multiview.PickerOpeningPolicy
 import com.nuvio.tv.ui.screens.iptv.ChannelListRow
@@ -230,19 +231,21 @@ private fun PickerBody(
         }
     }
 
-    // Entering a group's channel list: first channel not on screen, once that group's channels have landed.
-    LaunchedEffect(pendingEntryGroup, ui.selectedCategoryId, ui.channels, channelsLoad) {
-        val group = pendingEntryGroup ?: return@LaunchedEffect
-        if (ui.selectedCategoryId != group || channelsLoad is LoadStatus.Loading) return@LaunchedEffect
-        pendingEntryGroup = null
-        if (channels.isEmpty()) return@LaunchedEffect // Right on an empty group does nothing: focus stays on the group.
-        val index = entryKey?.let { key -> channels.indexOfFirst { it.contentId == key } }?.takeIf { it >= 0 }
-            ?: PickerOpeningPolicy.firstOffScreen(channels.map { it.contentId }, onScreen)
-            ?: 0
-        entryKey = channels[index].contentId
-        listState.scrollToItem(index)
-        GuideFocusRequestLoop.requestUntilLanded { channelsFocus.requestFocusOrFalse() }
-    }
+    // Entering a group's channel list: first channel not on screen, once that group's channels have landed. The request
+    // stays pending until focus has landed (see ChannelEntryEffect), never cleared before the effect's first suspension.
+    val channelKeys = remember(channels) { channels.map { it.contentId } }
+    ChannelEntryEffect(
+        pendingGroup = pendingEntryGroup,
+        selectedGroup = ui.selectedCategoryId,
+        loading = channelsLoad is LoadStatus.Loading,
+        keys = channelKeys,
+        entryKey = entryKey,
+        onScreen = onScreen,
+        scrollTo = { index -> listState.scrollToItem(index) },
+        requestFocus = { channelsFocus.requestFocusOrFalse() },
+        onEntered = { key -> entryKey = key },
+        onDone = { pendingEntryGroup = null },
+    )
 
     // A new playlist: land on its "All channels".
     LaunchedEffect(pendingAllGroup, ui.accountId, ui.categories) {
@@ -446,6 +449,39 @@ private fun PickerBody(
                 scope.launch { focusSelectedGroup() }
             },
         )
+    }
+}
+
+/**
+ * Moves D-pad focus into a group's channel list once [PickerEntryPolicy] says the list is ready. The request
+ * ([pendingGroup]) is cleared by [onDone] only after focus has landed: this effect is keyed on it, so clearing it first
+ * restarts the effect and cancels the scroll and the focus asks that follow (the bug that left RIGHT on a group dead).
+ */
+@Composable
+internal fun ChannelEntryEffect(
+    pendingGroup: String?,
+    selectedGroup: String?,
+    loading: Boolean,
+    keys: List<String>,
+    entryKey: String?,
+    onScreen: Set<String>,
+    scrollTo: suspend (Int) -> Unit,
+    requestFocus: () -> Boolean,
+    onEntered: (String) -> Unit,
+    onDone: () -> Unit,
+) {
+    LaunchedEffect(pendingGroup, selectedGroup, loading, keys) {
+        when (val step = PickerEntryPolicy.step(pendingGroup, selectedGroup, loading, keys, entryKey, onScreen)) {
+            PickerEntryPolicy.Step.Idle, PickerEntryPolicy.Step.Wait -> Unit
+            // Right on an empty group does nothing: focus stays on the group.
+            PickerEntryPolicy.Step.StayOnGroup -> onDone()
+            is PickerEntryPolicy.Step.Enter -> {
+                onEntered(keys[step.index])
+                scrollTo(step.index)
+                GuideFocusRequestLoop.requestUntilLanded { requestFocus() }
+                onDone()
+            }
+        }
     }
 }
 
