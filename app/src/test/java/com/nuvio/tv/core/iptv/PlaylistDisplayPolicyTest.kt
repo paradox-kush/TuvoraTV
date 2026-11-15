@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.iptv
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -102,5 +103,16 @@ class PlaylistDisplayPolicyTest {
         assertTrue("EPG URL removed", PlaylistDisplayPolicy.guideSourcesChanged(old, old.copy(epgUrl = null)))
         assertTrue("server moved", PlaylistDisplayPolicy.guideSourcesChanged(old, old.copy(baseUrl = "http://moved:80")))
         assertTrue("password rotated", PlaylistDisplayPolicy.guideSourcesChanged(old, old.copy(password = "rotated")))
+    }
+
+    @Test
+    fun `a chooser labels a playlist by its name and never by a bare host or address`() {
+        assertEquals("OnnTest", PlaylistDisplayPolicy.labelOrNull("OnnTest"))
+        assertEquals("Living Room", PlaylistDisplayPolicy.labelOrNull("  Living Room "))
+        assertNull("blank", PlaylistDisplayPolicy.labelOrNull(""))
+        assertNull("an address", PlaylistDisplayPolicy.labelOrNull("http://10.0.2.2:8080/get.php?username=u&password=p"))
+        assertNull("a bare IP", PlaylistDisplayPolicy.labelOrNull("10.0.2.2"))
+        assertNull("an IP with a port", PlaylistDisplayPolicy.labelOrNull("10.0.2.2:8080"))
+        assertNull("a bare host", PlaylistDisplayPolicy.labelOrNull("iptv.example.com"))
     }
 }

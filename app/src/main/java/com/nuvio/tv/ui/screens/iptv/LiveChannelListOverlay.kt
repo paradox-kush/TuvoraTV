@@ -141,7 +141,7 @@ internal fun BoxScope.LiveChannelListOverlay(
 }
 
 @Composable
-private fun ChannelListRow(
+internal fun ChannelListRow(
     number: Int,
     channel: GuideChannel,
     nowTitle: String?,

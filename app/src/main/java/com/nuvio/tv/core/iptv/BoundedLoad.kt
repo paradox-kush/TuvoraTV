@@ -70,6 +70,12 @@ enum class LoadSurface(val key: String, val stallMs: Long, val reportsEveryOutco
      * [stallMs] mirrors the policy's WAIT_BACKSTOP_MS (4 x the 90 s tune deadline).
      */
     LIVE_PLAYBACK("live_playback", 360_000L, reportsEveryOutcome = false),
+    /**
+     * One multiview tile's open: ends in a picture (Loaded) or a typed failure within [stallMs] of no
+     * progress. Reported by [com.nuvio.tv.core.multiview.TileLoadBounds] through [BoundedLoad.report] /
+     * [BoundedLoad.reportLoaded]; every outcome, so the share of tiles that open at all is a number.
+     */
+    MULTIVIEW_TILE("multiview_tile", 20_000L, reportsEveryOutcome = true),
 }
 
 sealed interface LoadStatus {
@@ -224,6 +230,11 @@ object BoundedLoad {
      */
     fun report(surface: LoadSurface, timedOut: Boolean, durationMs: Long, extra: Map<String, Any> = emptyMap()) {
         reportOutcome(surface, LoadOutcome.Failed(error = null, timedOut = timedOut), durationMs, extra)
+    }
+
+    /** Reports a load that reached its picture, decided outside [run] (a multiview tile). */
+    fun reportLoaded(surface: LoadSurface, durationMs: Long, extra: Map<String, Any> = emptyMap()) {
+        reportOutcome(surface, LoadOutcome.Loaded(Unit), durationMs, extra)
     }
 
     private fun reportOutcome(surface: LoadSurface, outcome: LoadOutcome<*>, durationMs: Long, extra: Map<String, Any>) {

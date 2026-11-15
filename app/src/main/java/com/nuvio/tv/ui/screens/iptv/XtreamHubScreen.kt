@@ -105,6 +105,8 @@ fun XtreamHubScreen(
     onEnterSetupCode: () -> Unit = {},
     /** The Recordings page (scheduled and saved catch-up recordings). */
     onOpenRecordings: () -> Unit = {},
+    /** Multiview: [startKey] is the channel to open as tile 0, or null to open the queued channels / the last grid. */
+    onOpenMultiview: (startKey: String?) -> Unit = {},
     /** Opens a catch-up replay in the full player — see LiveGuide's parameter of the same name. */
     onPlayCatchUp: (url: String, title: String, contentId: String, startMs: Long, endMs: Long) -> Unit =
         { _, _, _, _, _ -> },
@@ -159,6 +161,19 @@ fun XtreamHubScreen(
     // submitting shows the results page; Back closes it and focus returns to the chip (checked, with the tab
     // restorer as the fallback), so the remote never lands nowhere.
     val searchChip = remember { FocusRequester() }
+    // Back out of Multiview lands on its chip, not on "Live TV": the chip remembers that it opened Multiview, and the
+    // return (this screen resuming) puts focus back on it. A request loop, because the header restores its own focus too.
+    val multiviewChip = remember { FocusRequester() }
+    var multiviewOpened by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var multiviewReturn by remember { mutableStateOf(0) }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        if (multiviewOpened) multiviewReturn++
+    }
+    LaunchedEffect(multiviewReturn) {
+        if (multiviewReturn == 0) return@LaunchedEffect
+        multiviewOpened = false
+        GuideFocusRequestLoop.requestUntilLanded { multiviewChip.requestFocusOrFalse() }
+    }
     var showSearchDialog by remember { mutableStateOf(false) }
     val searchApplies = anyTypeEnabled && account != null && IptvHubSearchPolicy.contentTypeFor(uiState.section) != null
     // Live: the guide owns channel search (its Search row); the same chip asks it to open, so Search sits in one place on every section.
@@ -318,6 +333,13 @@ fun XtreamHubScreen(
                 onFocusGained = notATab,
                 onClick = { if (liveSearchApplies) liveSearchRequest++ else showSearchDialog = true }
             )
+            if (showLive) HubChip(
+                label = stringResource(R.string.multiview_entry),
+                selected = false,
+                focusRequester = multiviewChip,
+                onFocusGained = notATab,
+                onClick = { multiviewOpened = true; onOpenMultiview(null) },
+            )
             HubChip(
                 label = stringResource(R.string.rec_hub_chip),
                 selected = false,
@@ -325,7 +347,13 @@ fun XtreamHubScreen(
                 onClick = onOpenRecordings,
             )
             HubChip(
-                label = uiState.selectedAccount?.name?.let(com.nuvio.tv.core.iptv.PlaylistDisplayPolicy::displayName) ?: stringResource(R.string.iptv_hub_account_fallback),
+                label = uiState.selectedAccount?.let { selected ->
+                    com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.labelOrNull(selected.name)
+                        ?: stringResource(
+                            R.string.multiview_picker_playlist_fallback,
+                            uiState.accounts.indexOfFirst { it.id == selected.id } + 1,
+                        )
+                } ?: stringResource(R.string.iptv_hub_account_fallback),
                 selected = false,
                 focusRequester = firstFocus,
                 onFocusGained = notATab,
@@ -354,6 +382,7 @@ fun XtreamHubScreen(
                 onSwitchAccount = viewModel::selectAccount,
                 searchRequest = liveSearchRequest,
                 onOpenRecordings = onOpenRecordings,
+                onOpenMultiview = { onOpenMultiview(it) },
             )
         } else {
             HubBrowseContent(
@@ -381,9 +410,10 @@ fun XtreamHubScreen(
                 subtitle = null, value = null,
                 onClick = { showAccountPicker = false; onManagePlaylists() }
             )
-            uiState.accounts.forEach { acc ->
+            uiState.accounts.forEachIndexed { position, acc ->
                 com.nuvio.tv.ui.screens.settings.SettingsActionRow(
-                    title = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(acc.name),
+                    title = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.labelOrNull(acc.name)
+                        ?: stringResource(R.string.multiview_picker_playlist_fallback, position + 1),
                     subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(acc.baseUrl), // T7
                     value = if (acc.id == uiState.selectedAccountId) stringResource(R.string.iptv_hub_provider_current) else null,
                     onClick = { viewModel.selectAccount(acc.id); showAccountPicker = false }

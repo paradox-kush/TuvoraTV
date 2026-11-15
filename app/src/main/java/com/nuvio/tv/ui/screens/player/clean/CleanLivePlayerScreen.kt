@@ -109,6 +109,8 @@ internal fun CleanLivePlayerScreen(
     reportState: LiveReportState = LiveReportState.Idle,
     onSendReport: ((ReportCategory, String?) -> Unit)? = null,
     onClearReport: () -> Unit = {},
+    /** Opens Multiview with this channel as tile 0; null = not offered. */
+    onMultiview: (() -> Unit)? = null,
 ) {
     val chrome = CleanLivePlayerUiPolicy.present(uiState)
     val latestSurfaceOwnerReady by rememberUpdatedState(onSurfaceOwnerReady)
@@ -320,6 +322,7 @@ internal fun CleanLivePlayerScreen(
                     onHide = { hideControls() },
                     onSeekWindow = onSeekInWindow.takeIf { scrubbable },
                     onGoLive = onGoLive.takeIf { pauseOn },
+                    onMultiview = onMultiview,
                     onSendReport = onSendReport?.let { send ->
                         {
                             revealTick++

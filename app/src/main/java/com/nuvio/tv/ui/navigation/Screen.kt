@@ -190,6 +190,14 @@ sealed class Screen(val route: String) {
         }
     }
     data object Recordings : Screen("recordings")
+
+    /** Several live channels on one screen. [START_ARGUMENT] is the channel to open as tile 0; no argument = the queued channels, else the last grid. */
+    data object Multiview : Screen("multiview?start={start}") {
+        const val START_ARGUMENT = "start"
+
+        fun createRoute(startKey: String? = null): String =
+            "multiview" + (startKey?.let { "?start=${URLEncoder.encode(it, "UTF-8").replace("+", "%20")}" } ?: "")
+    }
     data object CatalogOrder : Screen("catalog_order")
     data object Plugins : Screen("plugins")
     data object ExperienceModeSelection : Screen("experience_mode_selection")

@@ -31,6 +31,8 @@ internal fun GuideChannelActionsDialog(
     onFavorite: () -> Unit,
     /** Non-null when the channel keeps an archive and a programme is airing: replay it from its start. */
     onStartOver: (() -> Unit)? = null,
+    /** Sets the channel aside for Multiview. */
+    onAddToMultiview: (() -> Unit)? = null,
     onAction: (GuideChannelMenuPolicy.Action) -> Unit,
     onGuideSize: () -> Unit,
     onDismiss: () -> Unit,
@@ -43,6 +45,9 @@ internal fun GuideChannelActionsDialog(
         }
         onStartOver?.let {
             Button(onClick = it, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.iptv_guide_start_over)) }
+        }
+        onAddToMultiview?.let {
+            Button(onClick = it, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.iptv_guide_add_to_multiview)) }
         }
         actions.filter { it != GuideChannelMenuPolicy.Action.REMOVE_FAVORITE }.forEach { action ->
             Button(onClick = { onAction(action) }, modifier = Modifier.fillMaxWidth()) {

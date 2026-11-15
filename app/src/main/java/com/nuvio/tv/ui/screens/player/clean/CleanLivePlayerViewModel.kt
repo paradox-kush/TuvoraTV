@@ -293,6 +293,9 @@ internal class CleanLivePlayerViewModel private constructor(
     private var releaseCompleted = false
     private var host: CleanLiveHost? = null
     private var activeLaunch: CleanLiveLaunchEntry? = null
+
+    /** The channel's stable id (never a link), for handing the channel on to Multiview. Owner thread (main). */
+    val currentContentKey: String? get() = activeLaunch?.target?.contentId?.value
     private var activeMetadata: CleanMediaSessionMetadata? = null
     private var attachedSurfaceOwner: FrameLayout? = null
     private var presentationJob: Job? = null

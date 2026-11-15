@@ -147,6 +147,8 @@ fun LiveGuide(
     searchRequest: Int = 0,
     /** The Recordings page, for "View recordings" on the record confirmation. */
     onOpenRecordings: () -> Unit = {},
+    /** Opens Multiview with this channel as tile 0 (the fullscreen controls' Multiview button). */
+    onOpenMultiview: (contentId: String?) -> Unit = {},
     viewModel: XtreamLiveGuideViewModel = hiltViewModel(),
 ) {
     val playbackViewModel: CleanLiveGuidePlaybackViewModel = hiltViewModel()
@@ -468,7 +470,7 @@ fun LiveGuide(
     val liveChrome = playbackUi?.let { CleanLivePlayerUiPolicy.present(it) }
     val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected ||
         pauseFailed || playbackStalled
-    val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null || uiState.replayRetry != null
+    val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null || uiState.multiviewNotice != null || uiState.replayRetry != null
     // A zap retunes: the aimed channel isn't the playing one yet, or the spinner is up. Read at event time
     // (B180: the body's uiState has the aim cleared, so it must come from the view model, not composition).
     fun liveTuningNow(): Boolean = GuideZapTuningPolicy.tuning(
@@ -915,6 +917,7 @@ fun LiveGuide(
                         controls.moreOpen = false
                         channelListOpen = true
                     },
+                    onOpenMultiview = onOpenMultiview,
                 )
             }
             when (livePanel.takeIf { fullscreen }) {
@@ -1074,6 +1077,7 @@ fun LiveGuide(
                 favorite = channel.contentId in favoriteIds,
                 actions = actions,
                 onFavorite = { returnFromMenu(); viewModel.toggleFavorite(channel) },
+                onAddToMultiview = { returnFromMenu(); viewModel.addToMultiview(channel) },
                 onAction = { action ->
                     // A hide (or removing a favourite from Favorites) takes the row away: its Undo
                     // notice owns focus, and a restore aimed at that row would steal it (UX168).
@@ -1169,6 +1173,39 @@ fun LiveGuide(
                 },
                 durationMillis = GuideReplayNoticePolicy.RETRY_NOTICE_MS,
                 key = retry to uiState.actionError,
+                modifier = Modifier
+                    .align(if (fullscreen) Alignment.TopCenter else Alignment.BottomCenter)
+                    .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.xl),
+            )
+        }
+
+        // "Add to Multiview": says how many are set aside, and offers to open it. Same toast as the other notices.
+        uiState.multiviewNotice?.let { result ->
+            fun restoreAfterMultiviewNotice() {
+                if (fullscreen) fullscreenAnchor.requestFocusOrFalse()
+                else if (!requestFocusedChannel() && !channelListFocus.requestFocusOrFalse()) {
+                    categoryListFocus.requestFocusOrFalse()
+                }
+            }
+            val opens = result.offersOpenNow
+            NuvioUndoToast(
+                message = when (result) {
+                    is com.nuvio.tv.core.multiview.QueueResult.Added ->
+                        stringResource(R.string.multiview_notice_added, result.count, com.nuvio.tv.core.multiview.MultiviewQueue.MAX)
+                    is com.nuvio.tv.core.multiview.QueueResult.AlreadyQueued -> stringResource(R.string.multiview_notice_already)
+                    com.nuvio.tv.core.multiview.QueueResult.Full -> stringResource(R.string.multiview_notice_full)
+                },
+                actionLabel = stringResource(if (opens) R.string.multiview_notice_open else R.string.multiview_notice_ok),
+                onAction = {
+                    viewModel.dismissMultiviewNotice()
+                    if (opens) onOpenMultiview(null) else restoreAfterMultiviewNotice()
+                },
+                onDismiss = {
+                    restoreAfterMultiviewNotice()
+                    viewModel.dismissMultiviewNotice()
+                },
+                durationMillis = GuideHideUndoPolicy.UNDO_WINDOW_MS,
+                key = result,
                 modifier = Modifier
                     .align(if (fullscreen) Alignment.TopCenter else Alignment.BottomCenter)
                     .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.xl),
@@ -1815,7 +1852,7 @@ private const val GUIDE_SKELETON_ROW_COUNT = 10
 
 /** F01: type a channel name for the guide's Search row. The keyboard opens with the dialog. */
 @Composable
-private fun GuideSearchDialog(initialQuery: String, onSearch: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun GuideSearchDialog(initialQuery: String, onSearch: (String) -> Unit, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf(initialQuery) }
     val fieldFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { fieldFocus.requestFocus() } }

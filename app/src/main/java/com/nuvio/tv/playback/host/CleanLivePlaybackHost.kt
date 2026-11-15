@@ -327,6 +327,7 @@ internal class CleanLivePlaybackHost private constructor(
             qualityReporter: PlaybackQualityReporter = PostHogPlaybackQualityReporter,
             clockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
             userRetry: ProviderUserRetryPort = ProviderUserRetryPort.NONE,
+            tile: com.nuvio.tv.playback.core.TileHostConfig? = null,
         ): CleanLivePlaybackHost {
             val parentJob = parentScope.coroutineContext[Job]
             val hostJob = SupervisorJob(parentJob)
@@ -342,6 +343,7 @@ internal class CleanLivePlaybackHost private constructor(
                 resourceBudget = resourceBudget,
                 routedAudioDevice = routedAudioDevice,
                 externalSubtitleResolver = externalSubtitleResolver,
+                tile = tile,
             )
             val controller = try {
                 sessionFactory.create(preferenceProfileId, productionHost)
@@ -370,7 +372,10 @@ internal class CleanLivePlaybackHost private constructor(
                 error("Clean playback surface coordinator could not start")
             }
 
-            val mediaSessionOwner = try {
+            // A tile owns no system media session: the multiview coordinator owns the one session.
+            val mediaSessionOwner = if (!com.nuvio.tv.playback.wiring.TileHostComposition.plan(tile).createsMediaSession) {
+                null
+            } else try {
                 withContext(applicationDispatcher) {
                     mediaSessionFactory.create(
                         context = context.applicationContext,

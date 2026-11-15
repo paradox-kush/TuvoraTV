@@ -19,6 +19,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -58,7 +60,16 @@ fun NuvioUndoToast(
     var selectPressedHere by remember(key) { mutableStateOf(false) }
     val latestDismiss by rememberUpdatedState(onDismiss)
     LaunchedEffect(key) {
-        runCatching { actionFocus.requestFocus() }
+        // Ask until focus lands, over a few frames: the menu that raised this notice closes in the same frames and
+        // hands focus back to its row, which won against a single ask and left the action out of the remote's reach.
+        // Self-contained (this file is upstream-aligned and may not reach into the fork's guide helpers): one ask per
+        // frame, at least three, until one has landed; at most 90 frames.
+        var landed = false
+        for (ask in 1..90) {
+            withFrameNanos { }
+            if (runCatching { actionFocus.requestFocus(FocusDirection.Enter) }.getOrDefault(false)) landed = true
+            if (landed && ask >= 3) break
+        }
         delay(durationMillis)
         latestDismiss()
     }
