@@ -45,3 +45,12 @@ class HubContentReturn {
 internal fun Modifier.hubContentFocusRestore(contentReturn: HubContentReturn): Modifier =
     focusProperties { enter = { contentReturn.target() ?: FocusRequester.Default } }.focusGroup()
 
+/**
+ * Device pass 3, finding 2: the group column collapsed to zero width sits right under the Live TV tab, so LEFT on
+ * the tab (and LEFT from the guide's left edge) took it as "to the left" and focus went into an invisible row:
+ * nothing focused, and a second LEFT reached the rail. While collapsed it refuses to be entered, so LEFT falls
+ * through to MainActivity, which opens the rail. Requests made after it opened again (exitCategory waits for the
+ * full width) are not affected.
+ */
+internal fun Modifier.collapsedFocusGuard(collapsed: Boolean): Modifier =
+    focusProperties { onEnter = { if (collapsed) cancelFocusChange() } }

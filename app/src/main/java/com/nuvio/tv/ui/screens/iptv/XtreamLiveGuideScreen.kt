@@ -892,6 +892,8 @@ fun LiveGuide(
                         else contentReturn?.remember { categoryListFocus }
                     }
                     .guideKeyRepeatGate()
+                    // Device pass 3, finding 2: collapsed to zero width, it is never a focus-search target.
+                    .collapsedFocusGuard(collapsed = inCategory)
                     .focusRestorer(categoryEntryFocus),
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
             ) {
