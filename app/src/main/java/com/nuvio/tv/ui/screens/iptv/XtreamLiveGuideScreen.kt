@@ -296,14 +296,32 @@ fun LiveGuide(
     var pendingGroupRow by remember(account.id) { mutableStateOf<Pair<String, String?>?>(null) }
     LaunchedEffect(pendingGroupRow, displayChannels, uiState.selectedCategoryId, uiState.channelsLoad is LoadStatus.Loading) {
         val (groupId, remembered) = pendingGroupRow ?: return@LaunchedEffect
-        if (uiState.selectedCategoryId != groupId) return@LaunchedEffect
-        if (displayChannels.isEmpty() || uiState.channelsLoad is LoadStatus.Loading) return@LaunchedEffect
-        pendingGroupRow = null
-        val target = GuideGroupMemoryPolicy.rowOnOpen(remembered, displayChannels.map { it.entityId }) ?: return@LaunchedEffect
-        val index = displayChannels.indexOfFirst { it.entityId == target }
-        channelListState.scrollToItem((index - 2).coerceAtLeast(0))
-        if (!GuideFocusRequestLoop.requestUntilLanded { channelRowRequesters[target]?.requestFocusOrFalse() == true }) {
-            channelListFocus.requestFocusOrFalse()
+        // Device pass 1, finding 2: focus held on the group row until this group's own list is in (GuideGroupOpenPolicy);
+        // the intent (a key of this effect) is retired only after the ask, or the recomposition cancelled the landing.
+        val landing = GuideGroupOpenPolicy.landing(
+            groupShown = uiState.selectedCategoryId == groupId,
+            loading = uiState.channelsLoad is LoadStatus.Loading,
+            empty = displayChannels.isEmpty(),
+        )
+        when (landing) {
+            GuideGroupOpenPolicy.Landing.WAIT -> return@LaunchedEffect
+            // An empty or failed group: its one action carries the channel list's requester.
+            GuideGroupOpenPolicy.Landing.LIST_ACTION -> GuidePendingFocusLanding.land(
+                request = { channelListFocus.requestFocusOrFalse() },
+                fallback = { false },
+                retire = { pendingGroupRow = null },
+            )
+            GuideGroupOpenPolicy.Landing.ROW -> {
+                val target = GuideGroupMemoryPolicy.rowOnOpen(remembered, displayChannels.map { it.entityId })
+                    ?: return@LaunchedEffect
+                val index = displayChannels.indexOfFirst { it.entityId == target }
+                channelListState.scrollToItem((index - 2).coerceAtLeast(0))
+                GuidePendingFocusLanding.land(
+                    request = { channelRowRequesters[target]?.requestFocusOrFalse() == true },
+                    fallback = { channelListFocus.requestFocusOrFalse() },
+                    retire = { pendingGroupRow = null },
+                )
+            }
         }
     }
 
@@ -926,13 +944,20 @@ fun LiveGuide(
                         upFocus = if (index == 0) selectedTabRequester else null,
                         onFocused = { viewModel.onCategoryFocused(cat.id) },
                         onEnter = {
+                            val groupId = GuideGroupMemoryPolicy.resolve(cat)
+                            // Device pass 1, finding 2: read before the commit, which swaps the list on screen.
+                            val handoff = GuideGroupOpenPolicy.handoff(
+                                opensShownGroup = groupId == uiState.selectedCategoryId,
+                                listLanded = uiState.channelsLoad !is LoadStatus.Loading,
+                            )
                             viewModel.commitFocusedCategory()
                             viewModel.onGroupEntered(cat)
                             // B4: the group reopens on the row it was left on (else row 1), once its list has landed.
-                            val groupId = GuideGroupMemoryPolicy.resolve(cat)
-                            if (cat.special != GuideSpecial.SEARCH) {
+                            // Search (OK opens the keyboard) only lands when RIGHT is held back for a list on its way.
+                            if (cat.special != GuideSpecial.SEARCH || handoff == GuideGroupOpenPolicy.Handoff.HOLD_ON_GROUP) {
                                 pendingGroupRow = groupId to GuideGroupMemory.row(account.id, groupId)
                             }
+                            handoff == GuideGroupOpenPolicy.Handoff.INTO_LIST
                         },
                         // F02: MENU on a provider category offers to hide it (Favorites/Recent/All can't be hidden).
                         onMenu = if (cat.special == null && cat.aliasOf == null) { { viewModel.hideCategory(cat) } } else null,
@@ -1822,7 +1847,8 @@ private fun GuideCategoryRow(
     rightFocus: FocusRequester,
     upFocus: FocusRequester? = null,
     onFocused: () -> Unit,
-    onEnter: () -> Unit,
+    /** Opens the group; true = move into the channel list now, false = hold here until its list lands (GuideGroupOpenPolicy). */
+    onEnter: () -> Boolean,
     onMenu: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     entryFocusRequester: FocusRequester? = null,
@@ -1861,7 +1887,11 @@ private fun GuideCategoryRow(
             .onPreviewKeyEvent { event ->
                 // Focus shows a category only once it settles (GuideCategorySettlePolicy); RIGHT
                 // enters it, so it must be on screen before focus crosses into the channel list.
-                if (event.key == Key.DirectionRight && event.type == KeyEventType.KeyDown) onEnter()
+                // A group whose list is not in yet keeps the cursor (consumed): RIGHT would otherwise land on the
+                // previous group's rows, which the switch disposes, dropping focus on the tab row (device pass 1).
+                if (event.key == Key.DirectionRight && event.type == KeyEventType.KeyDown && !onEnter()) {
+                    return@onPreviewKeyEvent true
+                }
                 if ((event.key == Key.DirectionUp || event.key == Key.DirectionDown) && event.type == KeyEventType.KeyDown &&
                     event.nativeKeyEvent.repeatCount > 0 && onHeldVertical?.invoke(event.key == Key.DirectionDown) == true
                 ) return@onPreviewKeyEvent true
@@ -1872,10 +1902,10 @@ private fun GuideCategoryRow(
             // OK enters the category, the same as RIGHT, and like RIGHT it does not wait for the
             // settle delay.
             .clickable {
-                onEnter()
+                val intoList = onEnter()
                 if (onClick != null) {
                     onClick()
-                } else {
+                } else if (intoList) {
                     runCatching { rightFocus.requestFocus() }
                 }
             }
