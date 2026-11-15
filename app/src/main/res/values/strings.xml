@@ -4011,7 +4011,7 @@
     <string name="multiview_menu_follow_focus">Let sound follow the highlight</string>
     <string name="multiview_menu_add_channel">Add a channel</string>
     <string name="multiview_menu_add_another">Add another channel</string>
-    <string name="multiview_menu_add_another_sub">%1$d of %2$d</string>
+    <string name="multiview_menu_add_another_sub">Makes %1$d of %2$d</string>
     <string name="multiview_menu_replace">Replace channel</string>
     <string name="multiview_menu_remove">Remove</string>
     <string name="multiview_menu_clear">Remove channel</string>

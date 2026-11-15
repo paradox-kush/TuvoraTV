@@ -33,7 +33,7 @@ internal fun GridHintBar(hint: GridHint, modifier: Modifier = Modifier) {
             .clip(RoundedCornerShape(50))
             .background(Color.Black.copy(alpha = 0.78f))
             .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(HINT_GAP),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (hint.soundKeptOn != null) {
@@ -100,3 +100,6 @@ internal fun NoticeLine(notice: MultiviewNotice, modifier: Modifier = Modifier) 
             .padding(horizontal = 16.dp, vertical = 8.dp),
     )
 }
+
+/** Space between the hint bar's key groups: wide enough that one label never reads as part of the next key cap. */
+private val HINT_GAP = 28.dp
