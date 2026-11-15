@@ -3894,6 +3894,7 @@
     <string name="iptv_guide_size_compact">Compact</string>
     <string name="iptv_guide_size_standard">Standard</string>
     <string name="iptv_guide_size_large">Large</string>
+    <string name="iptv_guide_size_current">Current</string>
 
     <!-- Recordings (catch-up saves). Plain words; a problem never shows an exception message or a host. -->
     <string name="rec_screen_title">Recordings</string>

@@ -1552,6 +1552,8 @@ fun LiveGuide(
                         is GuideOptionsPolicy.Row.Size -> GuidePanelItem<GuideOptionsPolicy.Row>(
                             key = row,
                             label = stringResource(guideSizeLabel(row.preset)),
+                            // D3: the size in use says so, focused or not.
+                            sub = if (GuideOptionsPolicy.isCurrent(row, guideLayout)) stringResource(R.string.iptv_guide_size_current) else null,
                             sectionLabel = if (row.preset == GuideLayoutPreset.entries.first()) stringResource(R.string.iptv_guide_size) else null,
                             selected = row.preset == guideLayout,
                         )

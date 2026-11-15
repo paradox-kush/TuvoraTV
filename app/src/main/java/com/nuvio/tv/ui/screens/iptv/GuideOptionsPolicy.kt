@@ -27,4 +27,7 @@ internal object GuideOptionsPolicy {
      */
     fun resumeOnEntry(resumeOn: Boolean, firstEntry: Boolean, lastWatchedListed: Boolean, somethingPlaying: Boolean): Boolean =
         resumeOn && firstEntry && lastWatchedListed && !somethingPlaying
+
+    /** Device pass 2, D3: the size in use says "Current", focused or not (the soft fill alone vanished under the ring). */
+    fun isCurrent(row: Row, current: GuideLayoutPreset): Boolean = row is Row.Size && row.preset == current
 }
