@@ -250,6 +250,7 @@ private fun PlayLine(p: TvPlay, colors: TeamColors) {
         }
         p.tag?.let { TagChip(it, p.side, if (p.side == SideKey.AWAY) colors.away else colors.home); Spacer(Modifier.width(8.dp)) }
         Text(p.text, fontSize = 15.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        if (p.ppg) Text("PPG", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.Secondary, modifier = Modifier.padding(start = 8.dp))
         p.score?.let { Text(it, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (p.scoring) NuvioTheme.colors.Secondary else NuvioTheme.colors.TextSecondary, modifier = Modifier.padding(start = 8.dp), maxLines = 1) }
     }
 }

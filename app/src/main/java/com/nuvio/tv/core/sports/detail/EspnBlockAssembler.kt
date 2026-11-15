@@ -4,6 +4,11 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import com.nuvio.tv.core.sports.detail.screen.BasketballRunPolicy
+import com.nuvio.tv.core.sports.detail.screen.HockeyPlay
+import com.nuvio.tv.core.sports.detail.screen.HockeyStrength
+import com.nuvio.tv.core.sports.detail.screen.PowerPlayClock
+import com.nuvio.tv.core.sports.detail.screen.RunPlay
 import kotlin.math.roundToInt
 
 /** The two ESPN documents a game can be assembled from: the scoreboard's event object and the summary. */
@@ -110,6 +115,8 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
                 BlockType.FIELD -> field(p, docs)
                 BlockType.SOCCER_STRIP -> soccerStrip(p, docs)
                 BlockType.LINEUP -> lineup(profile, docs)
+                BlockType.BASKETBALL_STRIP -> basketballStrip(p, docs)
+                BlockType.HOCKEY_STRIP -> hockeyStrip(p, docs)
                 BlockType.WIN_PROBABILITY -> winProbability(p, docs)
                 BlockType.SITUATION -> situation(p, docs)
                 BlockType.FORM -> form(p, docs)
@@ -340,7 +347,9 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
         val text = (at("text") ?: r.firstText(p, "text"))?.takeIf { it.isNotBlank() }
             ?: r.firstText(p, "shortText")?.takeIf { it.isNotBlank() } ?: return null
         val scoring = r.firstText(p, "scoringPlay") == "true"
-        val kind = if (r.firstText(p, "type.penaltyType") != null) TimelineKind.PENALTY else playKind(typeText, scoring)
+        val baseKind = if (r.firstText(p, "type.penaltyType") != null) TimelineKind.PENALTY else playKind(typeText, scoring)
+        // A goal scored on the power play carries the feed's own `strength` ("Power Play"): tagged PPG, never from our clock.
+        val kind = if (baseKind == TimelineKind.GOAL && at("strength")?.contains("power", ignoreCase = true) == true) TimelineKind.PPG else baseKind
         val home = at("homeScore"); val away = at("awayScore")
         return TimelineItem(
             time = at("time").orEmpty(),
@@ -545,6 +554,102 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
             if (players.isEmpty()) null else LineupSide(r.firstText(ro.value, "formation"), players.sortedBy { !it.starter })
         }
         return sides.takeIf { it.isNotEmpty() }?.let { GameBlock.Lineup(SourceId.ESPN, it) }
+    }
+
+    // ---- Phase C: basketball strip (summary, 60 s) -----------------------------------------------------------------------------
+
+    /** The competitor/team node's side: its own `homeAway`, else its team id against the event's competitors. */
+    private fun ownerSide(node: JsonElement, homeAway: String?, ids: Pair<String?, String?>): SideKey? = when (homeAway) {
+        "home" -> SideKey.HOME
+        "away" -> SideKey.AWAY
+        else -> sideById(r.firstText(node, "team.id") ?: r.firstText(node, "id"), ids)
+    }
+
+    /**
+     * Fouls (`fouls.teamFoulsCurrent`), `fouls.bonusState`, `timeoutsRemaining` and `possession` (a boolean on the competitor) read straight
+     * from the summary's header competitors. The 8+ point run is derived and exists only while the `basketballRun` switch is ON.
+     */
+    private fun basketballStrip(p: SportProfile, docs: EspnDocs): GameBlock.BasketballStrip? {
+        val spec = p.spec("basketballStrip") ?: return null
+        val root = root(spec, docs) ?: return null
+        val ids = competitorIds(docs)
+        val comps = r.readTracked(root, str(spec["path"]) ?: return null)
+        fun comp(side: SideKey) = comps.firstOrNull { ownerSide(it.value, it.homeAway, ids) == side }?.value
+        val h = comp(SideKey.HOME); val a = comp(SideKey.AWAY)
+        fun int(c: JsonElement?, path: String) = c?.let { r.firstText(it, path)?.toIntOrNull() }
+        val possession = when {
+            h != null && r.firstText(h, "possession") == "true" -> SideKey.HOME
+            a != null && r.firstText(a, "possession") == "true" -> SideKey.AWAY
+            else -> null
+        }
+        val run: ScoringRun? = if (!mapping.switchOn("basketballRun")) null else str(spec["plays"])?.let { path ->
+            BasketballRunPolicy.run(r.read(root, path).map { pl ->
+                RunPlay(
+                    side = sideById(r.firstText(pl, "team.id"), ids)?.let { if (it == SideKey.HOME) "home" else "away" },
+                    points = r.firstText(pl, "scoreValue")?.toIntOrNull() ?: 0,
+                    scoring = r.firstText(pl, "scoringPlay") == "true",
+                )
+            })
+        }
+        val block = GameBlock.BasketballStrip(
+            source = SourceId.ESPN,
+            homeFouls = int(h, "fouls.teamFoulsCurrent"), awayFouls = int(a, "fouls.teamFoulsCurrent"),
+            homeBonus = h?.let { r.firstText(it, "fouls.bonusState") }, awayBonus = a?.let { r.firstText(it, "fouls.bonusState") },
+            homeTimeouts = int(h, "timeoutsRemaining"), awayTimeouts = int(a, "timeoutsRemaining"),
+            possession = possession, run = run,
+        )
+        val empty = block.homeFouls == null && block.awayFouls == null && block.homeBonus == null && block.awayBonus == null &&
+            block.homeTimeouts == null && block.awayTimeouts == null && block.possession == null && block.run == null
+        return if (empty) null else block
+    }
+
+    // ---- Phase C: hockey strip (summary, 60 s) -----------------------------------------------------------------------------------
+
+    private fun hockeyStrip(p: SportProfile, docs: EspnDocs): GameBlock.HockeyStrip? {
+        val spec = p.spec("hockeyStrip") ?: return null
+        val root = root(spec, docs) ?: return null
+        val ids = competitorIds(docs)
+        fun sideStr(id: String?) = sideById(id, ids)?.let { if (it == SideKey.HOME) "home" else "away" }
+        val plays = r.read(root, str(spec["plays"]) ?: "plays[*]").map { pl ->
+            val clock = r.firstText(pl, "clock.displayValue")?.split(":")?.mapNotNull { it.toIntOrNull() }
+            HockeyPlay(
+                period = r.firstText(pl, "period.number")?.toIntOrNull() ?: 0,
+                elapsedSec = clock?.takeIf { it.size == 2 }?.let { it[0] * 60 + it[1] },
+                side = sideStr(r.firstText(pl, "team.id")),
+                penaltyMinutes = r.firstText(pl, "type.penaltyMinutes")?.toIntOrNull(),
+                penaltyType = r.firstText(pl, "type.penaltyType"),
+                goal = r.firstText(pl, "scoringPlay") == "true",
+                strength = r.firstText(pl, "strength.text"),
+            )
+        }
+        val side = HockeyStrength.powerPlaySide(plays)
+        val statsPath = str(spec["stats"]) ?: "boxscore.teams[*].statistics[*]"
+        val owners = r.readTracked(root, statsPath.substringBefore("[*].statistics").let { "$it[*]" })
+        fun stat(s: SideKey, label: String): String? {
+            val owner = owners.firstOrNull { ownerSide(it.value, it.homeAway, ids) == s }?.value ?: return null
+            return r.firstText(r.read(owner, "statistics[label=$label]").firstOrNull(), "displayValue")
+        }
+        fun pp(s: SideKey): String? {
+            val g = stat(s, "Power Play Goals")?.toIntOrNull() ?: return null
+            val o = stat(s, "Power Play Opportunities")?.toIntOrNull() ?: return null
+            return "$g/$o"
+        }
+        // Derived: only with the switch ON, only for an unambiguous situation, always "as of the last update".
+        val secondsLeft = if (!mapping.switchOn("hockeyPowerPlayClock") || side == null) null else {
+            val period = mapping.commonPath("period")?.let { r.firstText(docs.event, it) }?.toIntOrNull()
+            val remaining = r.firstText(docs.event, "status.clock")?.toDoubleOrNull()?.toInt()
+            if (period == null || remaining == null) null else PowerPlayClock.secondsLeft(plays, period, remaining, side)
+        }
+        val block = GameBlock.HockeyStrip(
+            source = SourceId.ESPN,
+            powerPlaySide = side?.let { if (it == "home") SideKey.HOME else SideKey.AWAY }, powerPlaySecondsLeft = secondsLeft,
+            homeShots = stat(SideKey.HOME, "Shots")?.toIntOrNull(), awayShots = stat(SideKey.AWAY, "Shots")?.toIntOrNull(),
+            homePowerPlay = pp(SideKey.HOME), awayPowerPlay = pp(SideKey.AWAY),
+            homeFaceoffs = stat(SideKey.HOME, "Faceoffs Won")?.toIntOrNull(), awayFaceoffs = stat(SideKey.AWAY, "Faceoffs Won")?.toIntOrNull(),
+        )
+        val empty = block.powerPlaySide == null && block.homeShots == null && block.awayShots == null && block.homePowerPlay == null &&
+            block.awayPowerPlay == null && block.homeFaceoffs == null && block.awayFaceoffs == null
+        return if (empty) null else block
     }
 
     private companion object {

@@ -260,7 +260,11 @@ fun GameDetailScreen(
                     val plan = LeftColumnFit.plan(
                         maxHeight.value.toInt(),
                         LeftColumnFit.Parts(
-                            strip = when { model.field != null -> LeftColumnFit.Strip.FOOTBALL; model.soccer != null -> LeftColumnFit.Strip.SOCCER; else -> LeftColumnFit.Strip.NONE },
+                            strip = when {
+                                model.field != null -> LeftColumnFit.Strip.FOOTBALL; model.soccer != null -> LeftColumnFit.Strip.SOCCER
+                                model.basketball != null -> LeftColumnFit.Strip.BASKETBALL; model.hockey != null -> LeftColumnFit.Strip.HOCKEY
+                                else -> LeftColumnFit.Strip.NONE
+                            },
                             lastPlay = sectioned && model.lastPlay != null, winChance = model.winChance != null, chart = model.chart != null,
                             source = watch.visible, scorerLines = listOf(model.soccer?.homeScorers, model.soccer?.awayScorers).count { !it.isNullOrEmpty() },
                         ),
@@ -269,6 +273,8 @@ fun GameDetailScreen(
                         ScoreboardCard(model, s.stale, colors, moments)
                         model.field?.let { FootballFieldStrip(it, model.sides, colors, moments) }
                         model.soccer?.let { SoccerStrip(it, model.sides, colors, moments) }
+                        model.basketball?.let { BasketballStrip(it, model.sides, colors, moments) }
+                        model.hockey?.let { HockeyStrip(it, model.sides, colors, moments) }
                         if (sectioned && plan.showLastPlay) model.lastPlay?.let { LastPlayCard(it, colors) }
                         if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
                             // Before kickoff only the market has a win chance (and its storylines): a small card above the kickoff.

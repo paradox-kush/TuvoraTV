@@ -32,6 +32,8 @@ data class TvPlay(
     val time: String, val text: String, val tag: String?, val side: SideKey?, val scoring: Boolean,
     /** Running score "10–21" after the play, and the period it belongs to (Plays section, Phase A). */
     val score: String? = null, val period: String? = null,
+    /** A goal scored on the power play (the feed's own `strength`). */
+    val ppg: Boolean = false,
 )
 
 /** The newest play, one line, on the left column (never an empty card: null hides it). */
@@ -102,6 +104,9 @@ data class GameDetailTvModel(
     val field: GameBlock.Field?,
     val soccer: GameBlock.SoccerStrip?,
     val pitch: TvPitch?,
+    /** Phase C: basketball and hockey strips. */
+    val basketball: GameBlock.BasketballStrip?,
+    val hockey: GameBlock.HockeyStrip?,
     val kickoffLabel: String?,
     val venue: String?,
     val updatedLabel: String?,
@@ -193,7 +198,8 @@ data class GameDetailTvModel(
             }.take(PLAY_ROWS).map {
                 TvPlay(
                     time = it.time, text = condensePlay(it.text), tag = sideTag(it.side, sides), side = it.side,
-                    scoring = it.kind == TimelineKind.GOAL || it.kind == TimelineKind.SCORE, score = it.score, period = it.period,
+                    scoring = it.kind == TimelineKind.GOAL || it.kind == TimelineKind.SCORE || it.kind == TimelineKind.PPG, score = it.score, period = it.period,
+                    ppg = it.kind == TimelineKind.PPG,
                 )
             }
             val statLines = (d.block(BlockType.STATS) as? GameBlock.Stats)?.rows.orEmpty().take(STAT_LINES).map { statLine(it) }
@@ -210,7 +216,8 @@ data class GameDetailTvModel(
                 sides = sides, state = d.state, pill = pill,
                 liveLine = line ?: (d.header as? GameHeader.Event)?.session,
                 isLive = live, situation = if (field != null) null else situation, // the field strip carries the same information
-                field = field, soccer = soccer, pitch = pitch, homeWinPercent = win, winChance = winChance, linescore = linescore,
+                field = field, soccer = soccer, pitch = pitch,
+                basketball = d.block(BlockType.BASKETBALL_STRIP) as? GameBlock.BasketballStrip, hockey = d.block(BlockType.HOCKEY_STRIP) as? GameBlock.HockeyStrip, homeWinPercent = win, winChance = winChance, linescore = linescore,
                 leaders = leaders, stats = stats, form = form, latestPlays = plays,
                 sections = sections, lastPlay = lastPlay, playRows = playRows, statLines = statLines,
                 leadersAll = leaders(d, sides, LEADERS_ALL), standings = d.block(BlockType.STANDINGS_TABLE) as? GameBlock.StandingsTable, chart = chart,

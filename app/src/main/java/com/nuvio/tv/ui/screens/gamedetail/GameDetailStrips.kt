@@ -270,3 +270,100 @@ internal fun PitchPanel(model: GameDetailTvModel, colors: TeamColors, modifier: 
         }
     }
 }
+
+// ---- basketball strip -----------------------------------------------------------------------------------------------------
+
+/** A row of dots; [filled] of [total] are lit. A dot lighting or dimming fades over QUICK_MS (the pop of a real foul / timeout). */
+@Composable
+private fun Dots(filled: Int, total: Int, color: Color) {
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+        repeat(total) { i ->
+            val a by animateFloatAsState(if (i < filled) 1f else 0.25f, tween(MotionSpec.QUICK_MS, easing = Enter), label = "dot")
+            Box(Modifier.size(8.dp).clip(CircleShape).background(color.copy(alpha = a)))
+        }
+    }
+}
+
+/**
+ * Line 1: the 8+ run chip (only with its switch on) and "<Team> in the bonus" chips; line 2: team fouls as 5 dots per side (a number beside
+ * them above 5); line 3: timeouts remaining as 7 dots. Everything is the feed's own value; a missing one hides its element.
+ */
+@Composable
+internal fun BasketballStrip(strip: GameBlock.BasketballStrip, sides: List<Side>, colors: TeamColors, moments: MomentBatch) {
+    fun name(k: SideKey) = sides.getOrNull(if (k == SideKey.HOME) 0 else 1)?.tvName.orEmpty()
+    val bonusHome = com.nuvio.tv.core.sports.detail.screen.BasketballStripPolicy.inBonus("home", strip)
+    val bonusAway = com.nuvio.tv.core.sports.detail.screen.BasketballStripPolicy.inBonus("away", strip)
+    val pop = remember { Animatable(1f) }
+    val bonusMoment = moments.moments.any { it is Moment.BonusReached }
+    LaunchedEffect(moments.seq) { if (bonusMoment) { pop.snapTo(0.6f); pop.animateTo(1f, tween(MotionSpec.QUICK_MS, easing = Enter)) } }
+    Card {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            strip.run?.let { r ->
+                val c = if (r.side == SideKey.HOME) colors.home else colors.away
+                Text("${name(r.side)} ${r.points}-0 run", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.OnSecondary, maxLines = 1,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(c).padding(horizontal = 10.dp, vertical = 3.dp))
+            }
+            Spacer(Modifier.weight(1f))
+            for ((k, on) in listOf(SideKey.HOME to bonusHome, SideKey.AWAY to bonusAway)) if (on) {
+                Text("${name(k)} in the bonus", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 1,
+                    modifier = Modifier.padding(start = 6.dp).graphicsLayer { scaleX = pop.value; scaleY = pop.value }.clip(RoundedCornerShape(6.dp))
+                        .background(NuvioTheme.colors.BackgroundElevated).padding(horizontal = 10.dp, vertical = 3.dp))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        BasketRow("Fouls", strip.homeFouls, strip.awayFouls, 5, name(SideKey.HOME), name(SideKey.AWAY), colors)
+        BasketRow("Timeouts", strip.homeTimeouts, strip.awayTimeouts, 7, name(SideKey.HOME), name(SideKey.AWAY), colors)
+    }
+}
+
+@Composable
+private fun BasketRow(label: String, home: Int?, away: Int?, total: Int, homeName: String, awayName: String, colors: TeamColors) {
+    if (home == null && away == null) return
+    Row(Modifier.fillMaxWidth().height(22.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.width(78.dp), maxLines = 1)
+        home?.let { Text(homeName, fontSize = 13.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 1, modifier = Modifier.width(44.dp)); Dots(it, total, colors.home); if (it > total) Text(" $it", fontSize = 13.sp, color = NuvioTheme.colors.TextPrimary) }
+        Spacer(Modifier.weight(1f))
+        away?.let { Text(awayName, fontSize = 13.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 1, modifier = Modifier.width(44.dp)); Dots(it, total, colors.away); if (it > total) Text(" $it", fontSize = 13.sp, color = NuvioTheme.colors.TextPrimary) }
+    }
+}
+
+// ---- hockey strip ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Line 1: "Power play \u00B7 <Team>" chip (+ time when the derived clock is on and unambiguous) or "Even strength", shots right; a thin bar with the
+ * fraction left only when the time is known (stepped to the value as of the last update, nothing drains in between); line 2: power plays and faceoffs.
+ */
+@Composable
+internal fun HockeyStrip(strip: GameBlock.HockeyStrip, sides: List<Side>, colors: TeamColors, moments: MomentBatch) {
+    val pop = remember { Animatable(1f) }
+    val pp = moments.moments.filterIsInstance<Moment.PowerPlay>().firstOrNull()
+    LaunchedEffect(moments.seq) { if (pp != null) { pop.snapTo(0.6f); pop.animateTo(1f, tween(MotionSpec.QUICK_MS, easing = Enter)) } }
+    val left = strip.powerPlaySecondsLeft
+    val frac by animateFloatAsState(if (left != null) (left / 120f).coerceIn(0f, 1f) else 0f, tween(MotionSpec.MOVE_MS, easing = Standard), label = "ppBar")
+    Card {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            val side = strip.powerPlaySide
+            val team = side?.let { sides.getOrNull(if (it == SideKey.HOME) 0 else 1)?.tvName }
+            val label = if (side != null) "Power play \u00B7 $team" + (left?.let { " " + (it / 60) + ":" + "%02d".format(it % 60) } ?: "") else "Even strength"
+            Text(label, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                color = if (side != null) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextSecondary,
+                modifier = Modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value }.clip(RoundedCornerShape(6.dp))
+                    .background(if (side != null) NuvioTheme.colors.Secondary else NuvioTheme.colors.BackgroundElevated).padding(horizontal = 10.dp, vertical = 3.dp))
+            Spacer(Modifier.weight(1f))
+            if (strip.homeShots != null && strip.awayShots != null) Text("Shots ${strip.homeShots} \u2013 ${strip.awayShots}", fontSize = 14.sp, color = NuvioTheme.colors.TextPrimary, maxLines = 1)
+        }
+        if (left != null) {
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(NuvioTheme.colors.Border)) {
+                if (frac > 0f) Box(Modifier.weight(frac).fillMaxSize().background(NuvioTheme.colors.Secondary))
+                if (1f - frac > 0f) Spacer(Modifier.weight(1f - frac))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (strip.homePowerPlay != null && strip.awayPowerPlay != null) Text("Power plays ${strip.homePowerPlay} \u2013 ${strip.awayPowerPlay}", fontSize = 14.sp, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.weight(1f), maxLines = 1)
+            else Spacer(Modifier.weight(1f))
+            if (strip.homeFaceoffs != null && strip.awayFaceoffs != null) Text("Faceoffs ${strip.homeFaceoffs} \u2013 ${strip.awayFaceoffs}", fontSize = 14.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1)
+        }
+    }
+}

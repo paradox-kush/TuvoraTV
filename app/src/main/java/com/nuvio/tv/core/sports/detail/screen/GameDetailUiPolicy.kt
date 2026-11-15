@@ -23,7 +23,7 @@ object GameDetailUiPolicy {
         is GameBlock.Results -> b.rows.isEmpty()
         is GameBlock.Situation -> b.text.isBlank()
         is GameBlock.Highlights -> b.url.isBlank()
-        is GameBlock.Field, is GameBlock.SoccerStrip -> false
+        is GameBlock.Field, is GameBlock.SoccerStrip, is GameBlock.BasketballStrip, is GameBlock.HockeyStrip -> false
         is GameBlock.WinProbability -> false
     }
 }

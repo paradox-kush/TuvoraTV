@@ -28,13 +28,15 @@ enum class BlockType(val wire: String) {
     /** Phase A: the full play list (timeline stays the scoring summary) and the generic standings table. */
     PLAYS("plays"), STANDINGS_TABLE("standingsTable"),
     /** Phase B: football live field strip and the soccer live strip (single-event tick). */
-    FIELD("field"), SOCCER_STRIP("soccerStrip");
+    FIELD("field"), SOCCER_STRIP("soccerStrip"),
+    /** Phase C: basketball and hockey strips (both read the summary, so they move on the 60 s tick). */
+    BASKETBALL_STRIP("basketballStrip"), HOCKEY_STRIP("hockeyStrip");
 
     companion object {
         /** Block types the shared core can assemble from a provider (watch/next/standings are not yet). */
         val assemblable: Set<BlockType> = setOf(
             SITUATION, LINESCORE, STATS, LEADERS, TIMELINE, LINEUP, RESULTS, STANDINGS, FORM, HIGHLIGHTS, WIN_PROBABILITY,
-            PLAYS, STANDINGS_TABLE, FIELD, SOCCER_STRIP,
+            PLAYS, STANDINGS_TABLE, FIELD, SOCCER_STRIP, BASKETBALL_STRIP, HOCKEY_STRIP,
         )
 
         fun fromWire(s: String?): BlockType? = entries.firstOrNull { it.wire == s }
@@ -42,7 +44,7 @@ enum class BlockType(val wire: String) {
 }
 
 enum class SideKey { HOME, AWAY }
-enum class TimelineKind { GOAL, CARD, SUB, SCORE, PENALTY, CORNER, SHOT, OFFSIDE, VAR }
+enum class TimelineKind { GOAL, CARD, SUB, SCORE, PENALTY, CORNER, SHOT, OFFSIDE, VAR, PPG }
 enum class RefreshPart { SCOREBOARD, SUMMARY; companion object { val ALL: Set<RefreshPart> = entries.toSet() } }
 
 /** Per-source result of one load, and the closed vocabulary of the `sports_detail` telemetry outcome. */
@@ -104,6 +106,9 @@ data class LineupPlayer(val number: String?, val name: String, val pos: String?,
 
 /** [startYardLine] is home-based like the ball; [summary] is the feed's "3 plays, 26 yards, 0:54". */
 data class FieldDrive(val startYardLine: Int?, val summary: String?)
+
+/** A run of unanswered points. Derived from the plays, so it exists only while the `basketballRun` switch is ON. */
+data class ScoringRun(val side: SideKey, val points: Int)
 
 /** kind: goal | yellow | red | sub | corner | penalty | var | shot | offside | foul. [text] is the feed's own words. */
 data class SoccerEvent(val kind: String, val side: SideKey?, val minute: String?, val text: String)
@@ -174,6 +179,32 @@ sealed interface GameBlock {
     ) : GameBlock {
         override val type get() = BlockType.SOCCER_STRIP
     }
+    /**
+     * Basketball live strip. Fouls, bonus and timeouts are DIRECT from ESPN's header competitors; [homeBonus]/[awayBonus] carry that
+     * competitor's own raw `bonusState` (the team that BENEFITS, see BasketballStripPolicy.inBonus). [run] is derived (switch).
+     */
+    data class BasketballStrip(
+        override val source: SourceId,
+        val homeFouls: Int? = null, val awayFouls: Int? = null,
+        val homeBonus: String? = null, val awayBonus: String? = null,
+        val homeTimeouts: Int? = null, val awayTimeouts: Int? = null,
+        val possession: SideKey? = null,
+        val run: ScoringRun? = null,
+    ) : GameBlock {
+        override val type get() = BlockType.BASKETBALL_STRIP
+    }
+    /** Hockey live strip. [powerPlaySide] is the newest play's own `strength`; [powerPlaySecondsLeft] is derived (switch) and null when ambiguous. */
+    data class HockeyStrip(
+        override val source: SourceId,
+        val powerPlaySide: SideKey? = null,
+        val powerPlaySecondsLeft: Int? = null,
+        val homeShots: Int? = null, val awayShots: Int? = null,
+        /** "goals/opportunities", e.g. "1/2". */
+        val homePowerPlay: String? = null, val awayPowerPlay: String? = null,
+        val homeFaceoffs: Int? = null, val awayFaceoffs: Int? = null,
+    ) : GameBlock {
+        override val type get() = BlockType.HOCKEY_STRIP
+    }
     data class Form(override val source: SourceId, val home: List<String>, val away: List<String>) : GameBlock {
         override val type get() = BlockType.FORM
     }
@@ -239,7 +270,8 @@ object BlockVisibility {
 
     fun visible(type: BlockType, state: GameState): Boolean = when (state) {
         GameState.LIVE -> true
-        GameState.FINAL -> type != BlockType.SITUATION && type != BlockType.WIN_PROBABILITY && type != BlockType.FIELD
+        GameState.FINAL -> type != BlockType.SITUATION && type != BlockType.WIN_PROBABILITY && type != BlockType.FIELD &&
+            type != BlockType.BASKETBALL_STRIP && type != BlockType.HOCKEY_STRIP
         GameState.UPCOMING -> type in upcoming
         GameState.POSTPONED -> false
     }

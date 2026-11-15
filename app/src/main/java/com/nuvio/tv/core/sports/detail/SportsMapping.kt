@@ -80,7 +80,11 @@ data class SportsMapping(
     val extra: JsonObject,
     /** `sources.espn.event`: the single-event scoreboard URL (`{path}`, `{id}`); null = old mapping, live ticks use today's flow. */
     val espnEventUrl: String? = null,
+    /** Names of the remote UI switches that are ON (`uiSwitches` with a literal boolean true). A missing key or a non-boolean value = OFF. */
+    val uiSwitches: Set<String> = emptySet(),
 ) {
+    fun switchOn(name: String): Boolean = name in uiSwitches
+
     fun leagueFor(tsdbId: String?): LeagueMapping? = leagues.firstOrNull { it.tsdbId == tsdbId }
     fun profile(name: String?): SportProfile? = name?.let { profiles[it] }
 
@@ -135,7 +139,7 @@ sealed interface MappingParseResult {
 object SportsMappingParser {
     private val known = setOf(
         "schemaVersion", "version", "killSwitch", "sources", "pathSyntax", "states", "leagues", "aliases",
-        "eventOverrides", "match", "common", "profiles",
+        "eventOverrides", "match", "common", "profiles", "uiSwitches",
     )
 
     /** Never throws. Structural problems become [MappingParseResult.Invalid]; unknown fields are kept. */
@@ -191,6 +195,7 @@ object SportsMappingParser {
                 }.toMap(),
                 extra = JsonObject(root.filterKeys { it !in known }),
                 espnEventUrl = str(espn?.get("event")),
+                uiSwitches = (root["uiSwitches"] as? JsonObject)?.mapNotNull { (k, v) -> k.takeIf { (v as? JsonPrimitive)?.takeIf { p -> !p.isString }?.booleanOrNull == true } }?.toSet().orEmpty(),
             ),
         )
     } catch (e: Exception) {

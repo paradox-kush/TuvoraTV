@@ -129,7 +129,7 @@ object PanelFit {
  * win-chance numbers and the source row are never dropped. Heights are measured on the 960 x 540 dp canvas (1080p emulator frames).
  */
 object LeftColumnFit {
-    enum class Strip { NONE, FOOTBALL, SOCCER }
+    enum class Strip { NONE, FOOTBALL, SOCCER, BASKETBALL, HOCKEY }
 
     data class Parts(
         val strip: Strip = Strip.NONE,
@@ -148,6 +148,8 @@ object LeftColumnFit {
     const val SCORER_LINE_DP = 15
     const val FOOTBALL_STRIP_DP = 104
     const val SOCCER_STRIP_DP = 92
+    const val BASKETBALL_STRIP_DP = 100
+    const val HOCKEY_STRIP_DP = 88
     const val LAST_PLAY_DP = 38
     const val WIN_CHANCE_DP = 100
     const val CHART_DP = 76
@@ -156,7 +158,8 @@ object LeftColumnFit {
     fun heightOf(p: Parts, showChart: Boolean, showLastPlay: Boolean): Int {
         val cards = buildList {
             add(SCOREBOARD_DP + p.scorerLines * SCORER_LINE_DP)
-            when (p.strip) { Strip.FOOTBALL -> add(FOOTBALL_STRIP_DP); Strip.SOCCER -> add(SOCCER_STRIP_DP); Strip.NONE -> Unit }
+            when (p.strip) { Strip.FOOTBALL -> add(FOOTBALL_STRIP_DP); Strip.SOCCER -> add(SOCCER_STRIP_DP)
+                Strip.BASKETBALL -> add(BASKETBALL_STRIP_DP); Strip.HOCKEY -> add(HOCKEY_STRIP_DP); Strip.NONE -> Unit }
             if (p.lastPlay && showLastPlay) add(LAST_PLAY_DP)
             if (p.winChance) add(WIN_CHANCE_DP + if (p.chart && showChart) CHART_DP else 0)
             if (p.source) add(SOURCE_DP)
