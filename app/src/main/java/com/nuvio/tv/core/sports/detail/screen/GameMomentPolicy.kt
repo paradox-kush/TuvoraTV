@@ -169,5 +169,11 @@ object GameMomentPolicy {
 
 /** The moments of ONE update. [seq] increases per batch, so a UI effect keyed on it plays each moment exactly once. */
 data class MomentBatch(val seq: Int, val moments: List<Moment>) {
+    /**
+     * The batch to ANIMATE for a consumer that first saw [seenSeq]: a batch it already saw (or that predates it - a tab switch, a strip
+     * re-appearing, a resume re-composing the screen) is [None]; only a batch that arrived after it composed plays (spec 05 D2).
+     */
+    fun freshSince(seenSeq: Int): MomentBatch = if (seq == seenSeq) None else this
+
     companion object { val None = MomentBatch(0, emptyList()) }
 }

@@ -68,7 +68,8 @@ private fun SideKey.str() = if (this == SideKey.HOME) "home" else "away"
  * and the first-down line slide over MOVE_MS between two real snapshots (nothing loops). A loss flashes the border once.
  */
 @Composable
-internal fun FootballFieldStrip(field: GameBlock.Field, sides: List<Side>, colors: TeamColors, moments: MomentBatch) {
+internal fun FootballFieldStrip(field: GameBlock.Field, sides: List<Side>, colors: TeamColors, momentsIn: MomentBatch) {
+    val moments = rememberFreshMoments(momentsIn)
     val possession = field.possession
     val ball by animateFloatAsState(FieldGeometry.x(field.yardLine), tween(MotionSpec.MOVE_MS, easing = Standard), label = "ball")
     val fd = FieldGeometry.firstDownX(field.yardLine, field.distance, possession?.str())
@@ -160,7 +161,8 @@ private fun kindLabel(kind: String) = when (kind) {
  * its chip in once (QUICK_MS); the possession bar slides over MOVE_MS and its numbers count over COUNT_MS.
  */
 @Composable
-internal fun SoccerStrip(strip: GameBlock.SoccerStrip, sides: List<Side>, colors: TeamColors, moments: MomentBatch) {
+internal fun SoccerStrip(strip: GameBlock.SoccerStrip, sides: List<Side>, colors: TeamColors, momentsIn: MomentBatch) {
+    val moments = rememberFreshMoments(momentsIn)
     val pop = remember { Animatable(1f) }
     val ev = moments.moments.filterIsInstance<Moment.SoccerMoment>().firstOrNull()
     LaunchedEffect(moments.seq) { if (ev != null) { pop.snapTo(0.6f); pop.animateTo(1f, tween(MotionSpec.QUICK_MS, easing = Enter)) } }
@@ -289,7 +291,8 @@ private fun Dots(filled: Int, total: Int, color: Color) {
  * them above 5); line 3: timeouts remaining as 7 dots. Everything is the feed's own value; a missing one hides its element.
  */
 @Composable
-internal fun BasketballStrip(strip: GameBlock.BasketballStrip, sides: List<Side>, colors: TeamColors, moments: MomentBatch) {
+internal fun BasketballStrip(strip: GameBlock.BasketballStrip, sides: List<Side>, colors: TeamColors, momentsIn: MomentBatch) {
+    val moments = rememberFreshMoments(momentsIn)
     fun name(k: SideKey) = sides.getOrNull(if (k == SideKey.HOME) 0 else 1)?.tvName.orEmpty()
     val bonusHome = com.nuvio.tv.core.sports.detail.screen.BasketballStripPolicy.inBonus("home", strip)
     val bonusAway = com.nuvio.tv.core.sports.detail.screen.BasketballStripPolicy.inBonus("away", strip)
@@ -334,7 +337,8 @@ private fun BasketRow(label: String, home: Int?, away: Int?, total: Int, homeNam
  * fraction left only when the time is known (stepped to the value as of the last update, nothing drains in between); line 2: power plays and faceoffs.
  */
 @Composable
-internal fun HockeyStrip(strip: GameBlock.HockeyStrip, sides: List<Side>, colors: TeamColors, moments: MomentBatch) {
+internal fun HockeyStrip(strip: GameBlock.HockeyStrip, sides: List<Side>, colors: TeamColors, momentsIn: MomentBatch) {
+    val moments = rememberFreshMoments(momentsIn)
     val pop = remember { Animatable(1f) }
     val pp = moments.moments.filterIsInstance<Moment.PowerPlay>().firstOrNull()
     LaunchedEffect(moments.seq) { if (pp != null) { pop.snapTo(0.6f); pop.animateTo(1f, tween(MotionSpec.QUICK_MS, easing = Enter)) } }

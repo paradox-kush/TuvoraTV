@@ -97,12 +97,20 @@ private val Standard = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 // ---- animation: one effect per real moment, never a loop ----------------------------------------------------------------
 
+/** The batch a newly composed animation may play: the one already held when it composed is stale (no replay on re-show / tab switch). */
+@Composable
+internal fun rememberFreshMoments(batch: MomentBatch): MomentBatch {
+    val seen = remember { batch.seq }
+    return batch.freshSince(seen)
+}
+
 /**
  * The score: counts to the new value over COUNT_MS and pops (1 -> 1.25 -> 1, accent tint) over PULSE_MS, once per
  * [MomentBatch] that carries a ScoreChange for [side]. On open (first composition) it just shows the value.
  */
 @Composable
-internal fun AnimatedScore(text: String, side: SideKey, batch: MomentBatch, modifier: Modifier, color: Color, accent: Color, fontSize: Int) {
+internal fun AnimatedScore(text: String, side: SideKey, batchIn: MomentBatch, modifier: Modifier, color: Color, accent: Color, fontSize: Int) {
+    val batch = rememberFreshMoments(batchIn)
     val target = text.toIntOrNull()
     val shown = remember { Animatable((target ?: 0).toFloat()) }
     val pulse = remember { Animatable(0f) }
@@ -243,7 +251,8 @@ internal fun SectionPanel(section: GameSection, model: GameDetailTvModel, hasPre
 }
 
 @Composable
-private fun SectionPanelBody(section: GameSection, model: GameDetailTvModel, hasPreview: Boolean, colors: TeamColors, moments: MomentBatch, modifier: Modifier) {
+private fun SectionPanelBody(section: GameSection, model: GameDetailTvModel, hasPreview: Boolean, colors: TeamColors, momentsIn: MomentBatch, modifier: Modifier) {
+    val moments = rememberFreshMoments(momentsIn)
     if (section == GameSection.LINEUPS) { PitchPanel(model, colors, modifier); return }
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val h = maxHeight.value.toInt()

@@ -272,7 +272,7 @@ fun GameDetailScreen(
                             source = watch.visible, scorerLines = listOf(model.soccer?.homeScorers, model.soccer?.awayScorers).count { !it.isNullOrEmpty() },
                         ),
                     )
-                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(if (plan.tightGaps) LeftColumnFit.TIGHT_GAP_DP.dp else LeftColumnFit.GAP_DP.dp)) {
                         ScoreboardCard(model, s.stale, colors, moments)
                         model.field?.let { FootballFieldStrip(it, model.sides, colors, moments) }
                         model.soccer?.let { SoccerStrip(it, model.sides, colors, moments) }
@@ -284,7 +284,7 @@ fun GameDetailScreen(
                             if (model.winChance != null) SituationCard(model, colors, showChart = false)
                             KickoffCard(model, Modifier.weight(1f))
                         } else {
-                            if (model.situation != null || model.winChance != null) SituationCard(model, colors, plan.showChart)
+                            if (model.situation != null || model.winChance != null) SituationCard(model, colors, plan.showChart, plan.compactWinChance)
                             if (sectioned) Spacer(Modifier.weight(1f))
                             else model.linescore?.let { ByPeriodCard(it, Modifier.weight(1f)) } ?: Spacer(Modifier.weight(1f))
                         }
@@ -466,10 +466,14 @@ private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentB
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
             // Long names shrink to fit (never "Wa…"); the record sits under in a legible size.
-            AutoResizeText(
-                text = (side.rank?.let { "$it " } ?: "") + side.name, color = NuvioTheme.colors.TextPrimary,
-                style = androidx.compose.ui.text.TextStyle(fontSize = 23.sp, fontWeight = FontWeight.SemiBold), minFontSize = 15.sp,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // The rank is muted (secondary colour, smaller) and sits before the name; the name keeps shrinking to fit.
+                side.rank?.let { Text("$it", fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, modifier = Modifier.padding(end = 8.dp)) }
+                AutoResizeText(
+                    text = side.name, color = NuvioTheme.colors.TextPrimary, modifier = Modifier.weight(1f),
+                    style = androidx.compose.ui.text.TextStyle(fontSize = 23.sp, fontWeight = FontWeight.SemiBold), minFontSize = 15.sp,
+                )
+            }
             side.record?.let { Text(it, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary) }
             extra.scorers?.let { Text(it, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             TimeoutDots(extra.timeouts, teamColor)
@@ -484,7 +488,8 @@ private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentB
 }
 
 @Composable
-private fun SituationCard(model: GameDetailTvModel, colors: TeamColors, showChart: Boolean = true) {
+private fun SituationCard(model: GameDetailTvModel, colors: TeamColors, showChart: Boolean = true, compact: Boolean = false) {
+    if (compact && model.winChance != null) { CompactWinChanceCard(model.winChance, model, colors); return }
     Card {
         model.situation?.let {
             Text(it, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
@@ -529,6 +534,32 @@ private fun SituationCard(model: GameDetailTvModel, colors: TeamColors, showChar
                 Spacer(Modifier.height(4.dp))
                 Text(foot, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+        }
+    }
+}
+
+/** The win-chance card when the left column is tight: numbers row, bar, and the one-line credit (never dropped). No chart, no extra line. */
+@Composable
+private fun CompactWinChanceCard(w: com.nuvio.tv.core.sports.detail.screen.TvWinChance, model: GameDetailTvModel, colors: TeamColors) {
+    val foot = listOfNotNull(w.caption, w.staleLabel).joinToString("  ·  ")
+    val home = model.sides.getOrNull(0)?.tvName.orEmpty(); val away = model.sides.getOrNull(1)?.tvName.orEmpty()
+    val homeShown = animatedPercent(w.homePercent); val awayShown = animatedPercent(w.awayPercent)
+    val homeBar = animatedShare(w.homePercent); val awayBar = animatedShare(w.awayPercent)
+    Card {
+        Row(Modifier.fillMaxWidth()) {
+            Text("$home $homeShown%", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = colors.home, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            w.drawPercent?.let { Text("Draw $it%", fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, modifier = Modifier.padding(horizontal = 12.dp)) }
+            Text("$awayShown% $away", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = colors.away, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.height(3.dp))
+        Row(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(NuvioTheme.colors.Border)) {
+            if (homeBar > 0f) Box(Modifier.weight(homeBar).fillMaxHeight().background(colors.home))
+            w.drawPercent?.let { Box(Modifier.weight(it.toFloat()).fillMaxHeight().background(NuvioTheme.colors.TextSecondary.copy(alpha = 0.5f))) }
+            if (awayBar > 0f) Box(Modifier.weight(awayBar).fillMaxHeight().background(colors.away))
+        }
+        if (foot.isNotEmpty()) {
+            Spacer(Modifier.height(3.dp))
+            Text(foot, fontSize = 12.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

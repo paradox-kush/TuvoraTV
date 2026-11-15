@@ -227,8 +227,57 @@ class LeftColumnFitTest {
         val p = LeftColumnFit.plan(0, full.copy(chart = false, lastPlay = false))
         assertFalse(p.showChart); assertFalse(p.showLastPlay)
     }
+    @Test fun `the minimum column fits the 472 dp canvas for every sport so the Play row is never squeezed`() {
+        val cases = listOf(
+            "football" to full,
+            "basketball" to full.copy(strip = LeftColumnFit.Strip.BASKETBALL),
+            "hockey" to full.copy(strip = LeftColumnFit.Strip.HOCKEY),
+            "soccer, two scorer lines" to full.copy(strip = LeftColumnFit.Strip.SOCCER, scorerLines = 2),
+            "soccer, no scorers" to full.copy(strip = LeftColumnFit.Strip.SOCCER),
+            "no strip" to full.copy(strip = LeftColumnFit.Strip.NONE),
+        )
+        for ((name, parts) in cases) {
+            val plan = LeftColumnFit.plan(472, parts)
+            val h = LeftColumnFit.heightOf(parts, plan)
+            assertTrue("$name: column $h dp must fit 472 dp", h <= 472)
+            assertTrue("$name: the win-chance numbers stay (compact, not dropped)", parts.winChance)
+        }
+    }
+    @Test fun `compaction is the last resort and only when needed`() {
+        val roomy = LeftColumnFit.plan(1000, full)
+        assertFalse(roomy.compactWinChance); assertFalse(roomy.tightGaps)
+        val noChartNoPlay = LeftColumnFit.heightOf(full, showChart = false, showLastPlay = false)
+        val justFits = LeftColumnFit.plan(noChartNoPlay, full)
+        assertFalse("not compact while the bare column fits", justFits.compactWinChance)
+        val tight = LeftColumnFit.plan(noChartNoPlay - 1, full)
+        assertTrue("compact once the bare column does not fit", tight.compactWinChance)
+    }
     @Test fun `the football strip plus everything fits 472 dp only without the chart`() {
         val p = LeftColumnFit.plan(472, full)
         assertFalse("chart cannot fit beside the strip", p.showChart)
+    }
+}
+
+class SingleLeadersLineupsChipTest {
+    @Test fun `a game with both shows one chip Leaders`() {
+        val both = listOf(com.nuvio.tv.core.sports.detail.screen.GameSection.PLAYS, com.nuvio.tv.core.sports.detail.screen.GameSection.LEADERS, com.nuvio.tv.core.sports.detail.screen.GameSection.LINEUPS)
+        assertEquals(listOf(com.nuvio.tv.core.sports.detail.screen.GameSection.PLAYS, com.nuvio.tv.core.sports.detail.screen.GameSection.LEADERS),
+            com.nuvio.tv.core.sports.detail.screen.GameDetailTvModel.singleLeadersOrLineups(both))
+    }
+    @Test fun `lineups alone (soccer) and leaders alone are untouched`() {
+        val l = listOf(com.nuvio.tv.core.sports.detail.screen.GameSection.PLAYS, com.nuvio.tv.core.sports.detail.screen.GameSection.LINEUPS)
+        assertEquals(l, com.nuvio.tv.core.sports.detail.screen.GameDetailTvModel.singleLeadersOrLineups(l))
+    }
+}
+
+class MomentReplayTest {
+    private val batch = com.nuvio.tv.core.sports.detail.screen.MomentBatch(5, listOf(Moment.ScoreChange(SideKey.HOME, "2")))
+
+    @Test fun `a batch already held when a consumer composed is not replayed`() {
+        assertEquals("tab switch / re-show / resume: the stale batch is silent", com.nuvio.tv.core.sports.detail.screen.MomentBatch.None, batch.freshSince(5))
+    }
+    @Test fun `a batch that arrives after the consumer composed plays once`() {
+        assertEquals(batch, batch.freshSince(4))
+        assertEquals(batch.copy(seq = 6), batch.copy(seq = 6).freshSince(5))
     }
 }

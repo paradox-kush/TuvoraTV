@@ -125,8 +125,8 @@ object PanelFit {
 
 /**
  * The LEFT column (scoreboard, strip, last-play line, win-chance card [+ chart], source row) on the fixed 472 dp canvas. When it cannot
- * fit, the win-chance CHART is the first thing to drop, then the last-play line (spec 03 B3); the scoreboard, the strip, the
- * win-chance numbers and the source row are never dropped. Heights are measured on the 960 x 540 dp canvas (1080p emulator frames).
+ * fit, the win-chance CHART is the first thing to drop, then the last-play line (spec 03 B3), then the win-chance card compacts and the
+ * gaps tighten; the scoreboard, the strip, the win-chance numbers and the source row are never dropped. Heights are measured on the 960 x 540 dp canvas (1080p emulator frames).
  */
 object LeftColumnFit {
     enum class Strip { NONE, FOOTBALL, SOCCER, BASKETBALL, HOCKEY }
@@ -141,9 +141,21 @@ object LeftColumnFit {
         val scorerLines: Int = 0,
     )
 
-    data class Plan(val showChart: Boolean, val showLastPlay: Boolean)
+    /**
+     * [compactWinChance]: the win-chance card shrinks to a numbers row + bar + the one-line credit (the Polymarket credit is never dropped; the chart and the extra line are); [tightGaps]: cards sit [TIGHT_GAP_DP]
+     * apart. Both are the last resorts once the chart and the last-play line are gone, so the minimum column is <= the 472 dp canvas
+     * for every sport (the Play row is never squeezed).
+     */
+    data class Plan(
+        val showChart: Boolean,
+        val showLastPlay: Boolean,
+        val compactWinChance: Boolean = false,
+        val tightGaps: Boolean = false,
+    )
 
     const val GAP_DP = 12
+    const val TIGHT_GAP_DP = 6
+    const val COMPACT_WIN_CHANCE_DP = 66
     const val SCOREBOARD_DP = 181
     const val SCORER_LINE_DP = 15
     const val FOOTBALL_STRIP_DP = 104
@@ -155,16 +167,18 @@ object LeftColumnFit {
     const val CHART_DP = 76
     const val SOURCE_DP = 83
 
-    fun heightOf(p: Parts, showChart: Boolean, showLastPlay: Boolean): Int {
+    fun heightOf(p: Parts, plan: Plan): Int = heightOf(p, plan.showChart, plan.showLastPlay, plan.compactWinChance, plan.tightGaps)
+
+    fun heightOf(p: Parts, showChart: Boolean, showLastPlay: Boolean, compactWinChance: Boolean = false, tightGaps: Boolean = false): Int {
         val cards = buildList {
             add(SCOREBOARD_DP + p.scorerLines * SCORER_LINE_DP)
             when (p.strip) { Strip.FOOTBALL -> add(FOOTBALL_STRIP_DP); Strip.SOCCER -> add(SOCCER_STRIP_DP)
                 Strip.BASKETBALL -> add(BASKETBALL_STRIP_DP); Strip.HOCKEY -> add(HOCKEY_STRIP_DP); Strip.NONE -> Unit }
             if (p.lastPlay && showLastPlay) add(LAST_PLAY_DP)
-            if (p.winChance) add(WIN_CHANCE_DP + if (p.chart && showChart) CHART_DP else 0)
+            if (p.winChance) add(if (compactWinChance) COMPACT_WIN_CHANCE_DP else WIN_CHANCE_DP + if (p.chart && showChart) CHART_DP else 0)
             if (p.source) add(SOURCE_DP)
         }
-        return cards.sum() + GAP_DP * (cards.size - 1).coerceAtLeast(0)
+        return cards.sum() + (if (tightGaps) TIGHT_GAP_DP else GAP_DP) * (cards.size - 1).coerceAtLeast(0)
     }
 
     fun plan(availableDp: Int, p: Parts): Plan {
@@ -172,6 +186,10 @@ object LeftColumnFit {
         var lastPlay = p.lastPlay
         if (heightOf(p, chart, lastPlay) > availableDp) chart = false
         if (heightOf(p, chart, lastPlay) > availableDp) lastPlay = false
-        return Plan(showChart = chart, showLastPlay = lastPlay)
+        var compact = false
+        var tight = false
+        if (heightOf(p, chart, lastPlay) > availableDp) compact = true
+        if (heightOf(p, chart, lastPlay, compact) > availableDp) tight = true
+        return Plan(showChart = chart, showLastPlay = lastPlay, compactWinChance = compact, tightGaps = tight)
     }
 }

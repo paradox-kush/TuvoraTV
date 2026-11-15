@@ -64,10 +64,10 @@ class GameScreenMarkersDTest {
         val plays = listOf(play(t0 + 40 * 30_000L, TimelineKind.GOAL, id = "old"), play(t0 + 41 * 30_000L, TimelineKind.GOAL, id = "new"), play(t0 + 80 * 30_000L, TimelineKind.GOAL, id = "far"))
         assertEquals(listOf("new", "far"), ChartMarkers.markers(h, plays, "Ice Hockey").map { it.playId })
     }
-    @Test fun `markers - matched on the full series then placed on the drawn 60 point one`() {
+    @Test fun `markers - matched on the full series then placed on the drawn 120 point one`() {
         val h = series(300) { 30 + it % 50 }
         val drawn = GameDetailUiPolicy.chartPoints(h)!!
-        assertEquals("drawn series is capped", 60, drawn.size)
+        assertEquals("drawn series is capped (spec 05: 120)", 120, drawn.size)
         val m = ChartMarkers.markers(h, listOf(play(t0 + 151 * 30_000L, TimelineKind.GOAL)), "Ice Hockey").single()
         val idx = Math.round(m.x * (drawn.size - 1))
         assertEquals("ON the drawn polyline", drawn[idx], m.y, 0.00001f)
@@ -104,7 +104,7 @@ class GameScreenMarkersDTest {
     @Test fun `dividers - starts become labelled x positions on the drawn series`() {
         val h = series(100)
         val d = ChartMarkers.dividers(h, listOf(play(t0 + 30 * 30_000L, TimelineKind.PERIOD_START, period = "2nd"), play(t0 + 60 * 30_000L, TimelineKind.PERIOD_START, period = "3rd")), "Ice Hockey")
-        assertEquals(listOf("P2", "P3"), d.map { it.second }); assertEquals(18f / 59f, d[0].first, 0.0001f)
+        assertEquals(listOf("P2", "P3"), d.map { it.second }); assertEquals(30f / 99f, d[0].first, 0.0001f)
     }
     @Test fun `dividers - a feed with only period ends marks the start of the next period`() {
         val d = ChartMarkers.dividers(series(100), listOf(play(t0 + 25 * 30_000L, TimelineKind.PERIOD_END, period = "1st Quarter"), play(t0 + 50 * 30_000L, TimelineKind.PERIOD_END, period = "2nd Quarter")), "Basketball")
@@ -113,7 +113,7 @@ class GameScreenMarkersDTest {
     @Test fun `dividers - a start wins over the previous end and overtime reads OT`() {
         val plays = listOf(play(t0 + 29 * 30_000L, TimelineKind.PERIOD_END, period = "1st"), play(t0 + 30 * 30_000L, TimelineKind.PERIOD_START, period = "2nd"), play(t0 + 70 * 30_000L, TimelineKind.PERIOD_END, period = "3rd"))
         val d = ChartMarkers.dividers(series(100), plays, "Ice Hockey")
-        assertEquals(listOf("P2", "OT"), d.map { it.second }); assertEquals(18f / 59f, d[0].first, 0.0001f)
+        assertEquals(listOf("P2", "OT"), d.map { it.second }); assertEquals(30f / 99f, d[0].first, 0.0001f)
     }
     @Test fun `dividers - soccer reads 45 and 90 and out-of-series or clockless boundaries are skipped`() {
         val h = series(100)

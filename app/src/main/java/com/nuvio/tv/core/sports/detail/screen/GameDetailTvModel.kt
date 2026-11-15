@@ -113,6 +113,10 @@ data class GameDetailTvModel(
     val shownBlocks: Set<BlockType>,
 ) {
     companion object {
+        /** Spec 02: ONE chip "Leaders | Lineups". A game with both shows Leaders; Lineups appears when there are no leaders (soccer). */
+        internal fun singleLeadersOrLineups(sections: List<GameSection>): List<GameSection> =
+            if (GameSection.LEADERS in sections && GameSection.LINEUPS in sections) sections - GameSection.LINEUPS else sections
+
         const val PLAYS = 12
         const val STATS = 3
         const val LEADERS = 3
@@ -184,7 +188,7 @@ data class GameDetailTvModel(
                 val a = away?.let { LineupPitchPolicy.positions(it.formation, it.players) }.orEmpty()
                 if (h.isEmpty() && a.isEmpty()) null else TvPitch(home?.formation, away?.formation, h, a)
             }
-            val sections = GameSectionsPolicy.sections(d).filter { it != GameSection.OVERVIEW && (it != GameSection.LINEUPS || pitch != null) }
+            val sections = singleLeadersOrLineups(GameSectionsPolicy.sections(d).filter { it != GameSection.OVERVIEW && (it != GameSection.LINEUPS || pitch != null) })
             val newest = GameMomentPolicy.newest(d)
             val lastPlay = newest?.let { n ->
                 TvLastPlay(n.time, condensePlay(n.text), sideTag(n.side, sides), n.side, n.kind)
