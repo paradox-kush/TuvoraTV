@@ -17,6 +17,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.collectLatest
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
@@ -96,4 +97,29 @@ internal fun BoxScope.NumberEntryReadout(state: NumberEntryState, count: Int, na
             .background(Color.Black.copy(alpha = 0.82f))
             .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm),
     )
+}
+
+/**
+ * Commits the typed number [NumberEntryPolicy.COMMIT_MS] after the last digit, and clears "No channel N" after the
+ * same wait.
+ */
+@Composable
+internal fun NumberEntryTimers(state: NumberEntryState, onCommit: () -> Unit) {
+    // Device pass 2, finding B: the effect outlives compositions, so it must call the CURRENT commit (which reads the
+    // list on screen now). It kept the first composition's, when the list was still empty: "9" said "No channel 9".
+    val latestCommit by androidx.compose.runtime.rememberUpdatedState(onCommit)
+    androidx.compose.runtime.LaunchedEffect(state) {
+        androidx.compose.runtime.snapshotFlow { state.tick }.collectLatest {
+            if (!state.active) return@collectLatest
+            kotlinx.coroutines.delay(NumberEntryPolicy.COMMIT_MS)
+            latestCommit()
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(state) {
+        androidx.compose.runtime.snapshotFlow { state.noMatch }.collectLatest {
+            if (it == null) return@collectLatest
+            kotlinx.coroutines.delay(NumberEntryPolicy.COMMIT_MS)
+            state.noMatch = null
+        }
+    }
 }

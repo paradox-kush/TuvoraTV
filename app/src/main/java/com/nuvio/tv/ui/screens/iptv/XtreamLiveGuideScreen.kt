@@ -717,20 +717,8 @@ fun LiveGuide(
             else -> return false
         }
     }
-    LaunchedEffect(numberEntry) {
-        androidx.compose.runtime.snapshotFlow { numberEntry.tick }.collectLatest {
-            if (!numberEntry.active) return@collectLatest
-            delay(NumberEntryPolicy.COMMIT_MS)
-            commitNumber()
-        }
-    }
-    LaunchedEffect(numberEntry) {
-        androidx.compose.runtime.snapshotFlow { numberEntry.noMatch }.collectLatest {
-            if (it == null) return@collectLatest
-            delay(NumberEntryPolicy.COMMIT_MS)
-            numberEntry.noMatch = null
-        }
-    }
+    // Device pass 2, finding B: the timed commit calls the current commitNumber (the list on screen now).
+    NumberEntryTimers(numberEntry) { commitNumber() }
     LaunchedEffect(fullscreen) { numberEntry.cancel() }
 
     fun hideControls() {
