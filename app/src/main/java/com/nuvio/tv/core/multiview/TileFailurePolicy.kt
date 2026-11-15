@@ -20,21 +20,72 @@ internal sealed interface TileSignal {
 
     /** The player reported a problem with no cause that maps to the others, or a tile could not be set up. */
     data object Unknown : TileSignal
+
+    /** Channel selection said the channel is not one of the profile's playlist channels (key unknown or gone). */
+    data object ChannelUnavailable : TileSignal
 }
 
-internal enum class TileAction { RETRY, REMOVE, REPLACE }
+/** What the viewer can do about a failed tile. */
+internal enum class TileAction { RETRY, REPLACE, OPEN_IN_PLAYER, REMOVE }
 
-internal enum class TileFailure(val text: String, val actions: List<TileAction>) {
-    ProviderRefused("The provider refused this stream, maybe a connection limit.", listOf(TileAction.RETRY)),
-    DecoderUnavailable("This device ran out of video decoders for this one.", listOf(TileAction.RETRY, TileAction.REMOVE)),
-    NoData("The stream stopped sending data.", listOf(TileAction.RETRY)),
-    Unsupported("This device can't play this stream's format.", listOf(TileAction.REMOVE)),
-    Network("Couldn't reach the provider.", listOf(TileAction.RETRY)),
+/**
+ * A typed tile failure. [shortTitle] is what fits on a small tile; [text] is the fact (kept exactly). [actions] is the
+ * failed tile's menu in order, and its first entry is the [primary] action: what OK on the tile does.
+ */
+internal enum class TileFailure(val shortTitle: String, val text: String, val actions: List<TileAction>) {
+    ProviderRefused(
+        "The provider said no",
+        "The provider refused this stream, maybe a connection limit.",
+        listOf(TileAction.RETRY, TileAction.REPLACE, TileAction.OPEN_IN_PLAYER, TileAction.REMOVE),
+    ),
+    DecoderUnavailable(
+        "Out of video decoders",
+        "This device ran out of video decoders for this one.",
+        listOf(TileAction.RETRY, TileAction.REPLACE, TileAction.OPEN_IN_PLAYER, TileAction.REMOVE),
+    ),
+    NoData(
+        "No data",
+        "The stream stopped sending data.",
+        listOf(TileAction.RETRY, TileAction.REPLACE, TileAction.OPEN_IN_PLAYER, TileAction.REMOVE),
+    ),
+    /** Tile mode is Media3 only; the full player has one more engine to try, so it is this failure's main action. */
+    Unsupported(
+        "Can't play this format here",
+        "This device can't play this stream's format.",
+        listOf(TileAction.OPEN_IN_PLAYER, TileAction.REPLACE, TileAction.REMOVE),
+    ),
+    Network(
+        "Can't reach the provider",
+        "Couldn't reach the provider.",
+        listOf(TileAction.RETRY, TileAction.REPLACE, TileAction.OPEN_IN_PLAYER, TileAction.REMOVE),
+    ),
 
     /** The provider answered 404 or 410: it was reached and says the stream is not there. Retrying the same link won't help. */
-    StreamGone("The provider says this stream doesn't exist.", listOf(TileAction.REPLACE, TileAction.REMOVE)),
+    StreamGone(
+        "Channel not found",
+        "The provider says this stream doesn't exist.",
+        listOf(TileAction.REPLACE, TileAction.REMOVE),
+    ),
+
+    /**
+     * The channel key does not resolve to a channel the profile's playlists contain (channel selection said
+     * UNAVAILABLE). A fact about the playlist, not the stream: the provider was never asked, so nothing here retries.
+     */
+    ChannelUnavailable(
+        "Not in your playlist anymore",
+        "This channel is no longer in the playlist.",
+        listOf(TileAction.REPLACE, TileAction.REMOVE),
+    ),
+
     /** Honest catch-all: the cause is not one of the above. Never presented as a decoder problem. */
-    Other("Something went wrong opening this stream.", listOf(TileAction.RETRY, TileAction.REMOVE)),
+    Other(
+        "Couldn't open this one",
+        "Something went wrong opening this stream.",
+        listOf(TileAction.RETRY, TileAction.REPLACE, TileAction.OPEN_IN_PLAYER, TileAction.REMOVE),
+    );
+
+    /** What OK on the failed tile runs. */
+    val primary: TileAction get() = actions.first()
 }
 
 internal object TileFailurePolicy {
@@ -67,6 +118,7 @@ internal object TileFailurePolicy {
         TileSignal.Network -> TileFailure.Network
         TileSignal.UnsupportedFormat -> TileFailure.Unsupported
         TileSignal.Unknown -> TileFailure.Other
+        TileSignal.ChannelUnavailable -> TileFailure.ChannelUnavailable
     }
 
     /**
@@ -75,9 +127,12 @@ internal object TileFailurePolicy {
      * cannot play will not play on the second go either. Those go straight to a backup channel, then to Failed.
      */
     fun autoRetryAllowed(failure: TileFailure): Boolean = when (failure) {
-        TileFailure.ProviderRefused, TileFailure.StreamGone, TileFailure.Unsupported -> false
+        TileFailure.ProviderRefused, TileFailure.StreamGone, TileFailure.ChannelUnavailable, TileFailure.Unsupported -> false
         else -> true
     }
+
+    /** A backup channel is only worth finding for a stream that failed; a channel missing from the playlist has none. */
+    fun backupAllowed(failure: TileFailure): Boolean = failure != TileFailure.ChannelUnavailable
 
     /** Whether this failure is evidence for the "decoders this device can run at once" ledger. */
     fun countsTowardDecoderCeiling(failure: TileFailure): Boolean = failure == TileFailure.DecoderUnavailable

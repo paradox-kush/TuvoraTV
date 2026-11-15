@@ -89,7 +89,7 @@ internal fun testTarget(id: String = "a", sourceType: ProviderSourceType = Provi
 internal fun targetResult(id: String = "a", sourceType: ProviderSourceType = ProviderSourceType.XTREAM): LiveInitialResult =
     LiveInitialResult.Target(testTarget(id, sourceType))
 
-internal fun rejectedResult(): LiveInitialResult = LiveInitialResult.Rejected(LiveInitialFailure.UNAVAILABLE)
+internal fun rejectedResult(reason: LiveInitialFailure = LiveInitialFailure.UNAVAILABLE): LiveInitialResult = LiveInitialResult.Rejected(reason)
 
 /** A host that does nothing but record what it was asked and let a test drive its snapshot. */
 internal class FakeLiveHost : CleanLiveHost {

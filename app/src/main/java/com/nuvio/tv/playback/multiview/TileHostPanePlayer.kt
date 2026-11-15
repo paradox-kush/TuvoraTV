@@ -153,8 +153,13 @@ internal class TileHostPanePlayer(
             // The stall window starts when this tile is admitted, not while it queues behind another.
             observe(TilePhase.WAITING, 0, null)
             val target = when (val selected = select(channel)) {
+                null -> return fail(TileFailure.Other)
                 is LiveInitialResult.Target -> selected.target
-                is LiveInitialResult.Rejected -> return fail(TileFailure.Other)
+                is LiveInitialResult.Rejected -> {
+                    // Enum names and class names only: never a host, URL, key or message.
+                    android.util.Log.w(LOG_TAG, "open rejected: ${selected.reason}")
+                    return fail(TilePlaybackMapper.rejectionFailure(selected.reason))
+                }
             }
             sourceType = target.selection.sourceType.name.lowercase()
             metadata = CleanMediaSessionMetadata.fromIngress(target.mediaFingerprint, target.title)
@@ -162,7 +167,8 @@ internal class TileHostPanePlayer(
                 createHost()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                android.util.Log.w(LOG_TAG, "host creation failed: ${e.javaClass.simpleName}")
                 return fail(TileFailure.Other)
             }
             host = created
@@ -175,7 +181,8 @@ internal class TileHostPanePlayer(
                 live.tune(target.selection, sessionProfile, metadata)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                android.util.Log.w(LOG_TAG, "tune failed: ${e.javaClass.simpleName}")
                 return fail(TileFailure.Other)
             }
             // Park: the host lives as long as this tile. Cancellation (release) ends the wait.
@@ -189,12 +196,14 @@ internal class TileHostPanePlayer(
         }
     }
 
-    private suspend fun select(channel: TileChannel): LiveInitialResult = try {
+    /** Null when the selection itself threw: that says nothing about the playlist, so it is not "unavailable". */
+    private suspend fun select(channel: TileChannel): LiveInitialResult? = try {
         channelSelection.select(LiveInitialRequest(channel.contentId, profileId))
     } catch (cancelled: CancellationException) {
         throw cancelled
-    } catch (_: Exception) {
-        LiveInitialResult.Rejected(com.nuvio.tv.playback.live.LiveInitialFailure.UNAVAILABLE)
+    } catch (e: Exception) {
+        android.util.Log.w(LOG_TAG, "selection failed: ${e.javaClass.simpleName}")
+        null
     }
 
     /** A failure before any snapshot exists (selection, host creation, tune call). */
@@ -289,6 +298,7 @@ internal class TileHostPanePlayer(
     }
 
     private companion object {
+        const val LOG_TAG = "TileHost"
         val ACTIVE = setOf(PlaybackState.PLAYING, PlaybackState.DEGRADED)
     }
 }

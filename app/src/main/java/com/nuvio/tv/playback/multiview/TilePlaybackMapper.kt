@@ -10,6 +10,7 @@ import com.nuvio.tv.playback.core.GraphRejectionReason
 import com.nuvio.tv.playback.core.PlaybackFailure
 import com.nuvio.tv.playback.core.PlaybackSnapshot
 import com.nuvio.tv.playback.core.PlaybackState
+import com.nuvio.tv.playback.live.LiveInitialFailure
 
 /**
  * The host's snapshot, read as a multiview tile sees it. Pure: no engine, no Android. Failures are
@@ -18,6 +19,17 @@ import com.nuvio.tv.playback.core.PlaybackState
  */
 internal object TilePlaybackMapper {
     private val carriesPicture = setOf(PlaybackState.PLAYING, PlaybackState.DEGRADED)
+
+    /**
+     * What a refused channel selection means for the tile. UNAVAILABLE is the one fact the viewer can act on: the key
+     * does not resolve to a channel in the profile's playlists. PROFILE_CHANGED (the session's profile is no longer the
+     * one this tile was bound to) and INVALID_TARGET (the channel resolved to something unplayable) say nothing about
+     * the playlist, so they stay the honest catch-all rather than claim "not in your playlist".
+     */
+    fun rejectionFailure(reason: LiveInitialFailure): TileFailure = when (reason) {
+        LiveInitialFailure.UNAVAILABLE -> TileFailurePolicy.classify(TileSignal.ChannelUnavailable)
+        LiveInitialFailure.PROFILE_CHANGED, LiveInitialFailure.INVALID_TARGET -> TileFailurePolicy.classify(TileSignal.Unknown)
+    }
 
     fun phaseOf(snapshot: PlaybackSnapshot): TilePhase = when (snapshot.state) {
         PlaybackState.FAILED -> TilePhase.FAILED

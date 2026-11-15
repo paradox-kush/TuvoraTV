@@ -66,12 +66,54 @@ class TileFailurePolicyTest {
     fun `unknown signal is the generic failure with plain text and retry`() {
         assertEquals(TileFailure.Other, c(TileSignal.Unknown))
         assertEquals("Something went wrong opening this stream.", TileFailure.Other.text)
-        assertEquals(listOf(TileAction.RETRY, TileAction.REMOVE), TileFailure.Other.actions)
+        assertEquals(
+            listOf(TileAction.RETRY, TileAction.REPLACE, TileAction.OPEN_IN_PLAYER, TileAction.REMOVE),
+            TileFailure.Other.actions,
+        )
+    }
+
+    @Test
+    fun `a channel missing from the playlist is its own failure with replace as the main action`() {
+        assertEquals(TileFailure.ChannelUnavailable, c(TileSignal.ChannelUnavailable))
+        assertEquals("This channel is no longer in the playlist.", TileFailure.ChannelUnavailable.text)
+        assertEquals("Not in your playlist anymore", TileFailure.ChannelUnavailable.shortTitle)
+        assertEquals(listOf(TileAction.REPLACE, TileAction.REMOVE), TileFailure.ChannelUnavailable.actions)
+        assertEquals("main action", TileAction.REPLACE, TileFailure.ChannelUnavailable.primary)
+        assertFalse("never retried on a timer", TileFailurePolicy.autoRetryAllowed(TileFailure.ChannelUnavailable))
+        assertFalse("no backup channel", TileFailurePolicy.backupAllowed(TileFailure.ChannelUnavailable))
+        assertFalse("not decoder evidence", TileFailurePolicy.countsTowardDecoderCeiling(TileFailure.ChannelUnavailable))
+        TileFailure.entries.filter { it != TileFailure.ChannelUnavailable }
+            .forEach { assertTrue("$it may have a backup", TileFailurePolicy.backupAllowed(it)) }
+    }
+
+    @Test
+    fun `OK on a failed tile runs the main action for that failure`() {
+        assertEquals(TileAction.RETRY, TileFailure.ProviderRefused.primary)
+        assertEquals(TileAction.RETRY, TileFailure.NoData.primary)
+        assertEquals(TileAction.RETRY, TileFailure.Network.primary)
+        assertEquals(TileAction.RETRY, TileFailure.DecoderUnavailable.primary)
+        assertEquals(TileAction.RETRY, TileFailure.Other.primary)
+        assertEquals("the full player has one more engine", TileAction.OPEN_IN_PLAYER, TileFailure.Unsupported.primary)
+        assertEquals(TileAction.REPLACE, TileFailure.StreamGone.primary)
+    }
+
+    @Test
+    fun `retry only appears where the same link can work and removal is always last`() {
+        listOf(TileFailure.StreamGone, TileFailure.ChannelUnavailable, TileFailure.Unsupported)
+            .forEach { assertFalse("$it", TileAction.RETRY in it.actions) }
+        listOf(TileFailure.StreamGone, TileFailure.ChannelUnavailable)
+            .forEach { assertFalse("$it: the stream is not there, so the full player cannot help", TileAction.OPEN_IN_PLAYER in it.actions) }
+        TileFailure.entries.forEach { assertEquals("$it", TileAction.REMOVE, it.actions.last()) }
+    }
+
+    @Test
+    fun `every failure has a short title for small tiles`() {
+        TileFailure.entries.forEach { assertTrue("$it", it.shortTitle.isNotBlank() && it.shortTitle.length < it.text.length) }
     }
 
     @Test
     fun `refused gone and unplayable are never retried automatically but others may be`() {
-        listOf(TileFailure.ProviderRefused, TileFailure.StreamGone, TileFailure.Unsupported)
+        listOf(TileFailure.ProviderRefused, TileFailure.StreamGone, TileFailure.ChannelUnavailable, TileFailure.Unsupported)
             .forEach { assertFalse("$it", TileFailurePolicy.autoRetryAllowed(it)) }
         listOf(TileFailure.DecoderUnavailable, TileFailure.NoData, TileFailure.Network, TileFailure.Other)
             .forEach { assertTrue("$it", TileFailurePolicy.autoRetryAllowed(it)) }
@@ -80,15 +122,19 @@ class TileFailurePolicyTest {
     @Test
     fun `text and actions follow the design table`() {
         assertEquals("The provider refused this stream, maybe a connection limit.", TileFailure.ProviderRefused.text)
-        assertEquals(listOf(TileAction.RETRY), TileFailure.ProviderRefused.actions)
+        val retryFirst = listOf(TileAction.RETRY, TileAction.REPLACE, TileAction.OPEN_IN_PLAYER, TileAction.REMOVE)
+        assertEquals(retryFirst, TileFailure.ProviderRefused.actions)
         assertEquals("This device ran out of video decoders for this one.", TileFailure.DecoderUnavailable.text)
-        assertEquals(listOf(TileAction.RETRY, TileAction.REMOVE), TileFailure.DecoderUnavailable.actions)
+        assertEquals(retryFirst, TileFailure.DecoderUnavailable.actions)
         assertEquals("The stream stopped sending data.", TileFailure.NoData.text)
-        assertEquals(listOf(TileAction.RETRY), TileFailure.NoData.actions)
+        assertEquals(retryFirst, TileFailure.NoData.actions)
         assertEquals("This device can't play this stream's format.", TileFailure.Unsupported.text)
-        assertEquals(listOf(TileAction.REMOVE), TileFailure.Unsupported.actions)
+        assertEquals(
+            listOf(TileAction.OPEN_IN_PLAYER, TileAction.REPLACE, TileAction.REMOVE),
+            TileFailure.Unsupported.actions,
+        )
         assertEquals("Couldn't reach the provider.", TileFailure.Network.text)
-        assertEquals(listOf(TileAction.RETRY), TileFailure.Network.actions)
+        assertEquals(retryFirst, TileFailure.Network.actions)
     }
 
     @Test

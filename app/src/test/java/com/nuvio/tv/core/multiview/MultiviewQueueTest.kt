@@ -42,4 +42,14 @@ class MultiviewQueueTest {
     fun `max is four`() {
         assertEquals(4, MultiviewQueue.MAX)
     }
+
+    @Test
+    fun `a content id shaped like the guide's live channel id is accepted and handed over unchanged`() {
+        // Playlist ids hold ':' and '|'; the game screen will add channels the same way later.
+        val id = com.nuvio.tv.core.iptv.XtreamItemRegistry.liveId("http://host.example:8080|someone", 4242)
+        val q = MultiviewQueue()
+        assertEquals(QueueResult.Added(1), q.add(id))
+        assertEquals(QueueResult.AlreadyQueued(1), q.add(id))
+        assertEquals(listOf(id), q.take())
+    }
 }

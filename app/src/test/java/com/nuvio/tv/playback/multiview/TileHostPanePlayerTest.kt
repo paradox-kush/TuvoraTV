@@ -8,6 +8,7 @@ import com.nuvio.tv.playback.core.PlaybackProgressEvidence
 import com.nuvio.tv.playback.core.PlaybackState
 import com.nuvio.tv.playback.core.ProviderSourceType
 import com.nuvio.tv.playback.core.SessionProfile
+import com.nuvio.tv.playback.live.LiveInitialFailure
 import com.nuvio.tv.playback.live.LiveChannelSelectionPort
 import com.nuvio.tv.playback.live.LiveInitialResult
 import kotlinx.coroutines.CompletableDeferred
@@ -251,12 +252,30 @@ class TileHostPanePlayerTest {
     }
 
     @Test
-    fun `a failed channel resolution is a generic failure and no host is built`() = runTest {
+    fun `a channel that is not in the playlist is its own failure and no host is built`() = runTest {
         val r = rig(selection = { rejectedResult() })
+        r.open()
+        assertEquals(TileFailure.ChannelUnavailable, r.player.playback.failure)
+        assertEquals(0, r.hostsCreated)
+        assertEquals(1, r.bounds.reports.size)
+    }
+
+    @Test
+    fun `a profile change or an invalid target says nothing about the playlist`() = runTest {
+        for (reason in listOf(LiveInitialFailure.PROFILE_CHANGED, LiveInitialFailure.INVALID_TARGET)) {
+            val r = rig(selection = { rejectedResult(reason) })
+            r.open()
+            assertEquals("$reason", TileFailure.Other, r.player.playback.failure)
+            assertEquals("$reason", 0, r.hostsCreated)
+        }
+    }
+
+    @Test
+    fun `a selection that throws is a generic failure and never claims the channel is missing`() = runTest {
+        val r = rig(selection = { error("storage is busy") })
         r.open()
         assertEquals(TileFailure.Other, r.player.playback.failure)
         assertEquals(0, r.hostsCreated)
-        assertEquals(1, r.bounds.reports.size)
     }
 
     @Test
