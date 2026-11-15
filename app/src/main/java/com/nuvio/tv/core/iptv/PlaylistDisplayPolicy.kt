@@ -29,6 +29,19 @@ object PlaylistDisplayPolicy {
         return if (wholeAddress) hostOnly(trimmed) ?: maskedUrl(trimmed) else LogRedaction.text(name)
     }
 
+    /**
+     * The name to LABEL a playlist with where it is chosen (the hub's chooser, Multiview's channel picker), or null when
+     * it has none worth showing: blank, an address, or just a host or IP. The caller then reads "Playlist N" (its
+     * position), so a chooser never prints a bare `10.0.2.2` as a name.
+     */
+    fun labelOrNull(name: String): String? {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || "://" in trimmed) return null
+        val hostLike = trimmed.none { it.isWhitespace() } && trimmed.contains('.') &&
+            trimmed.all { it.isLetterOrDigit() || it == '.' || it == '-' || it == ':' }
+        return if (hostLike) null else displayName(trimmed)
+    }
+
     /** P4/T7: the name a synced row WITHOUT one gets — its host, never a login. */
     fun fallbackName(address: String): String = hostOnly(address.trim()) ?: maskedUrl(address)
 
