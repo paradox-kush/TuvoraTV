@@ -282,9 +282,13 @@ fun LiveGuide(
     var pendingFirstRowFocus by remember(account.id) { mutableStateOf(false) }
     LaunchedEffect(pendingFirstRowFocus, displayChannels) {
         if (!pendingFirstRowFocus || displayChannels.isEmpty()) return@LaunchedEffect
-        pendingFirstRowFocus = false
         channelListState.scrollToItem(0)
-        if (!GuideFocusRequestLoop.requestUntilLanded { firstChannelFocus.requestFocusOrFalse() }) channelListFocus.requestFocusOrFalse()
+        // Same race as the entry landing: retire the intent (a key of this effect) only after the ask.
+        GuidePendingFocusLanding.land(
+            request = { firstChannelFocus.requestFocusOrFalse() },
+            fallback = { channelListFocus.requestFocusOrFalse() },
+            retire = { pendingFirstRowFocus = false },
+        )
     }
 
     // B4: OK / RIGHT on a group lands on the row that group was left on (else row 1) once its list is in. Any key
@@ -314,14 +318,16 @@ fun LiveGuide(
             ?: return@LaunchedEffect
         val index = displayChannels.indexOfFirst { it.contentId == target }
         val entityId = displayChannels.getOrNull(index)?.entityId ?: return@LaunchedEffect
-        onEntryFocusConsumed()
         // A4: only with the viewer's opt-in does opening the guide tune (it spends a single-use link per visit).
         if (target in recentIds && displayPreferences.resumeOnOpen.first()) resumeEntryTarget = target
         channelListState.scrollToItem((index - 2).coerceAtLeast(0))
-        val landed = GuideFocusRequestLoop.requestUntilLanded {
-            channelRowRequesters[entityId]?.requestFocusOrFalse() == true
-        }
-        if (!landed) channelListFocus.requestFocusOrFalse()
+        // Device pass 1, finding 1: the pending flag is a key of this effect, so it is retired only AFTER the
+        // ask (retiring it first cancelled this effect before the just-composed row could take focus).
+        GuidePendingFocusLanding.land(
+            request = { channelRowRequesters[entityId]?.requestFocusOrFalse() == true },
+            fallback = { channelListFocus.requestFocusOrFalse() },
+            retire = onEntryFocusConsumed,
+        )
     }
 
     // UX331: one verdict per group, not one sentence per row. Only rows whose guide has been asked count.
