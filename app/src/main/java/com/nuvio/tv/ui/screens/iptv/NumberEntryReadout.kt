@@ -72,10 +72,18 @@ internal fun androidx.compose.ui.input.key.Key.remoteDigit(): Int? = when (this)
  * lone 0, or "No channel 99". Not focusable. [nameAt] names the row a number lands on.
  */
 @Composable
-internal fun BoxScope.NumberEntryReadout(state: NumberEntryState, count: Int, nameAt: (Int) -> String?) {
+internal fun BoxScope.NumberEntryReadout(
+    state: NumberEntryState,
+    count: Int,
+    /** D2: the row "0" goes back to (NumberEntryPolicy.previousTarget), or null when there is none. */
+    previousIndex: () -> Int? = { null },
+    nameAt: (Int) -> String?,
+) {
     val text = when {
         state.active && NumberEntryPolicy.isPreviousChannel(state.buffer) ->
-            stringResource(R.string.iptv_number_previous)
+            previousIndex()?.let { index ->
+                stringResource(R.string.iptv_number_previous_named, (index + 1).toString(), nameAt(index).orEmpty())
+            } ?: stringResource(R.string.iptv_number_previous)
         state.active -> NumberEntryPolicy.match(state.buffer, count)?.let { index ->
             stringResource(R.string.iptv_number_match, (index + 1).toString(), nameAt(index).orEmpty())
         } ?: stringResource(R.string.iptv_number_no_match, state.buffer)

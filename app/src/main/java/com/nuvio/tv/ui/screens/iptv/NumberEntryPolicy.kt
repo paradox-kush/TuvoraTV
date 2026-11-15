@@ -36,4 +36,8 @@ internal object NumberEntryPolicy {
         val step = visibleRows.coerceAtLeast(1)
         return (if (down) current + step else current - step).coerceIn(0, count - 1)
     }
+
+    /** Device pass 2, D2: the row "0" goes back to, so the readout can name it ("Back to 12 · Name"); null = none. */
+    fun previousTarget(targetId: String?, rowIds: List<String>): Int? =
+        targetId?.let { rowIds.indexOf(it) }?.takeIf { it >= 0 }
 }

@@ -1393,7 +1393,16 @@ fun LiveGuide(
             }
         }
 
-        NumberEntryReadout(numberEntry, displayChannels.size) { displayChannels.getOrNull(it)?.name }
+        NumberEntryReadout(
+            numberEntry,
+            displayChannels.size,
+            previousIndex = {
+                NumberEntryPolicy.previousTarget(
+                    zapBack.target(viewModel.zapLineup().map { it.contentId }),
+                    displayChannels.map { it.contentId },
+                )
+            },
+        ) { displayChannels.getOrNull(it)?.name }
 
         // START_OVER is the only state with two destinations, so it is the only one that asks.
         val sheet = sheetProgramme
