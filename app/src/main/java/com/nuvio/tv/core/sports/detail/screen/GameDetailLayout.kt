@@ -59,3 +59,66 @@ object WatchCopy {
         WatchStatus.NO_PROVIDER -> "Add an IPTV playlist to watch this game"
     }
 }
+
+/**
+ * How many rows the right-column section panel can show (TV canvas is a fixed 960 x 540 dp, no scroll, nothing hard-clipped).
+ * The spec caps (Plays 9, Stats 6 + by-period, Leaders 4 + form, Standings 7; with a channel preview 4 / 3 / 2 / 3) are the MOST a
+ * panel shows; [rows] shrinks them to what the measured height really holds, so a short panel drops rows instead of clipping one.
+ */
+object PanelFit {
+    /** The right column's height (540 - 28 top - 40 bottom). */
+    const val COLUMN_DP = 472
+    const val GAP_DP = 12
+    const val PREVIEW_DP = 160
+    const val CHIPS_DP = 40
+    const val CARD_PADDING_DP = 20
+    const val TITLE_DP = 25
+
+    const val ROW_PLAYS_DP = 40
+    const val ROW_STATS_DP = 34
+    const val ROW_LEADERS_DP = 36
+    const val ROW_STANDINGS_DP = 30
+    const val STANDINGS_HEADER_DP = 22
+    const val BY_PERIOD_EXTRA_DP = 100
+    const val FORM_EXTRA_DP = 100
+
+    data class Panel(val rows: Int, val extra: Boolean)
+
+    /** Height the panel card gets in the right column. */
+    fun panelHeightDp(hasPreview: Boolean): Int =
+        COLUMN_DP - CHIPS_DP - GAP_DP - (if (hasPreview) PREVIEW_DP + GAP_DP else 0)
+
+    fun cap(section: GameSection, hasPreview: Boolean): Int = when (section) {
+        GameSection.PLAYS -> if (hasPreview) 4 else 9
+        GameSection.STATS -> if (hasPreview) 3 else 6
+        GameSection.LEADERS -> if (hasPreview) 2 else 4
+        GameSection.STANDINGS -> if (hasPreview) 3 else 7
+        GameSection.LINEUPS -> if (hasPreview) 4 else 9
+        GameSection.OVERVIEW -> 0
+    }
+
+    private fun rowDp(section: GameSection) = when (section) {
+        GameSection.PLAYS, GameSection.LINEUPS -> ROW_PLAYS_DP
+        GameSection.STATS -> ROW_STATS_DP
+        GameSection.LEADERS -> ROW_LEADERS_DP
+        GameSection.STANDINGS -> ROW_STANDINGS_DP
+        GameSection.OVERVIEW -> Int.MAX_VALUE
+    }
+
+    private fun overheadDp(section: GameSection) =
+        CARD_PADDING_DP + TITLE_DP + (if (section == GameSection.STANDINGS) STANDINGS_HEADER_DP else 0)
+
+    /** Rows for [section] in [availableDp] (>= 0, never above the spec cap, never more than [available] rows exist). */
+    fun rows(section: GameSection, availableDp: Int, hasPreview: Boolean, available: Int = Int.MAX_VALUE): Int {
+        val fit = ((availableDp - overheadDp(section)) / rowDp(section)).coerceAtLeast(0)
+        return minOf(cap(section, hasPreview), fit, available)
+    }
+
+    /** The panel of [section] for the measured height: row count plus whether the extra compartment (by-period under Stats, form under Leaders) fits. */
+    fun fit(section: GameSection, availableDp: Int, hasPreview: Boolean, available: Int = Int.MAX_VALUE, hasExtra: Boolean = false): Panel {
+        val n = rows(section, availableDp, hasPreview, available)
+        val extraDp = when (section) { GameSection.STATS -> BY_PERIOD_EXTRA_DP; GameSection.LEADERS -> FORM_EXTRA_DP; else -> Int.MAX_VALUE }
+        val used = overheadDp(section) + n * rowDp(section)
+        return Panel(n, hasExtra && !hasPreview && availableDp - used >= extraDp)
+    }
+}

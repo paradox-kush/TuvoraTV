@@ -22,6 +22,8 @@ class GameDetailPoller(
     private val config: GameDetailRefreshPolicy.Config,
     private val clock: () -> Long,
     private val delayFn: suspend (Long) -> Unit = { delay(it) },
+    /** Soccer publishes lineups before kick-off: an upcoming game then refreshes its summary on the slow cadence. */
+    private val wantsUpcomingSummary: Boolean = false,
 ) {
     @Volatile private var state = initialState
     @Volatile private var lastEvent: Long? = null
@@ -34,7 +36,7 @@ class GameDetailPoller(
     suspend fun run(onLoad: (DetailLoad) -> Unit) {
         if (!loadedOnce) tick(fetchEvent = true, fetchSummary = true, onLoad)
         while (true) {
-            val p = GameDetailRefreshPolicy.plan(state, startsAtMs, clock(), lastEvent, lastSummary, failures, config)
+            val p = GameDetailRefreshPolicy.plan(state, startsAtMs, clock(), lastEvent, lastSummary, failures, config, wantsUpcomingSummary = wantsUpcomingSummary)
             if (p.fetchEvent || p.fetchSummary) {
                 tick(p.fetchEvent, p.fetchSummary, onLoad)
                 continue

@@ -78,6 +78,8 @@ data class SportsMapping(
     val common: JsonObject,
     val profiles: Map<String, SportProfile>,
     val extra: JsonObject,
+    /** `sources.espn.event`: the single-event scoreboard URL (`{path}`, `{id}`); null = old mapping, live ticks use today's flow. */
+    val espnEventUrl: String? = null,
 ) {
     fun leagueFor(tsdbId: String?): LeagueMapping? = leagues.firstOrNull { it.tsdbId == tsdbId }
     fun profile(name: String?): SportProfile? = name?.let { profiles[it] }
@@ -188,6 +190,7 @@ object SportsMappingParser {
                     (v as? JsonObject)?.let { o -> name to SportProfile(name, (o["blocks"] as? JsonArray)?.mapNotNull { str(it) }.orEmpty(), o) }
                 }.toMap(),
                 extra = JsonObject(root.filterKeys { it !in known }),
+                espnEventUrl = str(espn?.get("event")),
             ),
         )
     } catch (e: Exception) {

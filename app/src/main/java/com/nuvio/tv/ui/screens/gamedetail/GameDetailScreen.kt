@@ -58,6 +58,10 @@ import com.nuvio.tv.core.sports.detail.screen.FocusKey
 import com.nuvio.tv.core.sports.detail.screen.WatchCopy
 import com.nuvio.tv.core.sports.detail.screen.GameDetailFocus
 import com.nuvio.tv.core.sports.detail.screen.GameDetailTvModel
+import com.nuvio.tv.core.sports.detail.screen.FocusDir
+import com.nuvio.tv.core.sports.detail.screen.GameSection
+import com.nuvio.tv.core.sports.detail.screen.MomentBatch
+import com.nuvio.tv.core.sports.detail.screen.PanelFit
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiState
 import com.nuvio.tv.core.sports.detail.screen.PreviewFailure
 import com.nuvio.tv.core.sports.detail.screen.PreviewResolver
@@ -105,6 +109,7 @@ fun GameDetailScreen(
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val watch by viewModel.watch.collectAsStateWithLifecycle()
     val preview by viewModel.preview.collectAsStateWithLifecycle()
+    val moments by viewModel.moments.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -193,11 +198,17 @@ fun GameDetailScreen(
     var focusedKey by remember { mutableStateOf<FocusKey?>(null) }
     var userMoved by remember { mutableStateOf(false) }
     var autoFocusing by remember { mutableStateOf(false) }
+    var selectedSection by remember { mutableStateOf<GameSection?>(null) }
     val onFocused: (FocusKey) -> Unit = { key ->
         if (!autoFocusing) userMoved = true
         focusedKey = key
+        key.section?.let { selectedSection = it } // focusing a chip selects it
     }
-    val controls = GameDetailFocus.controls(ui, watch, preview)
+    // The right column's section chips: one stable key per section, so focus survives a refresh by id (GameDetailFocus.repair).
+    val loadedModel = (ui as? GameDetailUiState.Loaded)?.let { GameDetailTvModel.from(it.detail, RadarTime.nowMs()) }
+    val chipSections = loadedModel?.takeIf { it.state != com.nuvio.tv.core.sports.detail.GameState.UPCOMING }?.sections.orEmpty()
+    val shownSection = selectedSection?.takeIf { it in chipSections } ?: chipSections.firstOrNull()
+    val controls = GameDetailFocus.controls(ui, watch, preview, chipSections)
     // The primary action usually appears after the channel match finished, when Channels already holds focus:
     // until the viewer moves focus themselves, Play/Switch takes it the moment it exists.
     LaunchedEffect(controls) {
@@ -216,24 +227,44 @@ fun GameDetailScreen(
     }
 
     Box(
-        Modifier.fillMaxSize().background(NuvioTheme.colors.Background).padding(start = 48.dp, end = 40.dp, top = 28.dp, bottom = 40.dp),
+        Modifier.fillMaxSize().background(NuvioTheme.colors.Background).padding(start = 48.dp, end = 40.dp, top = 28.dp, bottom = 40.dp)
+            .onPreviewKeyEvent { e ->
+                // D-pad over PRIMARY, CHANNELS and the chips (GameDetailFocus.move). Back is not handled here: it leaves the screen.
+                val dir = when (e.key) {
+                    androidx.compose.ui.input.key.Key.DirectionLeft -> FocusDir.LEFT
+                    androidx.compose.ui.input.key.Key.DirectionRight -> FocusDir.RIGHT
+                    androidx.compose.ui.input.key.Key.DirectionUp -> FocusDir.UP
+                    androidx.compose.ui.input.key.Key.DirectionDown -> FocusDir.DOWN
+                    else -> null
+                }
+                val from = focusedKey
+                if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown || dir == null || from == null || chipSections.isEmpty()) false
+                else {
+                    val to = GameDetailFocus.move(from, dir, controls, shownSection?.let { FocusKey.of(it) })
+                    if (to != null) { runCatching { requesters.getValue(to).requestFocus() }; true } else false
+                }
+            },
     ) {
         when (val s = ui) {
             is GameDetailUiState.Loading -> LoadingSkeleton()
             GameDetailUiState.NoData -> CenterMessage("Opening channels…")
             is GameDetailUiState.Failed -> FailedPane(s.timedOut, requesters.getValue(FocusKey.RETRY), { onFocused(FocusKey.RETRY) }, viewModel::retry)
             is GameDetailUiState.Loaded -> {
-                val model = GameDetailTvModel.from(s.detail, RadarTime.nowMs())
+                val model = loadedModel ?: GameDetailTvModel.from(s.detail, RadarTime.nowMs())
+                val colors = rememberTeamColors(model.sides)
+                val sectioned = chipSections.isNotEmpty()
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Column(Modifier.weight(if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING && model.form == null) 1f else 1.12f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        ScoreboardCard(model, s.stale)
+                        ScoreboardCard(model, s.stale, colors, moments)
+                        if (sectioned) model.lastPlay?.let { LastPlayCard(it, colors) }
                         if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
                             // Before kickoff only the market has a win chance (and its storylines): a small card above the kickoff.
-                            if (model.winChance != null) SituationCard(model)
+                            if (model.winChance != null) SituationCard(model, colors)
                             KickoffCard(model, Modifier.weight(1f))
                         } else {
-                            if (model.situation != null || model.winChance != null) SituationCard(model)
-                            model.linescore?.let { ByPeriodCard(it, Modifier.weight(1f)) } ?: Spacer(Modifier.weight(1f))
+                            if (model.situation != null || model.winChance != null) SituationCard(model, colors)
+                            if (sectioned) Spacer(Modifier.weight(1f))
+                            else model.linescore?.let { ByPeriodCard(it, Modifier.weight(1f)) } ?: Spacer(Modifier.weight(1f))
                         }
                         if (watch.visible) SourceRow(
                             watch = watch, requesters = requesters, onFocused = onFocused,
@@ -260,10 +291,15 @@ fun GameDetailScreen(
                         } else {
                             val showPreview = preview !is PreviewSlot.Hidden
                             if (showPreview) PreviewBox(slot = preview, surfaceOwner = surfaceOwner, ready = previewReady)
+                            if (sectioned) {
+                                SectionChips(chipSections, shownSection, { sec -> requesters.getValue(FocusKey.of(sec)!!) }, { sec -> onFocused(FocusKey.of(sec)!!) })
+                                shownSection?.let { SectionPanel(it, model, showPreview, colors, Modifier.weight(1f)) }
+                            } else {
                             if (model.leaders.isNotEmpty()) PerformersCard(model.leaders.take(if (showPreview) 2 else 3))
                             // The stats comparison gives way to the preview box: the right column is a fixed height.
                             if (model.stats.isNotEmpty() && !showPreview) StatsCard(model)
                             PlaysCard(model, Modifier.weight(1f).heightIn(min = 100.dp))
+                            }
                         }
                     }
                 }
@@ -279,7 +315,7 @@ private suspend fun withFrame() { androidx.compose.runtime.withFrameNanos { } }
 // ---------------------------------------------------------------------------------------------
 
 @Composable
-private fun Card(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+internal fun Card(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(NuvioTheme.radii.md)
     Column(
         modifier.fillMaxWidth().clip(shape).background(NuvioTheme.colors.BackgroundCard).border(1.dp, NuvioTheme.colors.Border, shape).padding(horizontal = 18.dp, vertical = 10.dp),
@@ -288,7 +324,7 @@ private fun Card(modifier: Modifier = Modifier, content: @Composable androidx.co
 }
 
 @Composable
-private fun CardTitle(text: String) {
+internal fun CardTitle(text: String) {
     Text(text.uppercase(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp, color = NuvioTheme.colors.TextSecondary)
     Spacer(Modifier.height(8.dp))
 }
@@ -339,7 +375,7 @@ private fun FailedPane(timedOut: Boolean, requester: FocusRequester, onFocused: 
 }
 
 @Composable
-private fun Badge(url: String?, name: String, size: androidx.compose.ui.unit.Dp) {
+internal fun Badge(url: String?, name: String, size: androidx.compose.ui.unit.Dp) {
     if (!url.isNullOrBlank()) {
         AsyncImage(model = url, contentDescription = null, modifier = Modifier.size(size))
     } else {
@@ -363,7 +399,7 @@ private fun StatePill(model: GameDetailTvModel) {
 }
 
 @Composable
-private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean) {
+private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean, colors: TeamColors, moments: MomentBatch) {
     Card {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -379,9 +415,9 @@ private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean) {
             val final = model.state == com.nuvio.tv.core.sports.detail.GameState.FINAL
             val a = model.sides[0].score?.toIntOrNull(); val b = model.sides[1].score?.toIntOrNull()
             val showScore = model.state != com.nuvio.tv.core.sports.detail.GameState.UPCOMING
-            TeamRow(model.sides[0], dim = final && a != null && b != null && a < b, showScore = showScore)
+            TeamRow(model.sides[0], SideKey.HOME, colors.home, moments, dim = final && a != null && b != null && a < b, showScore = showScore)
             Spacer(Modifier.height(8.dp))
-            TeamRow(model.sides[1], dim = final && a != null && b != null && b < a, showScore = showScore)
+            TeamRow(model.sides[1], SideKey.AWAY, colors.away, moments, dim = final && a != null && b != null && b < a, showScore = showScore)
         } else {
             Text(model.title, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
             model.liveLine?.let { Text(it, fontSize = 20.sp, color = NuvioTheme.colors.TextSecondary) }
@@ -390,30 +426,31 @@ private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean) {
 }
 
 @Composable
-private fun TeamRow(side: Side, dim: Boolean, showScore: Boolean = true) {
+private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentBatch, dim: Boolean, showScore: Boolean = true) {
     Row(Modifier.fillMaxWidth().height(58.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(4.dp).height(40.dp).clip(RoundedCornerShape(2.dp)).background(teamColor))
+        Spacer(Modifier.width(10.dp))
         Badge(side.badgeUrl, side.name, 48.dp)
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
             // Long names shrink to fit (never "Wa…"); the record sits under in a legible size.
             AutoResizeText(
-                text = side.name, color = NuvioTheme.colors.TextPrimary,
+                text = (side.rank?.let { "$it " } ?: "") + side.name, color = NuvioTheme.colors.TextPrimary,
                 style = androidx.compose.ui.text.TextStyle(fontSize = 23.sp, fontWeight = FontWeight.SemiBold), minFontSize = 15.sp,
             )
             side.record?.let { Text(it, fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary) }
         }
         side.score?.takeIf { showScore }?.let {
-            Text(
-                it, fontSize = 47.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End,
-                color = if (dim) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
-                modifier = Modifier.width(110.dp),
+            AnimatedScore(
+                it, key, moments, Modifier.width(110.dp),
+                color = if (dim) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary, accent = teamColor, fontSize = 47,
             )
         }
     }
 }
 
 @Composable
-private fun SituationCard(model: GameDetailTvModel) {
+private fun SituationCard(model: GameDetailTvModel, colors: TeamColors) {
     Card {
         model.situation?.let {
             Text(it, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
@@ -432,16 +469,23 @@ private fun SituationCard(model: GameDetailTvModel) {
                 Spacer(Modifier.height(8.dp))
             }
             val home = model.sides.getOrNull(0)?.tvName.orEmpty(); val away = model.sides.getOrNull(1)?.tvName.orEmpty()
+            // Numbers count (COUNT_MS) and the bar slides (MOVE_MS) between two real snapshots; nothing runs on open or loops.
+            val homeShown = animatedPercent(w.homePercent); val awayShown = animatedPercent(w.awayPercent)
+            val homeBar = animatedShare(w.homePercent); val awayBar = animatedShare(w.awayPercent)
             Row(Modifier.fillMaxWidth()) {
-                Text("$home ${w.homePercent}%", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.Secondary, modifier = Modifier.weight(1f))
+                Text("$home $homeShown%", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = colors.home, modifier = Modifier.weight(1f))
                 w.drawPercent?.let { Text("Draw $it%", fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary, modifier = Modifier.padding(horizontal = 12.dp)) }
-                Text("${w.awayPercent}% $away", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.Info)
+                Text("$awayShown% $away", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = colors.away)
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(NuvioTheme.colors.Border)) {
-                if (w.homePercent > 0) Box(Modifier.weight(w.homePercent.toFloat()).fillMaxHeight().background(NuvioTheme.colors.Secondary))
+                if (homeBar > 0f) Box(Modifier.weight(homeBar).fillMaxHeight().background(colors.home))
                 w.drawPercent?.let { Box(Modifier.weight(it.toFloat()).fillMaxHeight().background(NuvioTheme.colors.TextSecondary.copy(alpha = 0.5f))) }
-                if (w.awayPercent > 0) Box(Modifier.weight(w.awayPercent.toFloat()).fillMaxHeight().background(NuvioTheme.colors.Info))
+                if (awayBar > 0f) Box(Modifier.weight(awayBar).fillMaxHeight().background(colors.away))
+            }
+            if (model.chart != null) {
+                Spacer(Modifier.height(6.dp))
+                WinChart(model.chart, colors.home, Modifier.fillMaxWidth().height(70.dp))
             }
             w.line?.let {
                 Spacer(Modifier.height(8.dp))
@@ -526,7 +570,7 @@ private fun KickoffCard(model: GameDetailTvModel, modifier: Modifier) {
 }
 
 @Composable
-private fun FormCard(form: TvForm, model: GameDetailTvModel, modifier: Modifier = Modifier) {
+internal fun FormCard(form: TvForm, model: GameDetailTvModel, modifier: Modifier = Modifier) {
     Card(modifier) {
         CardTitle("Form · last 5")
         listOf(form.home to model.sides.getOrNull(0), form.away to model.sides.getOrNull(1)).forEach { (results, side) ->
@@ -642,8 +686,8 @@ private fun StatRowView(st: TvStat) {
 }
 
 @Composable
-private fun TagChip(text: String, side: SideKey?) {
-    val c = if (side == SideKey.AWAY) NuvioTheme.colors.Info else NuvioTheme.colors.Secondary
+internal fun TagChip(text: String, side: SideKey?, color: Color? = null) {
+    val c = color ?: if (side == SideKey.AWAY) NuvioTheme.colors.Info else NuvioTheme.colors.Secondary
     Text(
         text, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = c, maxLines = 1,
         modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(c.copy(alpha = 0.2f)).padding(horizontal = 8.dp, vertical = 2.dp),

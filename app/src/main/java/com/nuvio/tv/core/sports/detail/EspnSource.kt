@@ -1,5 +1,7 @@
 package com.nuvio.tv.core.sports.detail
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import java.io.IOException
@@ -80,8 +82,33 @@ class EspnSource(
         if (eventId == null) return SourceLoad(failure ?: FetchOutcome.EMPTY)
 
         var summary: JsonElement? = null
-        if (hasSummary) {
-            // One per-game summary serves both the live tick (header/competitions carry score + clock) and the slower blocks.
+        val eventUrl = mapping.espnEventUrl
+        if (hasSummary && eventUrl != null) {
+            // Delta rule (spec 02 A1): the 15 s tick asks the single-event scoreboard (2-3 KB gzip); the summary (35-52 KB) only on
+            // its own 60 s part. A whole-day resolve that just ran already holds a fresh event, so no second event call this tick.
+            val wantEvent = RefreshPart.SCOREBOARD in parts && event == null
+            val wantSummary = RefreshPart.SUMMARY in parts
+            var eventFresh = event != null
+            coroutineScope {
+                val ev = if (wantEvent) async { fetch(eventUrl.replace("{path}", path).replace("{id}", eventId), deadline) } else null
+                val sm = if (wantSummary) async { fetch(mapping.espnSummaryUrl.replace("{path}", path).replace("{id}", eventId), deadline) } else null
+                when (val f = ev?.await()) {
+                    is Fetched.Doc -> { event = f.json; eventFresh = true }
+                    is Fetched.Failed -> failure = failure ?: f.outcome
+                    is Fetched.NotFound -> failure = failure ?: FetchOutcome.HTTP_FAIL
+                    null -> Unit
+                }
+                when (val f = sm?.await()) {
+                    is Fetched.Doc -> summary = f.json
+                    is Fetched.Failed -> failure = failure ?: f.outcome
+                    is Fetched.NotFound, null -> Unit
+                }
+            }
+            // The fresher event is the base; an older summary contributes only a `situation` the event lacks (EspnLiveOverlay).
+            event = EspnLiveOverlay.apply(event, summary, baseIsFresher = eventFresh)
+            if (event != null) failure = if (summary != null || eventFresh) null else failure
+        } else if (hasSummary) {
+            // No event template (old mapping): one per-game summary serves both the live tick and the slower blocks, as before.
             when (val s = fetch(mapping.espnSummaryUrl.replace("{path}", path).replace("{id}", eventId), deadline)) {
                 is Fetched.Doc -> summary = s.json
                 is Fetched.Failed -> failure = failure ?: s.outcome
@@ -97,21 +124,7 @@ class EspnSource(
         return SourceLoad.ok(blocks, header, asm.gameState(docs), asm.live(docs, profileName))
     }
 
-    /**
-     * A scoreboard-shaped event built from the summary's `header.competitions[0]`, so the same mapping
-     * paths (competitors, status, linescores) read it. Blocks only the scoreboard carries (leaders, form,
-     * broadcast) are absent on ticks and keep their earlier value through GameDetail.mergeOver.
-     */
-    private fun eventFromSummary(summary: JsonElement?): JsonElement? {
-        val comp = JsonPathReader.first(summary, "header.competitions[0]") as? kotlinx.serialization.json.JsonObject ?: return null
-        val situation = JsonPathReader.first(summary, "situation")
-        val withSituation = if (situation != null && !comp.containsKey("situation")) kotlinx.serialization.json.JsonObject(comp + ("situation" to situation)) else comp
-        val fields = LinkedHashMap<String, JsonElement>()
-        JsonPathReader.first(summary, "header.id")?.let { fields["id"] = it }
-        comp["status"]?.let { fields["status"] = it }
-        fields["competitions"] = kotlinx.serialization.json.JsonArray(listOf(withSituation))
-        return kotlinx.serialization.json.JsonObject(fields)
-    }
+    private fun eventFromSummary(summary: JsonElement?): JsonElement? = EspnLiveOverlay.apply(null, summary, baseIsFresher = false)
 
     private fun SportProfile.specFromSummary(): Boolean = blocks.any { b ->
         (spec(b)?.get("from") as? kotlinx.serialization.json.JsonPrimitive)?.content == "summary"
@@ -142,5 +155,32 @@ class EspnSource(
             }
         }
         return Board.None
+    }
+}
+
+/**
+ * Merges the (fresh) single event and the (possibly older) summary into the scoreboard-shaped event the mapping paths read.
+ * [baseIsFresher]: the event keeps its own competitors and status; from the summary only a `situation` is taken, and only when the
+ * event has none. Without a base (or when the base is not fresher) the event is built from the summary's `header.competitions[0]`
+ * (the pre-event-endpoint behaviour). Blocks only the scoreboard carries stay absent and keep their earlier value in mergeOver.
+ */
+object EspnLiveOverlay {
+    fun apply(base: JsonElement?, summary: JsonElement?, baseIsFresher: Boolean): JsonElement? {
+        if (base != null && baseIsFresher) {
+            val situation = JsonPathReader.first(summary, "situation") ?: return base
+            val comp = JsonPathReader.first(base, "competitions[0]") as? kotlinx.serialization.json.JsonObject ?: return base
+            if (comp.containsKey("situation")) return base
+            val patched = kotlinx.serialization.json.JsonObject(comp + ("situation" to situation))
+            val root = base as? kotlinx.serialization.json.JsonObject ?: return base
+            return kotlinx.serialization.json.JsonObject(root + ("competitions" to kotlinx.serialization.json.JsonArray(listOf(patched))))
+        }
+        val comp = JsonPathReader.first(summary, "header.competitions[0]") as? kotlinx.serialization.json.JsonObject ?: return base
+        val situation = JsonPathReader.first(summary, "situation")
+        val withSituation = if (situation != null && !comp.containsKey("situation")) kotlinx.serialization.json.JsonObject(comp + ("situation" to situation)) else comp
+        val fields = LinkedHashMap<String, JsonElement>()
+        JsonPathReader.first(summary, "header.id")?.let { fields["id"] = it }
+        comp["status"]?.let { fields["status"] = it }
+        fields["competitions"] = kotlinx.serialization.json.JsonArray(listOf(withSituation))
+        return kotlinx.serialization.json.JsonObject(fields)
     }
 }

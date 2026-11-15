@@ -15,6 +15,8 @@ import com.nuvio.tv.core.sports.detail.SportsDetailService
 import com.nuvio.tv.core.sports.detail.screen.GameDetailEntry
 import com.nuvio.tv.core.sports.detail.screen.GameDetailPoller
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiReducer
+import com.nuvio.tv.core.sports.detail.screen.GameMomentPolicy
+import com.nuvio.tv.core.sports.detail.screen.MomentBatch
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiState
 import com.nuvio.tv.core.sports.detail.screen.PreviewFailure
 import com.nuvio.tv.core.sports.detail.screen.PreviewResolver
@@ -61,6 +63,11 @@ class GameDetailViewModel @Inject constructor(
 
     private val _ui = MutableStateFlow<GameDetailUiState>(GameDetailUiReducer.initial(RadarTime.nowMs()))
     val ui: StateFlow<GameDetailUiState> = _ui.asStateFlow()
+
+    private val _moments = MutableStateFlow(MomentBatch.None)
+    /** What really changed in the latest update (score, win chance, newest play); the screen animates each batch once. */
+    val moments: StateFlow<MomentBatch> = _moments.asStateFlow()
+    @Volatile private var lastDetail: com.nuvio.tv.core.sports.detail.GameDetail? = null
 
     private val _watch = MutableStateFlow(initialWatch())
     val watch: StateFlow<WatchUi> = _watch.asStateFlow()
@@ -133,6 +140,7 @@ class GameDetailViewModel @Inject constructor(
                 initialState = ref.seedState,
                 config = sportsDetail.refreshConfig(),
                 clock = RadarTime::nowMs,
+                wantsUpcomingSummary = ref.sport.equals("Soccer", ignoreCase = true),
             ),
         )
         startMatching(found)
@@ -145,7 +153,12 @@ class GameDetailViewModel @Inject constructor(
     }
 
     private fun onLoad(load: com.nuvio.tv.core.sports.detail.DetailLoad) {
-        (load as? com.nuvio.tv.core.sports.detail.DetailLoad.Loaded)?.let { gameState = it.detail.state; publishWatch() }
+        (load as? com.nuvio.tv.core.sports.detail.DetailLoad.Loaded)?.let {
+            gameState = it.detail.state; publishWatch()
+            val diff = GameMomentPolicy.diff(lastDetail, it.detail)
+            lastDetail = it.detail
+            if (diff.isNotEmpty()) _moments.update { prev -> MomentBatch(prev.seq + 1, diff) }
+        }
         _ui.update { GameDetailUiReducer.onLoad(it, load, RadarTime.nowMs()) }
     }
 

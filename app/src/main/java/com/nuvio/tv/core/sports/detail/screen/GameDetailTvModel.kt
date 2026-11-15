@@ -28,7 +28,20 @@ data class TvLineRow(val label: String, val badgeUrl: String?, val cells: List<S
 data class TvLinescore(val columns: List<String>, val rows: List<TvLineRow>, val totalLabel: String?, val currentIndex: Int?)
 
 /** One play line; [tag] is the short name of the side it belongs to, [scoring] marks goals/baskets. */
-data class TvPlay(val time: String, val text: String, val tag: String?, val side: SideKey?, val scoring: Boolean)
+data class TvPlay(
+    val time: String, val text: String, val tag: String?, val side: SideKey?, val scoring: Boolean,
+    /** Running score "10–21" after the play, and the period it belongs to (Plays section, Phase A). */
+    val score: String? = null, val period: String? = null,
+)
+
+/** The newest play, one line, on the left column (never an empty card: null hides it). */
+data class TvLastPlay(val time: String, val text: String, val tag: String?, val side: SideKey?, val kind: TimelineKind?)
+
+/** [leader] is the side whose value wins (flipped for lower-is-better rows); null = tie or not comparable. */
+data class TvStatLine(val label: String, val home: String, val away: String, val homeFraction: Float?, val leader: SideKey?)
+
+/** Win-chance chart: home share per point, oldest first, 0..1. Drawn only with >= 2 points; no markers (Phase D). */
+data class TvChart(val homeShare: List<Float>)
 
 data class TvLeader(val category: String, val athlete: String, val value: String, val tag: String?, val side: SideKey?)
 
@@ -73,6 +86,15 @@ data class GameDetailTvModel(
     val stats: List<TvStat>,
     val form: TvForm?,
     val latestPlays: List<TvPlay>,
+    /** Right-column section chips (without OVERVIEW; TV has no lineup parser yet, so no LINEUPS chip). Empty = today's cards. */
+    val sections: List<GameSection>,
+    val lastPlay: TvLastPlay?,
+    /** Plays section rows, newest first (the screen caps them with [PanelFit]). */
+    val playRows: List<TvPlay>,
+    val statLines: List<TvStatLine>,
+    val leadersAll: List<TvLeader>,
+    val standings: GameBlock.StandingsTable?,
+    val chart: TvChart?,
     val kickoffLabel: String?,
     val venue: String?,
     val updatedLabel: String?,
@@ -82,6 +104,9 @@ data class GameDetailTvModel(
         const val PLAYS = 12
         const val STATS = 3
         const val LEADERS = 3
+        const val LEADERS_ALL = 4
+        const val PLAY_ROWS = 12
+        const val STAT_LINES = 8
         const val STALE_AFTER_MS = 20_000L
 
         /** Home/away/draw whole percents (the market gives all three, ESPN only home) and the card's single extra line. */
@@ -139,6 +164,25 @@ data class GameDetailTvModel(
                     scoring = it.kind == TimelineKind.GOAL || it.kind == TimelineKind.SCORE,
                 )
             }
+            val sections = GameSectionsPolicy.sections(d).filter { it != GameSection.OVERVIEW && it != GameSection.LINEUPS }
+            val newest = GameMomentPolicy.newest(d)
+            val lastPlay = newest?.let { n ->
+                TvLastPlay(n.time, condensePlay(n.text), sideTag(n.side, sides), n.side, n.kind)
+            }
+            val playRows = GameSectionsPolicy.blocksFor(GameSection.PLAYS, d).firstOrNull().let { b ->
+                when (b) {
+                    is GameBlock.Plays -> b.items
+                    is GameBlock.Timeline -> b.items.reversed() // oldest first in the block
+                    else -> emptyList()
+                }
+            }.take(PLAY_ROWS).map {
+                TvPlay(
+                    time = it.time, text = condensePlay(it.text), tag = sideTag(it.side, sides), side = it.side,
+                    scoring = it.kind == TimelineKind.GOAL || it.kind == TimelineKind.SCORE, score = it.score, period = it.period,
+                )
+            }
+            val statLines = (d.block(BlockType.STATS) as? GameBlock.Stats)?.rows.orEmpty().take(STAT_LINES).map { statLine(it) }
+            val chart = winBlock?.history?.sortedBy { it.t }?.takeIf { it.size >= 2 }?.let { h -> TvChart(h.map { (it.home / 100f).coerceIn(0f, 1f) }) }
             val pill = when (d.state) {
                 GameState.LIVE -> if (line != null) "LIVE · ${line.replace(" · ", " ")}" else "LIVE"
                 GameState.FINAL -> "FINAL"
@@ -152,6 +196,8 @@ data class GameDetailTvModel(
                 liveLine = line ?: (d.header as? GameHeader.Event)?.session,
                 isLive = live, situation = situation, homeWinPercent = win, winChance = winChance, linescore = linescore,
                 leaders = leaders, stats = stats, form = form, latestPlays = plays,
+                sections = sections, lastPlay = lastPlay, playRows = playRows, statLines = statLines,
+                leadersAll = leaders(d, sides, LEADERS_ALL), standings = d.block(BlockType.STANDINGS_TABLE) as? GameBlock.StandingsTable, chart = chart,
                 kickoffLabel = if (d.state == GameState.UPCOMING && d.startsAtMs > 0) kickoff(d.startsAtMs, zone, locale) else null,
                 venue = d.venue ?: (d.header as? GameHeader.Event)?.venue,
                 updatedLabel = updatedLabel(d, nowMs),
@@ -194,7 +240,20 @@ data class GameDetailTvModel(
             "saves" to "SV", "shots" to "SOG",
         )
 
-        private fun leaders(d: GameDetail, sides: List<Side>): List<TvLeader> {
+        private fun sideTag(s: SideKey?, sides: List<Side>) = when (s) { SideKey.HOME -> sides.getOrNull(0)?.tvName; SideKey.AWAY -> sides.getOrNull(1)?.tvName; null -> null }
+
+        private fun statLine(r: com.nuvio.tv.core.sports.detail.StatRow): TvStatLine {
+            val h = number(r.home); val a = number(r.away)
+            val homeLeads = h != null && a != null && h != a && ((h > a) != GameDetailUiPolicy.lowerIsBetter(r.label))
+            val awayLeads = h != null && a != null && h != a && !homeLeads
+            return TvStatLine(
+                r.label, r.home + (r.unit ?: ""), r.away + (r.unit ?: ""),
+                if (h != null && a != null && h + a > 0) (h / (h + a)).toFloat() else null,
+                when { homeLeads -> SideKey.HOME; awayLeads -> SideKey.AWAY; else -> null },
+            )
+        }
+
+        private fun leaders(d: GameDetail, sides: List<Side>, cap: Int = LEADERS): List<TvLeader> {
             val items = (d.block(BlockType.LEADERS) as? GameBlock.Leaders)?.items.orEmpty().distinctBy { it.category }
             fun tag(s: SideKey?) = when (s) { SideKey.HOME -> sides.getOrNull(0)?.tvName; SideKey.AWAY -> sides.getOrNull(1)?.tvName; null -> null }
             // One player leading several categories is shown once ("Mika Zibanejad · 2 A, 2 P"), not once per category.
@@ -208,7 +267,7 @@ data class GameDetailTvModel(
                     tag = tag(first.side), side = first.side,
                 )
             }
-            return rows.take(LEADERS)
+            return rows.take(cap)
         }
 
         /**

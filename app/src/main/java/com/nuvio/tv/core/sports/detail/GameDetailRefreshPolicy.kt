@@ -93,6 +93,7 @@ fun GameDetailRefreshPolicy.plan(
     consecutiveFailures: Int = 0,
     config: GameDetailRefreshPolicy.Config = GameDetailRefreshPolicy.Config(),
     minMs: Long = 6_000L,
+    wantsUpcomingSummary: Boolean = false,
 ): RefreshPlan {
     val backoff = 1L shl consecutiveFailures.coerceIn(0, MAX_BACKOFF_SHIFT)
     val eventEvery = maxOf(config.liveMs, minMs) * backoff
@@ -108,7 +109,10 @@ fun GameDetailRefreshPolicy.plan(
             else {
                 // Pre-kickoff the card only needs to notice the flip to live: the slow kickoff cadence, not liveMs.
                 val wait = remaining(lastEventFetchMs, maxOf(config.kickoffPollMs, minMs) * backoff)
-                RefreshPlan(wait == 0L, false, wait)
+                if (wantsUpcomingSummary) {
+                    // Soccer lineups are published before kick-off: the summary rides its own slow cadence (never every event tick).
+                    RefreshPlan(wait == 0L, summaryWait == 0L, minOf(wait, summaryWait))
+                } else RefreshPlan(wait == 0L, false, wait)
             }
         }
         GameState.LIVE -> RefreshPlan(eventWait == 0L, summaryWait == 0L, minOf(eventWait, summaryWait))

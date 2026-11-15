@@ -24,12 +24,15 @@ enum class SourceId(val wire: String) {
 enum class BlockType(val wire: String) {
     SITUATION("situation"), WATCH("watch"), LINESCORE("linescore"), STATS("stats"),
     LEADERS("leaders"), TIMELINE("timeline"), LINEUP("lineup"), RESULTS("results"), STANDINGS("standings"),
-    FORM("form"), HIGHLIGHTS("highlights"), NEXT("next"), WIN_PROBABILITY("winProbability");
+    FORM("form"), HIGHLIGHTS("highlights"), NEXT("next"), WIN_PROBABILITY("winProbability"),
+    /** Phase A: the full play list (timeline stays the scoring summary) and the generic standings table. */
+    PLAYS("plays"), STANDINGS_TABLE("standingsTable");
 
     companion object {
         /** Block types the shared core can assemble from a provider (watch/next/standings are not yet). */
         val assemblable: Set<BlockType> = setOf(
             SITUATION, LINESCORE, STATS, LEADERS, TIMELINE, LINEUP, RESULTS, STANDINGS, FORM, HIGHLIGHTS, WIN_PROBABILITY,
+            PLAYS, STANDINGS_TABLE,
         )
 
         fun fromWire(s: String?): BlockType? = entries.firstOrNull { it.wire == s }
@@ -37,7 +40,7 @@ enum class BlockType(val wire: String) {
 }
 
 enum class SideKey { HOME, AWAY }
-enum class TimelineKind { GOAL, CARD, SUB, SCORE, PENALTY }
+enum class TimelineKind { GOAL, CARD, SUB, SCORE, PENALTY, CORNER, SHOT, OFFSIDE, VAR }
 enum class RefreshPart { SCOREBOARD, SUMMARY; companion object { val ALL: Set<RefreshPart> = entries.toSet() } }
 
 /** Per-source result of one load, and the closed vocabulary of the `sports_detail` telemetry outcome. */
@@ -59,6 +62,11 @@ data class Side(
     val score: String? = null,
     val record: String? = null,
     val form: List<String>? = null,
+    /** Hex without '#', from the feed's team colours (Phase A). */
+    val color: String? = null,
+    val altColor: String? = null,
+    /** Poll rank; null = unranked (ESPN's 99 is mapped to null by the assembler). */
+    val rank: Int? = null,
 )
 
 sealed interface GameHeader {
@@ -80,7 +88,15 @@ data class StatRow(val label: String, val home: String, val away: String, val un
 data class LeaderItem(val category: String, val athlete: String, val value: String, val side: SideKey?)
 data class TimelineItem(
     val time: String, val period: String?, val side: SideKey?, val text: String, val kind: TimelineKind?,
+    /** ESPN play id (Phase A). */
+    val id: String? = null,
+    /** Parsed from the play's `wallclock`. */
+    val wallclockMs: Long? = null,
+    /** "10–21" (home–away) after this play, when the feed has both. */
+    val score: String? = null,
 )
+data class StandingsGroup(val name: String, val columns: List<String>, val rows: List<StandingsTableRow>)
+data class StandingsTableRow(val teamId: String?, val name: String, val cells: List<String>, val isGameTeam: Boolean = false)
 data class LineupPlayer(val number: String?, val name: String, val pos: String?, val starter: Boolean)
 data class LineupSide(val formation: String?, val players: List<LineupPlayer>)
 data class StandingRow(val pos: String, val name: String, val played: String, val points: String, val gd: String? = null, val form: String? = null)
@@ -112,6 +128,13 @@ sealed interface GameBlock {
     }
     data class Standings(override val source: SourceId, val rows: List<StandingRow>) : GameBlock {
         override val type get() = BlockType.STANDINGS
+    }
+    /** Newest first (Phase A). */
+    data class Plays(override val source: SourceId, val items: List<TimelineItem>) : GameBlock {
+        override val type get() = BlockType.PLAYS
+    }
+    data class StandingsTable(override val source: SourceId, val groups: List<StandingsGroup>) : GameBlock {
+        override val type get() = BlockType.STANDINGS_TABLE
     }
     data class Form(override val source: SourceId, val home: List<String>, val away: List<String>) : GameBlock {
         override val type get() = BlockType.FORM
@@ -173,7 +196,7 @@ data class GameRef(
 object BlockVisibility {
     private val upcoming = setOf(
         BlockType.WIN_PROBABILITY, BlockType.FORM, BlockType.LINEUP, BlockType.RESULTS, BlockType.NEXT,
-        BlockType.STANDINGS, BlockType.HIGHLIGHTS,
+        BlockType.STANDINGS, BlockType.HIGHLIGHTS, BlockType.STANDINGS_TABLE,
     )
 
     fun visible(type: BlockType, state: GameState): Boolean = when (state) {

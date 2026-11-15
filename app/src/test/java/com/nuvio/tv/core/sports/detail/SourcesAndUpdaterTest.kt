@@ -1,5 +1,7 @@
 package com.nuvio.tv.core.sports.detail
 
+import com.nuvio.tv.core.sports.detail.screen.GameDetailUiReducer
+import com.nuvio.tv.core.sports.detail.screen.GameDetailUiState
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -23,6 +25,9 @@ class EspnSourceTest {
 
     private fun source(h: FakeHttp, map: SportsMapping = SportsFixtures.mapping) = EspnSource(h, clock::read)
 
+    /** Today's flow (old remote mapping without `sources.espn.event`): the summary rides every tick. Pinned before the event flow was added. */
+    private val legacy = SportsFixtures.mapping.copy(espnEventUrl = null)
+
     @Test fun `matches the event then loads scoreboard and summary blocks`() = runBlocking {
         val h = http { u ->
             when {
@@ -43,9 +48,9 @@ class EspnSourceTest {
     @Test fun `live tick requests only that events summary never the whole-day scoreboard`() = runBlocking {
         val h = http()
         val s = source(h)
-        s.load(eplRef, RefreshPart.ALL, SportsFixtures.mapping) // resolves the event id once
+        s.load(eplRef, RefreshPart.ALL, legacy) // resolves the event id once
         h.requests.clear()
-        val tick = s.load(eplRef, setOf(RefreshPart.SCOREBOARD), SportsFixtures.mapping)
+        val tick = s.load(eplRef, setOf(RefreshPart.SCOREBOARD), legacy)
         assertEquals("exactly one request", 1, h.requests.size)
         assertTrue("it is the per-game summary", h.requests[0].first.endsWith("/soccer/eng.1/summary?event=401878758"))
         assertTrue("never the scoreboard", h.requests.none { it.first.contains("/scoreboard") })
@@ -56,17 +61,17 @@ class EspnSourceTest {
     @Test fun `the first ever load resolves via the scoreboard once and every later tick skips it`() = runBlocking {
         val h = http()
         val s = source(h)
-        s.load(eplRef, setOf(RefreshPart.SCOREBOARD), SportsFixtures.mapping)
+        s.load(eplRef, setOf(RefreshPart.SCOREBOARD), legacy)
         assertEquals("scoreboard then summary", listOf(true, false), h.requests.map { it.first.contains("/scoreboard") })
         h.requests.clear()
-        repeat(3) { s.load(eplRef, setOf(RefreshPart.SCOREBOARD), SportsFixtures.mapping) }
+        repeat(3) { s.load(eplRef, setOf(RefreshPart.SCOREBOARD), legacy) }
         assertEquals("3 ticks, 3 summaries, 0 scoreboards", 3, h.requests.count { it.first.contains("/summary?event=") })
         assertEquals("no scoreboard", 0, h.requests.count { it.first.contains("/scoreboard") })
     }
 
     @Test fun `a tick assembles linescore from the summary header`() = runBlocking {
         val nbaId = SportsFixtures.espnEvent("nba").let { JsonPathReader.firstText(it, "id")!! }
-        val m = SportsFixtures.mapping.copy(eventOverrides = mapOf("100" to nbaId))
+        val m = legacy.copy(eventOverrides = mapOf("100" to nbaId))
         val h = FakeHttp { HttpResponse(200, SportsFixtures.raw("espn/nba_summary_post.json"), null) }
         val l = EspnSource(h, clock::read).load(nbaRef("tsdb:100"), setOf(RefreshPart.SCOREBOARD), m)
         assertEquals("one request, a summary", 1, h.requests.size)
@@ -208,6 +213,7 @@ class SportsDetailFacadeTest {
     private fun http() = FakeHttp { u ->
         when {
             u.contains("/game-detail") -> HttpResponse(200, SportsFixtures.gameDetail("game_detail_soccer_live"), null)
+            u.contains("/scoreboard/") -> HttpResponse(200, SportsFixtures.raw("espn/epl_event.json"), null)
             u.contains("/scoreboard") -> HttpResponse(200, SportsFixtures.raw("espn/epl_scoreboard.json"), null)
             u.contains("/summary") -> HttpResponse(200, SportsFixtures.raw("espn/epl_summary_post.json"), null)
             else -> HttpResponse(404, null, null)
@@ -230,8 +236,8 @@ class SportsDetailFacadeTest {
         val h2 = http
         h2.requests.clear()
         val second = (src.tick(fetchEvent = true, fetchSummary = false) as DetailLoad.Loaded).detail
-        assertEquals("live tick = exactly one ESPN summary, no backend, no scoreboard", 1, h2.requests.size)
-        assertTrue("it is the per-game summary", h2.requests[0].first.contains("/summary?event="))
+        assertEquals("live tick = exactly one single-event call (2-3 KB), no summary, no backend, no whole-day scoreboard", 1, h2.requests.size)
+        assertTrue("it is the single-event endpoint", h2.requests[0].first.contains("/scoreboard/"))
         assertEquals("nothing lost", first.blocks.map { it.type }.toSet(), second.blocks.map { it.type }.toSet())
     }
 
@@ -240,13 +246,20 @@ class SportsDetailFacadeTest {
         assertTrue("failed", src.tick() is DetailLoad.Failed)
     }
 
-    @Test fun `a failed tick after a good one keeps showing the good detail`() = runBlocking {
+    @Test fun `a failed tick after a good one reports Failed for the backoff and the screen keeps the good detail`() = runBlocking {
         var down = false
         val inner = http()
         val src = SportsDetail.create(FakeHttp { u -> if (down) HttpResponse(503, null, null) else runBlocking { inner.get(u, deadlineMs = 1) } }, { "https://b/functions/v1" }).open(epl)
-        assertTrue("good", src.tick() is DetailLoad.Loaded)
+        val first = src.tick()
+        assertTrue("good", first is DetailLoad.Loaded)
         down = true
-        assertTrue("still loaded", src.tick() is DetailLoad.Loaded)
+        val failed = src.tick()
+        assertTrue("reported as a failure so the poller backs off", failed is DetailLoad.Failed)
+        // the UI reducer keeps what was on screen (marked stale): the screen never fails after a good load
+        val ui = GameDetailUiReducer.onLoad(GameDetailUiState.Loaded((first as DetailLoad.Loaded).detail), failed, 0L)
+        assertTrue("screen still Loaded", ui is GameDetailUiState.Loaded)
+        down = false
+        assertTrue("recovers", src.tick() is DetailLoad.Loaded)
     }
 }
 

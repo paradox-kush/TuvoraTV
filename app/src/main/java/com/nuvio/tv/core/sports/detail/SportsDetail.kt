@@ -87,6 +87,8 @@ internal class ResolvingGameDetailSource(private val resolver: GameDetailResolve
         val fresh = resolver.resolve(ref, parts, prev)
         val merged = if (prev == null) fresh else fresh.mergeOver(prev)
         if (merged.availability == Availability.FAILED) return@withLock DetailLoad.Failed()
+        // A tick whose own sources all failed keeps the last good detail but still reports Failed, so the poller backs off.
+        if (prev != null && fresh.availability == Availability.FAILED) return@withLock DetailLoad.Failed()
         last = merged
         DetailLoad.Loaded(merged)
     }

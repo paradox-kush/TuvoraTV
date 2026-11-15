@@ -1,11 +1,13 @@
 {
   "schemaVersion": 1,
   "version": "2026-11-07.1",
+  "uiSwitches": { "hockeyPowerPlayClock": false, "basketballRun": false, "chartMarkers": true },
   "killSwitch": { "espn": false, "sports": [], "leagues": [] },
   "sources": {
     "espn": {
       "scoreboard": "https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={yyyymmdd}",
       "summary": "https://site.api.espn.com/apis/site/v2/sports/{path}/summary?event={id}",
+      "event": "https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard/{id}",
       "refresh": { "liveMs": 15000, "summaryMs": 60000, "idleMs": 0, "minMs": 6000 },
       "deadlineMs": 8000
     }
@@ -48,7 +50,9 @@
   },
   "profiles": {
     "soccer": {
-      "blocks": ["header", "watch", "stats", "timeline", "lineup", "form", "standings", "highlights", "next"],
+      "blocks": ["header", "watch", "stats", "timeline", "lineup", "form", "standings", "highlights", "next", "plays", "standingsTable"],
+      "plays": {"from": "summary", "path": "commentary[*]", "id": "play.id", "text": "text", "period": "play.period.number", "time": "time.displayValue", "team": "play.team.displayName", "wallclock": "play.wallclock", "type": "play.type.text", "allow": ["Goal", "Penalty - Scored", "Own Goal", "Yellow Card", "Red Card", "Substitution", "Corner Awarded", "Shot On Target", "VAR"], "extra": {"last": 60}},
+      "standingsTable": {"from": "summary", "path": "standings.groups[*]", "group": "header", "entries": "standings.entries[*]", "team": "team", "teamId": "id", "allow": ["rank", "gamesPlayed", "wins", "ties", "losses", "pointDifferential", "points"], "extra": {"labels": ["#", "P", "W", "D", "L", "GD", "PTS"]}},
       "linescore": null,
       "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
         "allow": ["Possession", "SHOTS", "ON GOAL", "Corner Kicks", "Fouls", "Yellow Cards", "Red Cards", "Offsides", "Saves"] },
@@ -56,7 +60,9 @@
       "form": { "from": "scoreboard", "path": "competitions[0].competitors[*].form" }
     },
     "basketball": {
-      "blocks": ["header", "situation", "watch", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
+      "blocks": ["header", "situation", "watch", "linescore", "stats", "leaders", "timeline", "highlights", "next", "plays", "standingsTable"],
+      "plays": {"from": "summary", "path": "plays[*]", "id": "id", "text": "text", "period": "period.displayValue", "time": "clock.displayValue", "team": "team.id", "wallclock": "wallclock", "homeScore": "homeScore", "awayScore": "awayScore", "type": "type.text", "extra": {"last": 60}},
+      "standingsTable": {"from": "summary", "path": "standings.groups[*]", "group": "header", "entries": "standings.entries[*]", "team": "team", "teamId": "id", "allow": ["wins", "losses", "winPercent", "gamesBehind", "streak"], "extra": {"labels": ["W", "L", "PCT", "GB", "STRK"]}},
       "periodLabel": "Q",
       "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" },
       "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
@@ -66,7 +72,9 @@
       "winProbability": { "from": "summary", "path": "winprobability[-1].homeWinPercentage" }
     },
     "football": {
-      "blocks": ["header", "situation", "watch", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
+      "blocks": ["header", "situation", "watch", "linescore", "stats", "leaders", "timeline", "highlights", "next", "plays", "standingsTable"],
+      "plays": {"from": "summary", "path": "drives.previous[*].plays[*]", "pathAlso": "drives.current.plays[*]", "id": "id", "text": "text", "period": "period.number", "time": "clock.displayValue", "team": "start.team.id", "wallclock": "wallclock", "homeScore": "homeScore", "awayScore": "awayScore", "type": "type.text", "extra": {"last": 60}},
+      "standingsTable": {"from": "summary", "path": "standings.groups[*]", "group": "header", "entries": "standings.entries[*]", "team": "team", "teamId": "id", "allow": ["wins", "losses", "ties", "winPercent"], "extra": {"labels": ["W", "L", "T", "PCT"]}},
       "periodLabel": "Q",
       "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" },
       "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",
@@ -86,7 +94,9 @@
       "situation": { "from": "scoreboard", "path": "competitions[0].situation" }
     },
     "hockey": {
-      "blocks": ["header", "situation", "watch", "linescore", "stats", "leaders", "timeline", "highlights", "next"],
+      "blocks": ["header", "situation", "watch", "linescore", "stats", "leaders", "timeline", "highlights", "next", "plays", "standingsTable"],
+      "plays": {"from": "summary", "path": "plays[*]", "id": "id", "text": "text", "period": "period.displayValue", "time": "clock.displayValue", "team": "team.id", "wallclock": "wallclock", "homeScore": "homeScore", "awayScore": "awayScore", "type": "type.text", "extra": {"last": 60}},
+      "standingsTable": {"from": "summary", "path": "standings.groups[*]", "group": "header", "entries": "standings.entries[*]", "team": "team", "teamId": "id", "allow": ["wins", "losses", "otLosses", "points"], "extra": {"labels": ["W", "L", "OTL", "PTS"]}},
       "periodLabel": "P",
       "linescore": { "from": "scoreboard", "path": "competitions[0].competitors[*].linescores[*].displayValue" },
       "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",

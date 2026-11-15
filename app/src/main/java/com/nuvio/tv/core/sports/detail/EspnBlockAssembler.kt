@@ -44,8 +44,15 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
         return Side(
             name = name, short = t("short"), badgeUrl = t("badge"), score = t("score"), record = t("record"),
             form = t("form")?.map { it.toString() },
+            color = hexColor(r.firstText(node, mapping.commonTeamPath("color") ?: "team.color")),
+            altColor = hexColor(r.firstText(node, mapping.commonTeamPath("altColor") ?: "team.alternateColor")),
+            rank = r.firstText(node, mapping.commonTeamPath("rank") ?: "curatedRank.current")?.toIntOrNull()?.takeIf { it in 1..98 }, // ESPN: 99 = unranked
         )
     }
+
+    /** `team.color` as 6 lower-case hex digits, or null when it is anything else. */
+    private fun hexColor(raw: String?): String? =
+        raw?.trim()?.removePrefix("#")?.takeIf { it.length == 6 && it.all { ch -> ch in '0'..'9' || ch in 'a'..'f' || ch in 'A'..'F' } }?.lowercase()
 
     private fun eventHeader(ev: JsonElement): GameHeader.Event? {
         val name = r.firstText(ev, "name")?.takeIf { it.isNotBlank() } ?: return null
@@ -97,6 +104,8 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
                 BlockType.STATS -> stats(p, docs)
                 BlockType.LEADERS -> leaders(p, docs)
                 BlockType.TIMELINE -> timeline(p, docs)
+                BlockType.PLAYS -> plays(profile, p, docs)
+                BlockType.STANDINGS_TABLE -> standingsTable(p, docs)
                 BlockType.WIN_PROBABILITY -> winProbability(p, docs)
                 BlockType.SITUATION -> situation(p, docs)
                 BlockType.FORM -> form(p, docs)
@@ -303,5 +312,107 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
         if (rows.isEmpty()) return null
         val cols = if (profile == "fighting") listOf("Bout", "Fighters", "Status") else listOf("Session", "Top", "Status")
         return GameBlock.Results(SourceId.ESPN, cols, rows)
+    }
+
+    // ---- plays (Phase A: the full list for the Plays section) --------------------------------------------------------------
+
+    private fun plays(profile: String, p: SportProfile, docs: EspnDocs): GameBlock.Plays? {
+        val spec = p.spec("plays") ?: return null
+        val root = root(spec, docs) ?: return null
+        val path = str(spec["path"]) ?: return null
+        val raw = r.readTracked(root, path) + (str(spec["pathAlso"])?.let { r.readTracked(root, it) }.orEmpty())
+        val allow = (spec["allow"] as? JsonArray)?.mapNotNull { str(it) }.orEmpty()
+        val ids = competitorIds(docs)
+        // Feeds list plays oldest first; the Plays section is newest first.
+        val items = raw.mapNotNull { m -> playItem(spec, profile, docs, ids, m.value, allow) }.reversed()
+        val cap = ((spec["extra"] as? JsonObject)?.get("last") as? JsonPrimitive)?.content?.toIntOrNull()?.takeIf { it > 0 } ?: DEFAULT_PLAYS_CAP
+        return items.take(cap).takeIf { it.isNotEmpty() }?.let { GameBlock.Plays(SourceId.ESPN, it) }
+    }
+
+    private fun playItem(spec: JsonObject, profile: String, docs: EspnDocs, ids: Pair<String?, String?>, p: JsonElement, allow: List<String>): TimelineItem? {
+        fun at(key: String) = str(spec[key])?.let { r.firstText(p, it) }
+        val typeText = at("type")
+        if (allow.isNotEmpty() && (typeText == null || allow.none { typeText.startsWith(it, ignoreCase = true) })) return null
+        val text = (at("text") ?: r.firstText(p, "text"))?.takeIf { it.isNotBlank() }
+            ?: r.firstText(p, "shortText")?.takeIf { it.isNotBlank() } ?: return null
+        val scoring = r.firstText(p, "scoringPlay") == "true"
+        val kind = if (r.firstText(p, "type.penaltyType") != null) TimelineKind.PENALTY else playKind(typeText, scoring)
+        val home = at("homeScore"); val away = at("awayScore")
+        return TimelineItem(
+            time = at("time").orEmpty(),
+            period = playPeriod(profile, at("period")),
+            side = sideOfRef(docs, ids, at("team")),
+            text = text, kind = kind,
+            id = at("id"),
+            wallclockMs = at("wallclock")?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() },
+            score = if (home != null && away != null) "$home\u2013$away" else null,
+        )
+    }
+
+    private fun playKind(typeText: String?, scoring: Boolean): TimelineKind? {
+        val t = typeText?.lowercase().orEmpty()
+        return when {
+            "penalty" in t && "scored" in t -> TimelineKind.GOAL
+            "corner" in t -> TimelineKind.CORNER
+            "shot" in t -> TimelineKind.SHOT
+            "offside" in t -> TimelineKind.OFFSIDE
+            t.startsWith("var") -> TimelineKind.VAR
+            else -> kindOf(typeText, scoring)
+        }
+    }
+
+    /** Numeric periods read "Q1" / "P2" (periodLabel) or, for soccer, "1st Half"; a feed display value ("1st Quarter") passes through. */
+    private fun playPeriod(profile: String, raw: String?): String? {
+        val v = raw?.takeIf { it.isNotBlank() } ?: return null
+        val n = v.toIntOrNull() ?: return v
+        val label = mapping.profile(profile)?.periodLabel
+        return when {
+            profile == "soccer" -> when (n) { 1 -> "1st Half"; 2 -> "2nd Half"; 3 -> "Extra time 1"; 4 -> "Extra time 2"; else -> "Shootout" }
+            !label.isNullOrBlank() -> "$label$n"
+            else -> v
+        }
+    }
+
+    /** HOME/AWAY for a team id or, when the feed gives only a name (soccer commentary), that name. */
+    private fun sideOfRef(docs: EspnDocs, ids: Pair<String?, String?>, ref: String?): SideKey? {
+        if (ref == null) return null
+        sideById(ref, ids)?.let { return it }
+        val ev = docs.event ?: return null
+        fun name(key: String) = mapping.commonPath(key)?.let { r.first(ev, it) }?.let { n -> mapping.commonTeamPath("name")?.let { r.firstText(n, it) } }
+        return when (ref) { name("home") -> SideKey.HOME; name("away") -> SideKey.AWAY; else -> null }
+    }
+
+    // ---- standings table ---------------------------------------------------------------------------------------------------
+
+    private fun standingsTable(p: SportProfile, docs: EspnDocs): GameBlock.StandingsTable? {
+        val spec = p.spec("standingsTable") ?: return null
+        val root = root(spec, docs) ?: return null
+        val allow = (spec["allow"] as? JsonArray)?.mapNotNull { str(it) }.orEmpty()
+        val labels = ((spec["extra"] as? JsonObject)?.get("labels") as? JsonArray)?.mapNotNull { str(it) }.orEmpty()
+        if (allow.isEmpty() || labels.size != allow.size) return null
+        val ids = competitorIds(docs)
+        val gameTeams = listOfNotNull(ids.first, ids.second)
+        val entriesPath = str(spec["entries"]) ?: "standings.entries[*]"
+        val groups = r.read(root, str(spec["path"]) ?: return null).mapNotNull { g ->
+            val rows = r.read(g, entriesPath).mapNotNull { e ->
+                val name = r.firstText(e, str(spec["team"]) ?: "team") ?: return@mapNotNull null
+                val id = r.firstText(e, str(spec["teamId"]) ?: "id")
+                StandingsTableRow(
+                    teamId = id, name = name,
+                    cells = allow.map { stat -> r.firstText(r.read(e, "stats[name=$stat]").firstOrNull(), "displayValue") ?: "\u2013" },
+                    isGameTeam = id != null && id in gameTeams,
+                )
+            }
+            if (rows.isEmpty()) null else StandingsGroup(groupName(str(spec["group"])?.let { r.firstText(g, it) }), labels, rows)
+        }
+        return groups.takeIf { it.isNotEmpty() }?.let { GameBlock.StandingsTable(SourceId.ESPN, it) }
+    }
+
+    /** "2026-27 Central Standings" -> "Central". */
+    private fun groupName(raw: String?): String =
+        raw.orEmpty().replace(Regex("""^\d{4}(-\d{2})?\s+"""), "").removeSuffix(" Standings").trim()
+
+    private companion object {
+        const val DEFAULT_PLAYS_CAP = 60
     }
 }
