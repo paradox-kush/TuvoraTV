@@ -261,6 +261,31 @@ class MultiviewControllerTest {
     }
 
     @Test
+    fun `a back handled late still counts from when it was pressed`() {
+        // The main thread was busy redrawing three tiles: the second key is handled 6 s after the first was, but the
+        // viewer pressed it 0.5 s after (the input clock). It must leave, not arm again.
+        var handledAt = 0L
+        queue.add("b")
+        val c = controller { handledAt }
+        c.onResume()
+        runBlocking { c.start("a") }
+        assertFalse("first back only arms", c.requestLeave(atMs = 10_000))
+        handledAt = 16_000
+        assertTrue("second back pressed within 2.5 s of the first leaves", c.requestLeave(atMs = 10_500))
+    }
+
+    @Test
+    fun `a back pressed after the window arms again`() {
+        var handledAt = 0L
+        queue.add("b")
+        val c = controller { handledAt }
+        c.onResume()
+        runBlocking { c.start("a") }
+        assertFalse(c.requestLeave(atMs = 10_000))
+        assertFalse("3 s later is a new first back", c.requestLeave(atMs = 13_000))
+    }
+
+    @Test
     fun `moving the highlight cancels the armed back`() {
         var now = 0L
         queue.add("b")

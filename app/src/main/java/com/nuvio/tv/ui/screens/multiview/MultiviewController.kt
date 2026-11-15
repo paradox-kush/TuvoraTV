@@ -403,10 +403,14 @@ internal class MultiviewController(
         return true
     }
 
-    /** Leaving the grid: false when the first Back only armed the guard (the notice says so). */
-    fun requestLeave(): Boolean {
+    /**
+     * Leaving the grid: false when the first Back only armed the guard (the notice says so). [atMs] is when the viewer
+     * pressed Back on the input clock (`SystemClock.uptimeMillis`), not when this ran: a main thread that is busy
+     * redrawing three tiles handles a key late, and a late handling must not turn "twice within 2.5 s" into "never".
+     */
+    fun requestLeave(atMs: Long = nowMs()): Boolean {
         val channels = core?.let { c -> (0 until c.paneCount).count { c.channelAt(it) != null } } ?: 0
-        return when (leaveGuard.onBack(nowMs(), channels)) {
+        return when (leaveGuard.onBack(atMs, channels)) {
             MultiviewLeaveGuard.Result.LEAVE -> true
             MultiviewLeaveGuard.Result.ARMED -> {
                 postNotice(MultiviewNotice.LeaveGuard)

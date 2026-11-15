@@ -108,6 +108,8 @@ internal fun MultiviewScreen(
     val overlayOpen = pickerSlot != null || menuSlot != null || layoutOpen
     val scope = rememberCoroutineScope()
     val requesters = remember { HashMap<Int, FocusRequester>() }
+    /** Input-clock time of the last Back KeyDown; not state, so a Back never recomposes the grid. */
+    val lastBackDownAtMs = remember { longArrayOf(0L) }
     val press = remember { CenterPressTracker() }
     val latestState by androidx.compose.runtime.rememberUpdatedState(state)
 
@@ -232,6 +234,10 @@ internal fun MultiviewScreen(
     }
 
     BackHandler {
+        // When the key went down, on the input clock; the leave guard measures its 2.5 s from that, not from now.
+        val handledAtMs = android.os.SystemClock.uptimeMillis()
+        val backPressedAtMs = lastBackDownAtMs[0].also { lastBackDownAtMs[0] = 0L }
+            .takeIf { it in (handledAtMs - BACK_EVENT_MAX_AGE_MS)..handledAtMs } ?: handledAtMs
         when (
             MultiviewBackPolicy.action(
                 channelPickerOpen = pickerSlot != null,
@@ -250,7 +256,7 @@ internal fun MultiviewScreen(
             MultiviewBackAction.LAYOUT_BACK_TO_MENU -> { menuEntryItem = TileMenuItem.CHANGE_LAYOUT; layoutOpen = false }
             MultiviewBackAction.CLOSE_TILE_MENU -> { menuSlot = null; restoreFocus() }
             MultiviewBackAction.EXIT_FULLSCREEN -> { controller.exitFullscreen(); restoreFocus() }
-            MultiviewBackAction.LEAVE_GRID -> if (controller.requestLeave()) leave()
+            MultiviewBackAction.LEAVE_GRID -> if (controller.requestLeave(backPressedAtMs)) leave()
         }
     }
 
@@ -262,7 +268,10 @@ internal fun MultiviewScreen(
             .fillMaxSize()
             .background(Color.Black)
             .onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown) wakeTick++
+                if (event.type == KeyEventType.KeyDown) {
+                    wakeTick++
+                    if (event.key == Key.Back) lastBackDownAtMs[0] = event.nativeKeyEvent.eventTime
+                }
                 false
             },
     ) {
@@ -402,6 +411,9 @@ internal fun MultiviewScreen(
         }
     }
 }
+
+/** A Back key event older than this is not the press being handled (a gesture Back, say): use the handling time. */
+private const val BACK_EVENT_MAX_AGE_MS = 10_000L
 
 /** The 5% safe area of a 960 x 540 dp screen: no tile within 27 dp of an edge. */
 private val GRID_MARGIN_X = 48.dp
