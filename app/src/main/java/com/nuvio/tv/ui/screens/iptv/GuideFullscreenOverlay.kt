@@ -48,9 +48,17 @@ internal class FullscreenControlsState {
     /** The controls on screen came from a zap and nothing else has touched them since (LiveControlsPolicy). */
     var zapReveal by mutableStateOf(false)
 
-    fun show() { visible = true; tick++ }
+    fun show() { visible = true; bannerVisible = false; tick++ }
+
+    /** Redesign change 4: the zap banner (no focus target, leaves by itself; see [GuideZapBanner]). */
+    var bannerVisible by mutableStateOf(false)
+    var bannerTick by mutableIntStateOf(0)
+    fun showBanner() { bannerVisible = true; bannerTick++ }
+
+    /** A zap: the banner while the control bar is down, else the bar stays up and names the channel. */
+    fun onZap() { if (LiveZapModePolicy.showsBanner(visible)) showBanner() else keepAlive() }
     fun keepAlive() { tick++ }
-    fun reset() { visible = false; zapReveal = false; moreOpen = false }
+    fun reset() { visible = false; zapReveal = false; moreOpen = false; bannerVisible = false }
 }
 
 /**

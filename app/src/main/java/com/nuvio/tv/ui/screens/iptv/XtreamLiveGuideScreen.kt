@@ -123,6 +123,7 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.screens.player.clean.CleanLivePlayerUiPolicy
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -529,6 +530,7 @@ fun LiveGuide(
         if (fullscreen) {
             browsingOrigin = aimedChannel()?.entityId
             wasFullscreen = true
+            controls.showBanner()
         } else if (wasFullscreen) {
             wasFullscreen = false
             channelListOpen = false
@@ -543,6 +545,42 @@ fun LiveGuide(
                 visibleIds = uiState.channels.map { it.entityId })
             restoreAfterFullscreen = false
         }
+    }
+    // Redesign change 4 (A3): single-use links (Stalker) surf: UP / DOWN aim, OK or the countdown tunes.
+    val zapMode = LiveZapModePolicy.mode(singleUseLinks = account.sourceType == XtreamAccount.SOURCE_STALKER)
+    var surfAim by remember(account.id) { mutableStateOf<String?>(null) }
+    var surfTick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    fun commitSurf() {
+        val aim = surfAim ?: return
+        surfAim = null
+        playbackViewModel.requestTune(ProviderSelectionId(aim))
+    }
+    fun cancelSurf() {
+        surfAim = null
+        // The aim goes back to the channel still playing, so the next UP / DOWN walks from it.
+        playingContentId?.let(viewModel::focusChannel)
+        controls.bannerVisible = false
+    }
+    // Read through snapshotFlow, not as effect keys: a surf press must not recompose the whole guide (B180).
+    LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { surfAim to surfTick }.collectLatest { (aim, _) ->
+            if (aim == null) return@collectLatest
+            delay(LiveZapModePolicy.SURF_COMMIT_MS)
+            commitSurf()
+        }
+    }
+    LaunchedEffect(fullscreen) { if (!fullscreen && surfAim != null) cancelSurf() }
+    /** UP / DOWN / CH+ / CH-: switch at once (settled) or aim (surf); the banner names where it landed. */
+    fun zap(direction: LiveZapDirection) {
+        val selection = when (direction) {
+            LiveZapDirection.NEXT -> viewModel.moveChannelFocus(LiveZapDirection.NEXT, playingContentId)
+            LiveZapDirection.PREVIOUS -> viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS, playingContentId)
+        } ?: return
+        when (zapMode) {
+            LiveZapModePolicy.Mode.SWITCH -> selection.let(playbackViewModel::requestSettledTune)
+            LiveZapModePolicy.Mode.SURF -> { surfAim = selection.value; surfTick++ }
+        }
+        controls.onZap()
     }
     var zapBack by remember(account.id) { mutableStateOf(LiveZapBack()) }
     LaunchedEffect(playingContentId) { playingContentId?.let { zapBack = zapBack.onSettled(it) } }
@@ -594,6 +632,10 @@ fun LiveGuide(
     // F28 BACK: the channel list and the pickers answer it themselves; then hide the controls; then
     // back to the guide. B239/B227: in trouble (failed, reconnecting, tuning) one BACK leaves.
     BackHandler(enabled = fullscreen) {
+        if (LiveZapModePolicy.backCancelsSurf(surfAim, playingContentId)) {
+            cancelSurf()
+            return@BackHandler
+        }
         when (
             LiveControlsPolicy.backAction(
                 panelOpen = false,
@@ -643,33 +685,33 @@ fun LiveGuide(
                     }
                     // The KeyUp half of a handled key: consumed so the locked row never clicks.
                     LiveControlsPolicy.KeyAction.CONSUME -> Unit
-                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> { showControls(); controls.zapReveal = false }
+                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> {
+                        val ok = event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter
+                        if (ok && LiveZapModePolicy.okAction(surfAim, playingContentId) == LiveZapModePolicy.OkAction.TUNE_AIM_NOW) {
+                            commitSurf()
+                            controls.showBanner()
+                        } else {
+                            showControls(); controls.zapReveal = false
+                        }
+                    }
                     LiveControlsPolicy.KeyAction.TOGGLE_PAUSE -> { togglePause(); controls.zapReveal = false }
                     // Menu opens labeled actions; entering it never changes the channel lineup.
                     LiveControlsPolicy.KeyAction.OPEN_CHANNEL_MENU -> aimedChannel()?.let { channelMenuAsk = it to viewModel.channelMenu(it) }
                     LiveControlsPolicy.KeyAction.OPEN_CHANNEL_LIST -> { channelListOpen = true; controls.visible = false; controls.moreOpen = false }
                     // UP/DOWN (controls hidden) and CH+/CH- change channel; each press names the AIMED
                     // channel without stealing focus into the controls.
-                    LiveControlsPolicy.KeyAction.ZAP_PREVIOUS -> {
-                        viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS, playingContentId)
-                            ?.let(playbackViewModel::requestSettledTune)
-                        if (!controls.visible) showControls() else controls.keepAlive()
-                        controls.zapReveal = true
-                    }
-                    LiveControlsPolicy.KeyAction.ZAP_NEXT -> {
-                        viewModel.moveChannelFocus(LiveZapDirection.NEXT, playingContentId)
-                            ?.let(playbackViewModel::requestSettledTune)
-                        if (!controls.visible) showControls() else controls.keepAlive()
-                        controls.zapReveal = true
-                    }
+                    // Redesign change 4: a zap shows the compact banner, never the control bar (05-fullscreen).
+                    LiveControlsPolicy.KeyAction.ZAP_PREVIOUS -> zap(LiveZapDirection.PREVIOUS)
+                    LiveControlsPolicy.KeyAction.ZAP_NEXT -> zap(LiveZapDirection.NEXT)
                     // F08: back to the channel watched before (LAST/RECALL), if it is in this lineup.
                     LiveControlsPolicy.KeyAction.ZAP_BACK -> {
                         // T4: LAST stays in the playing playlist too (All favorites mixes playlists).
+                        // LAST is one explicit choice: it tunes at once, also on a surf playlist.
+                        surfAim = null
                         zapBack.target(viewModel.zapLineup().map { it.contentId })
                             ?.let(viewModel::focusChannel)
                             ?.let(playbackViewModel::requestTune)
-                        if (!controls.visible) showControls() else controls.keepAlive()
-                        controls.zapReveal = true
+                        controls.onZap()
                     }
                     // Time-shifted with the controls hidden: LEFT / RIGHT scrub inside the saved window.
                     LiveControlsPolicy.KeyAction.SCRUB_BACK,
@@ -1043,6 +1085,15 @@ fun LiveGuide(
             if (playbackUi?.spinnerVisible == true) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
+            GuideZapBanner(
+                fullscreen = fullscreen,
+                controls = controls,
+                viewModel = viewModel,
+                playingContentId = playingContentId,
+                nowMs = nowMs,
+                surfAimOf = { surfAim },
+                surfTickOf = { surfTick },
+            )
             run {
                 GuideFullscreenOverlay(
                     fullscreen = fullscreen,

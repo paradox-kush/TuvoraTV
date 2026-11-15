@@ -3633,6 +3633,9 @@
     <string name="iptv_guide_empty_clear_search">Clear search</string>
     <string name="iptv_guide_empty_pick_group">Pick another group</string>
     <string name="iptv_guide_playlist_settings">Playlist settings</string>
+    <!-- Redesign change 4: the zap banner while surfing a single-use playlist. -->
+    <string name="iptv_zap_surf_still_watching">Still watching %1$s</string>
+    <string name="iptv_zap_surf_hint">OK tunes now · Back cancels</string>
     <!-- Redesign change 3: the channel options panel. -->
     <string name="iptv_panel_watch_fullscreen">Watch full screen</string>
     <string name="iptv_panel_open_guide">Open the guide</string>
