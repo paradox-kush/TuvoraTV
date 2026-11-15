@@ -3633,6 +3633,18 @@
     <string name="iptv_guide_empty_clear_search">Clear search</string>
     <string name="iptv_guide_empty_pick_group">Pick another group</string>
     <string name="iptv_guide_playlist_settings">Playlist settings</string>
+    <!-- Redesign change 3: the channel options panel. -->
+    <string name="iptv_panel_watch_fullscreen">Watch full screen</string>
+    <string name="iptv_panel_open_guide">Open the guide</string>
+    <string name="iptv_panel_open_guide_sub">The picture keeps playing in the preview.</string>
+    <string name="iptv_panel_hide_sub">Leaves the guide. You can undo it right after.</string>
+    <string name="iptv_panel_fix_guide_sub">This playlist sent no guide. Opens its settings.</string>
+    <string name="iptv_panel_section_watch">Watch</string>
+    <string name="iptv_panel_section_favorites">Favorites</string>
+    <string name="iptv_panel_section_order">Order in Favorites</string>
+    <string name="iptv_panel_section_guide">Guide</string>
+    <string name="iptv_panel_section_tidy">Tidy</string>
+    <string name="iptv_panel_section_info">Info</string>
     <!-- B4: captions in the group column. -->
     <string name="iptv_guide_recent_groups">Recent groups</string>
     <string name="iptv_guide_all_groups">Groups</string>

@@ -349,6 +349,10 @@ fun LiveGuide(
     var sheetProgramme by remember { mutableStateOf<XtreamProgram?>(null) }
     // F03: MENU on a favourite or a pinned channel: Move up / Move down / Remove or Hide.
     var channelMenuAsk by remember { mutableStateOf<Pair<GuideChannel, List<GuideChannelMenuPolicy.Action>>?>(null) }
+    // Redesign change 3: the panel row the cursor returns to after a row that keeps the panel open (Move up / down).
+    var panelFocusRow by remember { mutableStateOf<GuideChannelPanelPolicy.Row?>(null) }
+    // "Watch full screen" on a channel not yet playing: full screen once that channel is the one playing.
+    var pendingFullscreenFor by remember(account.id) { mutableStateOf<String?>(null) }
     // F01: the channel-search keyboard dialog.
     var searchDialogOpen by remember { mutableStateOf(false) }
     LaunchedEffect(searchRequest) { if (searchRequest > 0) searchDialogOpen = true }
@@ -488,6 +492,18 @@ fun LiveGuide(
     }
     DisposableEffect(playbackViewModel) {
         onDispose { playbackViewModel.detachGuide() }
+    }
+    // "Watch full screen" from the panel: promote the same surface once the asked channel plays (instant, never
+    // re-routed). A failure drops the ask; the preview then says why with OK = Try again.
+    LaunchedEffect(pendingFullscreenFor, playingContentId, playbackUi?.openFullscreenEnabled, playbackError != null) {
+        val asked = pendingFullscreenFor ?: return@LaunchedEffect
+        when {
+            playbackError != null -> pendingFullscreenFor = null
+            playingContentId == asked && playbackUi?.openFullscreenEnabled == true -> {
+                pendingFullscreenFor = null
+                onFullscreenChange(true)
+            }
+        }
     }
 
     LaunchedEffect(fullscreen) {
@@ -1210,44 +1226,76 @@ fun LiveGuide(
 
         fun returnFromMenu() {
             channelMenuAsk = null
+            panelFocusRow = null
             if (fullscreen) fullscreenAnchor.requestFocusOrFalse()
             else pendingRestoreEntityId = aimedChannel()?.entityId
         }
-        channelMenuAsk?.let { (channel, actions) ->
-            // Start over is reachable from the channel row too, not only from the timeline cell.
-            val startOver = GuideCellIntent.startOverCandidate(
-                uiState.epg[channel.streamId]?.programmes.orEmpty(), nowMs,
-            ) { guideActionFor(it, channel, nowMs, uiState.catchUpSupported) }
-            GuideChannelActionsDialog(
+        // Redesign change 3 (04-channel-panel): channel options as a right-side panel over the guide, opening on
+        // "Watch full screen" (full screen: "Open the guide"). Start over left the channel's options (UX392): it is
+        // RIGHT into the schedule, then OK. Back or MENU close; Move up / Move down keep the panel open.
+        channelMenuAsk?.let { (channel, _) ->
+            // Live: a move changes the channel's index, so the rows follow the list rather than the opening snapshot.
+            val actions = remember(uiState.channels, channel.contentId) { viewModel.channelMenu(channel) }
+            val favorite = channel.contentId in favoriteIds
+            val rows = GuideChannelPanelPolicy.rows(
+                variant = if (fullscreen) GuideChannelPanelPolicy.Variant.FULLSCREEN else GuideChannelPanelPolicy.Variant.CHANNEL,
+                favorite = favorite,
+                menuActions = actions,
+                noGuide = noGuide,
+                guideSizeHere = true,
+            )
+            val lastRows = remember(channel.contentId) { arrayOf(rows) }
+            val focusRow = panelFocusRow?.let { GuideChannelPanelPolicy.focusAfter(it, lastRows[0], rows) }
+            lastRows[0] = rows
+            GuideChannelPanel(
                 channelName = channel.name,
-                onStartOver = startOver?.let { programme ->
-                    { returnFromMenu(); viewModel.startReplay(channel, programme) }
-                },
-                favorite = channel.contentId in favoriteIds,
-                actions = actions,
-                onFavorite = { returnFromMenu(); viewModel.toggleFavorite(channel) },
-                onAction = { action ->
-                    // A hide (or removing a favourite from Favorites) takes the row away: its Undo
-                    // notice owns focus, and a restore aimed at that row would steal it (UX168).
-                    if (fullscreen || GuideChannelMenuPolicy.focusReturnsToRow(action)) returnFromMenu()
-                    else channelMenuAsk = null
-                    when (action) {
-                        GuideChannelMenuPolicy.Action.MOVE_UP -> viewModel.moveChannel(channel, -1)
-                        GuideChannelMenuPolicy.Action.MOVE_DOWN -> viewModel.moveChannel(channel, +1)
-                        GuideChannelMenuPolicy.Action.REMOVE_FAVORITE -> viewModel.toggleFavorite(channel)
-                        GuideChannelMenuPolicy.Action.HIDE -> viewModel.hideChannel(channel)
+                rows = rows,
+                focusRow = focusRow,
+                guideSize = guideLayout,
+                onRow = { row ->
+                    when (row) {
+                        GuideChannelPanelPolicy.Row.WATCH_FULLSCREEN -> {
+                            returnFromMenu()
+                            if (playingContentId == channel.contentId) onFullscreenChange(true)
+                            else { commitPreview(channel.contentId); pendingFullscreenFor = channel.contentId }
+                        }
+                        GuideChannelPanelPolicy.Row.OPEN_GUIDE -> {
+                            returnFromMenu()
+                            playbackViewModel.requestCollapse()
+                            onFullscreenChange(false)
+                        }
+                        GuideChannelPanelPolicy.Row.ADD_FAVORITE,
+                        GuideChannelPanelPolicy.Row.REMOVE_FAVORITE -> {
+                            // Removing from the Favorites view takes the row away: its Undo notice owns focus (UX168).
+                            val leavesList = row == GuideChannelPanelPolicy.Row.REMOVE_FAVORITE &&
+                                GuideChannelMenuPolicy.Action.REMOVE_FAVORITE in actions
+                            if (fullscreen || !leavesList) returnFromMenu() else { channelMenuAsk = null; panelFocusRow = null }
+                            viewModel.toggleFavorite(channel)
+                        }
+                        GuideChannelPanelPolicy.Row.MOVE_UP -> { panelFocusRow = row; viewModel.moveChannel(channel, -1) }
+                        GuideChannelPanelPolicy.Row.MOVE_DOWN -> { panelFocusRow = row; viewModel.moveChannel(channel, +1) }
+                        GuideChannelPanelPolicy.Row.FIX_GUIDE -> { returnFromMenu(); onFixGuide(account.id) }
+                        GuideChannelPanelPolicy.Row.GUIDE_SIZE -> { channelMenuAsk = null; panelFocusRow = null; layoutPickerOpen = true }
+                        GuideChannelPanelPolicy.Row.HIDE -> {
+                            if (fullscreen) returnFromMenu() else { channelMenuAsk = null; panelFocusRow = null }
+                            viewModel.hideChannel(channel)
+                        }
+                        GuideChannelPanelPolicy.Row.STREAM_INFO -> {
+                            channelMenuAsk = null
+                            panelFocusRow = null
+                            livePanel = LivePanel.STREAM_INFO
+                        }
                     }
                 },
-                onGuideSize = { channelMenuAsk = null; layoutPickerOpen = true },
-                onDismiss = ::returnFromMenu,
+                onClose = ::returnFromMenu,
             )
         }
         if (layoutPickerOpen) {
-            GuideLayoutDialog(guideLayout, onSelect = { selected ->
+            GuideLayoutPanel(guideLayout, onSelect = { selected ->
                 displayScope.launch { displayPreferences.setLayout(selected) }
                 layoutPickerOpen = false
                 returnFromMenu()
-            }, onDismiss = { layoutPickerOpen = false; returnFromMenu() })
+            }, onClose = { layoutPickerOpen = false; returnFromMenu() })
         }
 
         // F03: All favorites spans playlists — another playlist's channel switches the guide to that
