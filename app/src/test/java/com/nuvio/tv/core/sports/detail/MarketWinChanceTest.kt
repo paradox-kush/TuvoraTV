@@ -265,7 +265,7 @@ class MarketWinChanceTest {
     @Test fun `TV card shows the bar, the caption and exactly one extra line`() {
         val w = model(marketWin.copy(asOfMs = clock.now, storylines = listOf(Storyline("a", "Goes to overtime", 8), Storyline("b", "Both score", 50)))).winChance!!
         assertEquals(Triple(60, 40, null), Triple(w.homePercent, w.awayPercent, w.drawPercent))
-        assertEquals("via Polymarket", w.caption); assertEquals("Goes to overtime · 8%", w.line)
+        assertEquals("Polymarket requires the market-implied wording next to the credit", "Market-implied · via Polymarket", w.caption); assertEquals("Goes to overtime · 8%", w.line)
         assertNull(w.staleLabel)
     }
 

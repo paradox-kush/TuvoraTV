@@ -185,10 +185,12 @@ object MarketPolicy {
         return if (minutes < 60) "Updated $minutes min ago" else "Updated ${minutes / 60} h ago"
     }
 
-    /** "via Polymarket" / "via ESPN": the block's attribution, else derived from its source. */
-    fun caption(b: GameBlock.WinProbability): String? = b.attribution?.takeIf { it.isNotBlank() } ?: when (b.source) {
-        SourceId.ESPN -> "via ESPN"
-        SourceId.MARKET -> "via Polymarket"
-        else -> null
+    /**
+     * "Market-implied · via Polymarket" / "via ESPN". Polymarket allowed the display on condition that it is credited AND
+     * shown as market-implied probability, not our own prediction, so that wording is fixed here, whatever the server sent.
+     */
+    fun caption(b: GameBlock.WinProbability): String? = when (b.source) {
+        SourceId.MARKET -> "Market-implied · via Polymarket"
+        else -> b.attribution?.takeIf { it.isNotBlank() } ?: if (b.source == SourceId.ESPN) "via ESPN" else null
     }
 }
