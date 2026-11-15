@@ -1599,9 +1599,25 @@ private fun PlaybackNavHost(
                 },
             ),
         ) { backStackEntry ->
+            val multiviewStartKey = backStackEntry.arguments?.getString(Screen.Multiview.START_ARGUMENT)
             com.nuvio.tv.ui.screens.multiview.MultiviewScreen(
-                startKey = backStackEntry.arguments?.getString(Screen.Multiview.START_ARGUMENT),
-                onExit = { navController.popBackStack() },
+                startKey = multiviewStartKey,
+                // Back leaves to where Multiview was opened from. From the player (a start channel was handed over) that
+                // is the player, on the channel being heard; from the hub or the queue toast it is the hub.
+                onExit = { audibleKey ->
+                    if (navController.currentBackStackEntry == backStackEntry) {
+                        navController.popBackStack()
+                        val destination = navController.currentBackStackEntry
+                        if (multiviewStartKey != null && audibleKey != null && destination != null) {
+                            dispatchLiveOrElse(
+                                owner = destination,
+                                contentId = audibleKey,
+                                origin = CleanLiveLaunchOrigin.SPORTS,
+                                onNonLive = {},
+                            )
+                        }
+                    }
+                },
                 // A failed tile's way out: the normal full-screen player (Exo, then mpv). No non-live meaning here,
                 // so the Sports origin's feedback path is the right one for an unopenable channel.
                 onOpenInPlayer = { contentId ->
