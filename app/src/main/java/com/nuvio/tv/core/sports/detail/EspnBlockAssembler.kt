@@ -237,10 +237,13 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
         return items.takeIf { it.isNotEmpty() }?.let { GameBlock.Leaders(SourceId.ESPN, it) }
     }
 
+    private val goalWord = Regex("""\bgoal\b""")
+
     private fun kindOf(type: String?, scoring: Boolean): TimelineKind? {
         val t = type?.lowercase().orEmpty()
         return when {
-            "goal" in t -> TimelineKind.GOAL
+            "field goal" in t -> if (scoring) TimelineKind.SCORE else null // good = a score; missed / blocked is no goal
+            goalWord.containsMatchIn(t) -> TimelineKind.GOAL                // not "goaltending"
             "card" in t -> TimelineKind.CARD
             "substitution" in t -> TimelineKind.SUB
             "penalty" in t -> TimelineKind.PENALTY
@@ -389,10 +392,10 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
         return when {
             "penalty" in t && "scored" in t -> TimelineKind.GOAL
             "corner" in t -> TimelineKind.CORNER
-            "shot" in t -> TimelineKind.SHOT
+            "shot" in t && !scoring -> TimelineKind.SHOT // a made shot (scoringPlay) is a score, via kindOf
             "offside" in t -> TimelineKind.OFFSIDE
             t.startsWith("var") -> TimelineKind.VAR
-            t == "period start" -> TimelineKind.PERIOD_START
+            t == "period start" || (t.startsWith("start ") && t.endsWith("half")) -> TimelineKind.PERIOD_START
             t == "end period" || t == "period end" || t == "end of half" || t == "halftime" || t == "end regular time" -> TimelineKind.PERIOD_END
             else -> kindOf(typeText, scoring)
         }

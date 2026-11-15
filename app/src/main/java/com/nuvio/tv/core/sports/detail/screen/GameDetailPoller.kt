@@ -30,12 +30,19 @@ class GameDetailPoller(
     @Volatile private var lastSummary: Long? = null
     @Volatile private var failures = 0
     @Volatile private var loadedOnce = false
+    /** One summary fetch is attempted after the game goes FINAL on an event tick (otherwise the last LIVE summary - plays, stats - stays stale). */
+    @Volatile private var finalSummaryTried = false
     /** The polling loop and a user Retry may race; ticks are serialised so they never overlap. */
     private val tickLock = Mutex()
 
     suspend fun run(onLoad: (DetailLoad) -> Unit) {
         if (!loadedOnce) tick(fetchEvent = true, fetchSummary = true, onLoad)
         while (true) {
+            if (state == GameState.FINAL && !finalSummaryTried && (lastSummary ?: Long.MIN_VALUE) < (lastEvent ?: Long.MIN_VALUE)) {
+                finalSummaryTried = true // attempted once, success or not: a failure never loops
+                tick(fetchEvent = false, fetchSummary = true, onLoad)
+                continue
+            }
             val p = GameDetailRefreshPolicy.plan(state, startsAtMs, clock(), lastEvent, lastSummary, failures, config, wantsUpcomingSummary = wantsUpcomingSummary)
             if (p.fetchEvent || p.fetchSummary) {
                 tick(p.fetchEvent, p.fetchSummary, onLoad)

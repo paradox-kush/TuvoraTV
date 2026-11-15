@@ -106,18 +106,18 @@ class GameScreenMarkersDTest {
         val d = ChartMarkers.dividers(h, listOf(play(t0 + 30 * 30_000L, TimelineKind.PERIOD_START, period = "2nd"), play(t0 + 60 * 30_000L, TimelineKind.PERIOD_START, period = "3rd")), "Ice Hockey")
         assertEquals(listOf("P2", "P3"), d.map { it.second }); assertEquals(30f / 99f, d[0].first, 0.0001f)
     }
-    @Test fun `dividers - a feed with only period ends marks the start of the next period`() {
+    @Test fun `dividers - a feed with only period ends draws no divider (no guessing)`() {
         val d = ChartMarkers.dividers(series(100), listOf(play(t0 + 25 * 30_000L, TimelineKind.PERIOD_END, period = "1st Quarter"), play(t0 + 50 * 30_000L, TimelineKind.PERIOD_END, period = "2nd Quarter")), "Basketball")
-        assertEquals(listOf("Q2", "Q3"), d.map { it.second })
+        assertTrue("an end is the start of a break, never a guessed start (core review fix 6)", d.isEmpty())
     }
-    @Test fun `dividers - a start wins over the previous end and overtime reads OT`() {
+    @Test fun `dividers - only starts count, an end is ignored`() {
         val plays = listOf(play(t0 + 29 * 30_000L, TimelineKind.PERIOD_END, period = "1st"), play(t0 + 30 * 30_000L, TimelineKind.PERIOD_START, period = "2nd"), play(t0 + 70 * 30_000L, TimelineKind.PERIOD_END, period = "3rd"))
         val d = ChartMarkers.dividers(series(100), plays, "Ice Hockey")
-        assertEquals(listOf("P2", "OT"), d.map { it.second }); assertEquals(30f / 99f, d[0].first, 0.0001f)
+        assertEquals(listOf("P2"), d.map { it.second }); assertEquals(30f / 99f, d[0].first, 0.0001f)
     }
     @Test fun `dividers - soccer reads 45 and 90 and out-of-series or clockless boundaries are skipped`() {
         val h = series(100)
-        assertEquals(listOf("45'", "90'"), ChartMarkers.dividers(h, listOf(play(t0 + 40 * 30_000L, TimelineKind.PERIOD_END, period = "1st Half"), play(t0 + 80 * 30_000L, TimelineKind.PERIOD_END, period = "2nd Half")), "Soccer").map { it.second })
+        assertEquals(listOf("45'", "90'"), ChartMarkers.dividers(h, listOf(play(t0 + 40 * 30_000L, TimelineKind.PERIOD_START, period = "2nd Half"), play(t0 + 80 * 30_000L, TimelineKind.PERIOD_START, period = "3rd Half")), "Soccer").map { it.second })
         assertTrue(ChartMarkers.dividers(h, listOf(play(t0 + 9_000 * 30_000L, TimelineKind.PERIOD_START, period = "2nd")), "Ice Hockey").isEmpty())
         assertTrue(ChartMarkers.dividers(h, listOf(play(0, TimelineKind.PERIOD_START, period = "2nd").copy(wallclockMs = null)), "Ice Hockey").isEmpty())
         assertTrue("start of the game is no divider", ChartMarkers.dividers(h, listOf(play(t0 + 5 * 30_000L, TimelineKind.PERIOD_START, period = "1st")), "Ice Hockey").isEmpty())

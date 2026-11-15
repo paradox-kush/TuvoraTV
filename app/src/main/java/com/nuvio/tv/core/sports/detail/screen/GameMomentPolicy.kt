@@ -97,7 +97,7 @@ object GameMomentPolicy {
         if (pa != pb) return Moment.PossessionChange(pb)
         if (a.yardLine == b.yardLine) return null
         val loss = if (pb == SideKey.HOME) b.yardLine < a.yardLine else b.yardLine > a.yardLine
-        return Moment.FieldMove(a.yardLine, b.yardLine, loss = loss, firstDown = b.down == 1 && a.down != 1)
+        return Moment.FieldMove(a.yardLine, b.yardLine, loss = loss, firstDown = b.down == 1 && (a.down != 1 || (!loss && a.distance != null && kotlin.math.abs(b.yardLine - a.yardLine) >= a.distance)))
     }
 
     /** A different real last event than before (compared by kind, minute and text); the event disappearing animates nothing. */

@@ -48,26 +48,25 @@ object ChartMarkers {
     }
 
     /**
-     * Period boundaries as (x, label), left to right. A boundary comes from the start of period n or, when the feed has only ends (basketball,
-     * football), from the end of period n-1; a start wins. A boundary with no wall clock, outside the series, or the start of the game is skipped.
+     * Period starts as (x, label), left to right. Only a real PERIOD_START play draws a divider (an end of period n-1 is the start of a break
+     * for halftime and quarter breaks, so it is never used as a guess): sports whose feed has no period-start plays draw none. A start with no
+     * wall clock, outside the series, or the start of the game is skipped.
      */
     fun dividers(history: List<WinPoint>, plays: List<TimelineItem>, sport: String = ""): List<Pair<Float, String>> {
         val drawn = GameDetailUiPolicy.chartSeries(history) ?: return emptyList()
         val tMin = drawn.first().t
         val tMax = drawn.last().t
         val starts = HashMap<Int, Long>()
-        val ends = HashMap<Int, Long>()
         for (p in plays) {
             val w = p.wallclockMs ?: continue
             val n = periodNumber(p.period) ?: continue
             when (p.kind) {
                 TimelineKind.PERIOD_START -> starts.getOrPut(n) { w }
-                TimelineKind.PERIOD_END -> ends.getOrPut(n + 1) { w }
                 else -> Unit
             }
         }
-        return (starts.keys + ends.keys).filter { it >= 2 }.sorted().mapNotNull { n ->
-            val w = starts[n] ?: ends[n] ?: return@mapNotNull null
+        return starts.keys.filter { it >= 2 }.sorted().mapNotNull { n ->
+            val w = starts[n] ?: return@mapNotNull null
             if (w !in tMin..tMax) return@mapNotNull null
             val idx = drawn.indices.minBy { abs(drawn[it].t - w) }
             idx / (drawn.size - 1).toFloat() to boundaryLabel(sport, n)

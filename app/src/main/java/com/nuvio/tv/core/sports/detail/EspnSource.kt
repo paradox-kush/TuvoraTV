@@ -165,6 +165,21 @@ class EspnSource(
  * (the pre-event-endpoint behaviour). Blocks only the scoreboard carries stay absent and keep their earlier value in mergeOver.
  */
 object EspnLiveOverlay {
+    private fun scoresOf(comp: kotlinx.serialization.json.JsonElement?): Map<String, Int> =
+        ((comp as? kotlinx.serialization.json.JsonObject)?.get("competitors") as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { c ->
+            val o = c as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val ha = (o["homeAway"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
+            val sc = (o["score"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.trim()?.toIntOrNull() ?: return@mapNotNull null
+            ha to sc
+        }.toMap()
+
+    private fun summaryBehind(base: JsonElement?, live: kotlinx.serialization.json.JsonObject): Boolean {
+        if (base == null) return false
+        val bs = scoresOf(JsonPathReader.first(base, "competitions[0]"))
+        val ls = scoresOf(live)
+        return ls.any { (ha, v) -> (bs[ha] ?: return@any false) > v }
+    }
+
     fun apply(base: JsonElement?, summary: JsonElement?, baseIsFresher: Boolean): JsonElement? {
         if (base != null && baseIsFresher) {
             val situation = JsonPathReader.first(summary, "situation") ?: return base
@@ -175,6 +190,9 @@ object EspnLiveOverlay {
             return kotlinx.serialization.json.JsonObject(root + ("competitions" to kotlinx.serialization.json.JsonArray(listOf(patched))))
         }
         val comp = JsonPathReader.first(summary, "header.competitions[0]") as? kotlinx.serialization.json.JsonObject ?: return base
+        // A summary fetched later can still be an OLDER cached copy: within a game a score never goes down, so a summary behind the event
+        // is treated as the older of the two (situation only).
+        if (summaryBehind(base, comp)) return apply(base, summary, baseIsFresher = true)
         val situation = JsonPathReader.first(summary, "situation")
         val withSituation = if (situation != null && !comp.containsKey("situation")) kotlinx.serialization.json.JsonObject(comp + ("situation" to situation)) else comp
         val fields = LinkedHashMap<String, JsonElement>()
