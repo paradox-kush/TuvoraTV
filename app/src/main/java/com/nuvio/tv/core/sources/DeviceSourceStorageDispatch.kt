@@ -13,3 +13,16 @@ import kotlinx.coroutines.withContext
 class DeviceSourceStorageDispatch(private val dispatcher: CoroutineDispatcher = Dispatchers.IO) {
     suspend fun <T> run(block: suspend () -> T): T = withContext(dispatcher) { block() }
 }
+
+/**
+ * Runs [work] (which commits) on the storage dispatcher, then — back on the caller (Main for the
+ * settings dialog) — runs [onReady] if the engine ended ready. UI callbacks never run on IO.
+ */
+internal suspend fun DeviceSourceStorageDispatch.commitThenIfReady(
+    engine: DeviceSourceEngine,
+    work: suspend DeviceSourceEngine.() -> Unit,
+    onReady: () -> Unit,
+) {
+    run { engine.work() }
+    if (engine.state.value.ready) onReady()
+}

@@ -114,7 +114,7 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
     fun action(block: suspend () -> Unit) {
         if (actionBusy) return
         actionBusy = true
-        scope.launch { try { error = null; commits.run { block() } } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        scope.launch { try { error = null; block() } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (_: Exception) { error = "Could not save your choice. Please retry." }
             finally { actionBusy = false } }
     }
@@ -145,17 +145,17 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
                                     }
                                     Switch(modifier = Modifier.semantics { contentDescription = source.name + " on this device" },
                                         checked = source.accountEnabled && engine.choice(profile,source.sourceId),
-                                        enabled = source.accountEnabled, onCheckedChange = { on -> action {
+                                        enabled = source.accountEnabled, onCheckedChange = { on -> action { commits.run {
                                             engine.setChoice(profile,source.sourceId,on)
                                             engine.refresh(profile,refreshSources = false,forceDelta = false)
-                                        } })
+                                        } } })
                                 }
                                 val pending = view.disk.pending.firstOrNull { it.profile == profile && it.source == source.sourceId && it.conflict }
                                 if (pending != null) {
                                     Text("Changed elsewhere. Choose which setting to keep.")
                                     Row {
-                                        TextButton(onClick = { action { engine.resolve(profile,source.sourceId,false) } }) { Text("Use saved choice") }
-                                        TextButton(onClick = { action { engine.resolve(profile,source.sourceId,true); engine.refresh(profile,false,false) } }) { Text("Apply my choice") }
+                                        TextButton(onClick = { action { commits.run { engine.resolve(profile,source.sourceId,false) } } }) { Text("Use saved choice") }
+                                        TextButton(onClick = { action { commits.run { engine.resolve(profile,source.sourceId,true); engine.refresh(profile,false,false) } } }) { Text("Apply my choice") }
                                     }
                                 }
                             }
@@ -163,7 +163,7 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
                     }
                     if (view.mode == "storage_error" && localOnly) {
                         Text("Saved choices could not be read. Starting again uses account defaults.")
-                        Button(onClick = { action { engine.startLocal() } }) { Text("Start local setup again") }
+                        Button(onClick = { action { commits.run { engine.startLocal() } } }) { Text("Start local setup again") }
                     }
                     if (view.ready && !localOnly) TextButton(onClick = { managing = !managing }) { Text("Manage saved setups") }
                     if (choosing) {
@@ -176,7 +176,7 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
                         Button(modifier = Modifier.focusRequester(continueFocus),
                             enabled = !view.busy && !actionBusy && name.isNotBlank(),onClick = {
                                 keyboard?.hide()
-                                action { if (view.disk.binding?.registration != null) engine.refresh(profile) else engine.select(name,profile = profile); if (engine.state.value.ready) { onSetupComplete(); onClose() } }
+                                action { val retry = view.disk.binding?.registration != null; commits.commitThenIfReady(engine, { if (retry) refresh(profile) else select(name,profile = profile) }) { onSetupComplete(); onClose() } }
                             }) { Text(if (view.disk.binding?.registration != null) "Retry" else "Continue") }
                         TextButton(onClick = { editingName = !editingName }) { Text(if (editingName) "Keep this name" else "Change device name") }
                         if (view.setups.isNotEmpty()) {
@@ -189,7 +189,7 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
                                     Row {
                                         TextButton(enabled = !view.busy && !actionBusy,onClick = { keyboard?.hide(); replacing = setup }) { Text("Restore") }
                                         TextButton(enabled = !view.busy && !actionBusy && name.isNotBlank(),onClick = { action {
-                                            engine.select(name,setup,true,profile); if (engine.state.value.ready) { onSetupComplete(); onClose() }
+                                            commits.commitThenIfReady(engine, { select(name,setup,true,profile) }) { onSetupComplete(); onClose() }
                                         } }) { Text("Copy to this device") }
                                     }
                                 }
@@ -199,7 +199,7 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
                 }
                 Row {
                     if (view.ready || status != null) TextButton(enabled = !view.busy && !actionBusy,
-                        onClick = { action { engine.refresh(profile) } }) { Text("Refresh") }
+                        onClick = { action { commits.run { engine.refresh(profile) } } }) { Text("Refresh") }
                     if (view.ready || view.mode == "unavailable") TextButton(onClick = onClose) { Text("Done") }
                 }
             }
@@ -208,7 +208,7 @@ fun DeviceSourceSettings(engine: DeviceSourceEngine, profile: Int, localOnly: Bo
     replacing?.let { setup ->
         AlertDialog(onDismissRequest = { replacing = null },title = { Text("Replace previous installation?") },
             text = { Text("Restore ${setup.label}. Its previous installation will stop saving changes to this setup. Source sign-ins are not copied.") },
-            confirmButton = { TextButton(onClick = { replacing = null; action { engine.select(setup.label,setup,false,profile); if (engine.state.value.ready) { onSetupComplete(); onClose() } } }) { Text("Restore setup") } },
+            confirmButton = { TextButton(onClick = { replacing = null; action { commits.commitThenIfReady(engine, { select(setup.label,setup,false,profile) }) { onSetupComplete(); onClose() } } }) { Text("Restore setup") } },
             dismissButton = { TextButton(onClick = { replacing = null }) { Text("Cancel") } })
     }
 }

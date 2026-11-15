@@ -1,6 +1,9 @@
 package com.nuvio.tv.core.sources
 
 import java.io.IOException
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -74,5 +77,39 @@ class DeviceSourceStorageDispatchTest {
         }
         assertTrue("the commit failure reaches the caller", thrown is IOException)
         assertEquals("a failed commit is never published", null, engine.state.value.disk.sources[1])
+    }
+
+    // Coroutine debug mode suffixes thread names with " @coroutine#N".
+    private fun threadName() = Thread.currentThread().name.substringBefore(" @")
+
+    @Test
+    fun `post-commit callbacks run on the caller, only the engine write on the storage dispatcher`() {
+        val storageExecutor = Executors.newSingleThreadExecutor { Thread(it, "device-source-storage") }
+        try {
+            var writeThread: String? = null
+            var callbackThread: String? = null
+            val storage = object : DevicePreferenceStorage {
+                var value: String? = null
+                override fun read(): String? = value
+                override fun write(value: String) {
+                    writeThread = threadName()
+                    this.value = value
+                }
+            }
+            val engine = localEngine(storage)
+            val dispatch = DeviceSourceStorageDispatch(storageExecutor.asCoroutineDispatcher())
+            val caller = threadName()
+
+            runBlocking {
+                dispatch.commitThenIfReady(engine, { localSources(1, listOf(source)) }) {
+                    callbackThread = threadName()
+                }
+            }
+
+            assertEquals("engine write thread", "device-source-storage", writeThread)
+            assertEquals("post-commit callback thread (onSetupComplete/onClose)", caller, callbackThread)
+        } finally {
+            storageExecutor.shutdownNow()
+        }
     }
 }
