@@ -601,6 +601,88 @@ fun LiveGuide(
         aimedContentId = aimedChannel()?.contentId,
         playingContentId = playingContentId,
     )
+    // Redesign change 7 + B1 + B2: the remote's own shortcuts. Number keys with a live match (guide: move the
+    // highlight; full screen: tune), "0" or LAST = the previous channel, CH+ / CH- page the guide, Play/Pause in the
+    // guide = full screen on what plays. Explicit handling: none of these is a focus move Compose could search.
+    val numberEntry = remember { NumberEntryState() }
+    fun swapToPrevious() {
+        surfAim = null
+        val id = zapBack.target(viewModel.zapLineup().map { it.contentId }) ?: return
+        viewModel.focusChannel(id)?.let(playbackViewModel::requestTune)
+        if (fullscreen) controls.showBanner()
+        else pendingRestoreEntityId = displayChannels.firstOrNull { it.contentId == id }?.entityId
+    }
+    fun commitNumber() {
+        val typed = numberEntry.take()
+        if (typed.isEmpty()) return
+        if (NumberEntryPolicy.isPreviousChannel(typed)) { swapToPrevious(); return }
+        val index = NumberEntryPolicy.match(typed, displayChannels.size)
+        if (index == null) { numberEntry.noMatch = typed; return }
+        val channel = displayChannels[index]
+        if (fullscreen) {
+            surfAim = null
+            viewModel.focusChannel(channel.contentId)?.let(playbackViewModel::requestTune)
+            controls.showBanner()
+        } else {
+            // In the guide a number only moves the highlight; OK then watches (browsing never tunes).
+            pendingRestoreEntityId = channel.entityId
+        }
+    }
+    fun pageGuide(down: Boolean) {
+        if (displayChannels.isEmpty()) return
+        val current = displayChannels.indexOfFirst { it.contentId == aimedChannel()?.contentId }.coerceAtLeast(0)
+        val visible = channelListState.layoutInfo.visibleItemsInfo.size
+        pendingRestoreEntityId = displayChannels[NumberEntryPolicy.pageTarget(current, visible, displayChannels.size, down)].entityId
+    }
+    /** True when the key was one of the remote's shortcuts (and is consumed). */
+    fun remoteShortcut(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        val overlayUp = channelMenuAsk != null || layoutPickerOpen || searchDialogOpen || sheetProgramme != null ||
+            (fullscreen && livePanelOpen)
+        if (overlayUp) return false
+        val down = event.type == KeyEventType.KeyDown
+        event.key.remoteDigit()?.let { digit ->
+            if (down && event.nativeKeyEvent.repeatCount == 0) numberEntry.digit(digit)
+            return true
+        }
+        if (numberEntry.active) {
+            when (event.key) {
+                // OK goes now; consumed on both halves so the focused row never also clicks.
+                Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { if (!down) commitNumber(); return true }
+                // Back cancels; nothing tunes.
+                Key.Back -> { if (!down) numberEntry.cancel(); return true }
+                else -> Unit
+            }
+        }
+        if (fullscreen) return false
+        when (event.key) {
+            // CH+ follows the remote's number (the next, higher-numbered rows), as in full screen.
+            Key.ChannelUp, Key.PageDown -> { if (down) pageGuide(down = true); return true }
+            Key.ChannelDown, Key.PageUp -> { if (down) pageGuide(down = false); return true }
+            Key.LastChannel -> { if (down && event.nativeKeyEvent.repeatCount == 0) swapToPrevious(); return true }
+            Key.MediaPlayPause -> {
+                if (playingContentId == null) return false
+                if (down && event.nativeKeyEvent.repeatCount == 0) onFullscreenChange(true)
+                return true
+            }
+            else -> return false
+        }
+    }
+    LaunchedEffect(numberEntry) {
+        androidx.compose.runtime.snapshotFlow { numberEntry.tick }.collectLatest {
+            if (!numberEntry.active) return@collectLatest
+            delay(NumberEntryPolicy.COMMIT_MS)
+            commitNumber()
+        }
+    }
+    LaunchedEffect(numberEntry) {
+        androidx.compose.runtime.snapshotFlow { numberEntry.noMatch }.collectLatest {
+            if (it == null) return@collectLatest
+            delay(NumberEntryPolicy.COMMIT_MS)
+            numberEntry.noMatch = null
+        }
+    }
+    LaunchedEffect(fullscreen) { numberEntry.cancel() }
+
     fun hideControls() {
         controls.reset()
         // The buttons leave composition: focus waits behind the video for the next key.
@@ -662,6 +744,7 @@ fun LiveGuide(
             .onPreviewKeyEvent { event ->
                 // B4: a key pressed after opening a group means the viewer moved on; the late landing is dropped.
                 if (!fullscreen && event.type == KeyEventType.KeyDown) pendingGroupRow = null
+                if (remoteShortcut(event)) return@onPreviewKeyEvent true
                 if (!fullscreen) return@onPreviewKeyEvent false
                 // F28: the remote map lives in LiveControlsPolicy (shared with the clean live player).
                 // An open panel (the channel list, a picker, a hide notice's Undo) keeps its own keys.
@@ -1204,6 +1287,8 @@ fun LiveGuide(
                 )
             }
         }
+
+        NumberEntryReadout(numberEntry, displayChannels.size) { displayChannels.getOrNull(it)?.name }
 
         // START_OVER is the only state with two destinations, so it is the only one that asks.
         val sheet = sheetProgramme
