@@ -11,8 +11,12 @@ data class GuideReplayRetry(val channel: GuideChannel, val programme: XtreamProg
  * provider simply has no recording of does not - there is nothing a second try would change.
  */
 internal object GuideReplayNoticePolicy {
-    /** How long the Retry notice waits for the viewer before letting go. */
-    const val RETRY_NOTICE_MS = 20_000L
+    /**
+     * How long the Retry notice waits for the viewer: until they dismiss it (BACK or any arrow). It used to let go
+     * after 20 s, so a later OK fell through to the channel row and started an unwanted live preview (UX278). A
+     * dismissal puts focus back in the guide; the notice never hands its keys to the row on its own.
+     */
+    const val RETRY_NOTICE_MS = Long.MAX_VALUE
 
     fun refused(state: LiveGuideUiState, message: String, channel: GuideChannel, programme: XtreamProgram): LiveGuideUiState =
         state.copy(actionError = message, replayRetry = GuideReplayRetry(channel, programme))

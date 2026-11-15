@@ -116,6 +116,12 @@ internal fun RowScope.GuideProgrammeCells(
     stripFocus: FocusRequester? = null,
     nowFraction: Float? = null,
     onExitTimeline: (() -> Unit)? = null,
+    /** Text for a window with no programmes; null keeps "No guide data for this time" (UX275, UX331). */
+    emptyLabel: String? = null,
+    /** The empty label is the channel's own name (no guide): drawn dim and italic, not as a sentence. */
+    dimEmptyLabel: Boolean = false,
+    /** OK on the strip; null = leave the timeline. Set while a failed past-window load waits for Retry (UX275). */
+    onStripOk: (() -> Unit)? = null,
 ) {
     val windowEndMs = windowStartMs + GuideTimeTravel.WINDOW_MS
     val visible = programmes
@@ -221,7 +227,7 @@ internal fun RowScope.GuideProgrammeCells(
                         )
                         // clickable for reliable D-pad focus (see GuideCell); OK on an empty
                         // stretch of time has nothing to do.
-                        .clickable { onExitTimeline?.invoke() }
+                        .clickable { (onStripOk ?: onExitTimeline)?.invoke() }
                 } else Modifier
             )
     ) {
@@ -231,12 +237,13 @@ internal fun RowScope.GuideProgrammeCells(
         ) {
             if (visible.isEmpty()) {
                 GuideCell(
-                    title = stringResource(R.string.iptv_guide_empty_window),
+                    title = emptyLabel ?: stringResource(R.string.iptv_guide_empty_window),
                     weightMs = GuideTimeTravel.WINDOW_MS,
                     action = ProgrammeAction.NONE,
                     live = false,
                     filler = true,
                     onClick = {},
+                    dim = dimEmptyLabel,
                 )
             } else {
                 var cursor = windowStartMs
@@ -315,6 +322,8 @@ private fun RowScope.GuideCell(
     identity: Long = 0L,
     /** Scheduled or recording: draws the REC badge, styled like the catch-up glyph. */
     recording: Boolean = false,
+    /** A filler that names the channel (no guide): dim and italic, so it never reads as a programme. */
+    dim: Boolean = false,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val latestOnClick by rememberUpdatedState(onClick)
@@ -378,7 +387,8 @@ private fun RowScope.GuideCell(
                     isFocused -> NuvioTheme.colors.FocusContent
                     live -> NuvioTheme.colors.TextPrimary
                     else -> NuvioTheme.colors.TextSecondary
-                },
+                }.let { if (dim && !isFocused) it.copy(alpha = 0.55f) else it },
+                fontStyle = if (dim) androidx.compose.ui.text.font.FontStyle.Italic else null,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

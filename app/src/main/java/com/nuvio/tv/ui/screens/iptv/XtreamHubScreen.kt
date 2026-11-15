@@ -31,6 +31,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -131,6 +134,10 @@ fun XtreamHubScreen(
     }
     var openCategoryId by remember(uiState.selectedAccountId, uiState.section) { mutableStateOf<String?>(null) }
     val firstFocus = remember { FocusRequester() }
+    // UX389: the first entry puts focus in the channel list (last-watched row, else row 1), not on the tab row.
+    // One shot, and cancelled by the viewer's first key so a late list never steals focus from where they went.
+    var entryFocusPending by remember { mutableStateOf(true) }
+    val fixGuideViewModel: GuideFixActionViewModel = hiltViewModel()
 
     // Per-tab focus targets so D-pad UP from the first content row lands back on the
     // active tab, and focusRestorer restores focus to it when returning to the header.
@@ -280,7 +287,15 @@ fun XtreamHubScreen(
         return
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(top = if (liveFullscreen) 0.dp else NuvioTheme.spacing.xl)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = if (liveFullscreen) 0.dp else NuvioTheme.spacing.xl)
+            .onPreviewKeyEvent { event ->
+                if (entryFocusPending && event.type == KeyEventType.KeyDown) entryFocusPending = false
+                false
+            },
+    ) {
         // Header: section tabs lead, provider picker sits out on the right.
         //
         // The provider chip is NOT a section — it selects data, not a destination. Sitting first
@@ -293,7 +308,7 @@ fun XtreamHubScreen(
           // another screen) comes back with "focus came from outside".
           val headerFocus = remember { HubHeaderFocus() }
           val section = uiState.section
-          val selectSection: (XtreamSection) -> Unit = viewModel::selectSection
+          val selectSection: (XtreamSection) -> Unit = { entryFocusPending = false; viewModel.selectSection(it) }
           val notATab: () -> Unit = { headerFocus.onControlFocused(null, section) }
           Row(
             modifier = Modifier
@@ -354,6 +369,9 @@ fun XtreamHubScreen(
                 onSwitchAccount = viewModel::selectAccount,
                 searchRequest = liveSearchRequest,
                 onOpenRecordings = onOpenRecordings,
+                entryFocusPending = entryFocusPending && uiState.section == XtreamSection.LIVE,
+                onEntryFocusConsumed = { entryFocusPending = false },
+                onFixGuide = { id -> fixGuideViewModel.openPlaylistSettings(id); onManagePlaylists() },
             )
         } else {
             HubBrowseContent(

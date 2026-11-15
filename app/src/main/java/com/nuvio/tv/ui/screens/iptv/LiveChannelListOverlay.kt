@@ -70,12 +70,14 @@ internal fun BoxScope.LiveChannelListOverlay(
     channels: List<GuideChannel>,
     epg: Map<Int, GuideEpg>,
     playingContentId: String?,
+    /** UX107: the aimed channel — the anchor when the playing channel is no longer a row (it was hidden). */
+    aimedContentId: String? = null,
     favoriteIds: Set<String>,
     onBrowse: (GuideChannel) -> Unit,
     onPick: (GuideChannel) -> Unit,
     onClose: () -> Unit,
 ) {
-    val startIndex = channels.indexOfFirst { it.contentId == playingContentId }.coerceAtLeast(0)
+    val startIndex = MiniGuideStartPolicy.startIndex(channels.map { it.contentId }, playingContentId, aimedContentId)
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = (startIndex - 3).coerceAtLeast(0))
     val startFocus = remember { FocusRequester() }
     val latestClose by rememberUpdatedState(onClose)
@@ -180,11 +182,15 @@ private fun ChannelListRow(
             modifier = Modifier.width(34.dp),
             maxLines = 1,
         )
-        AsyncImage(
-            model = channel.logo,
-            contentDescription = null,
-            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(NuvioTheme.radii.xs)),
-        )
+        if (GuideNoGuidePolicy.needsMonogram(channel.logo)) {
+            MonogramTile(name = channel.name, modifier = Modifier.size(36.dp))
+        } else {
+            AsyncImage(
+                model = channel.logo,
+                contentDescription = null,
+                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(NuvioTheme.radii.xs)),
+            )
+        }
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)) {
                 if (playing) {

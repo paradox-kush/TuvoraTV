@@ -66,6 +66,8 @@ class XtreamHubBoundedLoadTest {
     private var failRowTimes = 0
     private var hangRow = false
     private var rowAsks = 0
+    private var vodEmpty = false
+    private var remembered: String? = XtreamSection.MOVIES.name
     private val realSink = BoundedLoad.sink
 
     private val provider = object : IptvClient {
@@ -73,6 +75,7 @@ class XtreamHubBoundedLoadTest {
         override suspend fun vodCategories(acc: XtreamAccount): Result<List<XtreamCategory>> {
             delayedCategories?.let { return Result.success(it.await()) }
             if (hangCategories) awaitCancellation()
+            if (vodEmpty) return Result.success(emptyList())
             return Result.success(listOf(XtreamCategory("1", categoryName)))
         }
         override suspend fun seriesCategories(acc: XtreamAccount) = Result.success(emptyList<XtreamCategory>())
@@ -105,7 +108,7 @@ class XtreamHubBoundedLoadTest {
         val store = mockk<XtreamAccountStore> { every { accounts } returns MutableStateFlow(listOf(account)) }
         val factory = mockk<IptvClientFactory> { every { clientFor(any()) } returns provider }
         val selection = mockk<XtreamHubSelectionStore>(relaxed = true) {
-            coEvery { read() } returns RememberedHubSelection(account.id, XtreamSection.MOVIES.name)
+            coEvery { read() } returns RememberedHubSelection(account.id, remembered)
         }
         val liveStore = mockk<XtreamLiveStore>(relaxed = true) { every { recents } returns flowOf(emptyList()) }
         val library = mockk<LibraryRepository>(relaxed = true) { every { libraryItems } returns flowOf(emptyList()) }
@@ -263,5 +266,33 @@ class XtreamHubBoundedLoadTest {
         assertEquals("the page came back on its own", LoadStatus.Loaded, vm.uiState.value.categoriesLoad)
         assertEquals(listOf("1"), vm.uiState.value.categories.map { it.id })
         assertEquals("and the error card went away", null, vm.uiState.value.error)
+    }
+
+    /** UX389: the hub opened on an empty Movies tab ("Nothing here"). The entry tab that proves empty hands over to the next. */
+    @Test
+    fun `an entry tab with nothing in it hands over to Live TV`() = runTest(main.dispatcher) {
+        vodEmpty = true
+        val vm = hub()
+        runCurrent()
+        assertEquals("the remembered Movies tab was empty, so the hub lands on Live TV", XtreamSection.LIVE, vm.uiState.value.section)
+    }
+
+    @Test
+    fun `a viewer who picked an empty tab stays on it`() = runTest(main.dispatcher) {
+        val vm = hub()
+        runCurrent()
+        vodEmpty = true
+        vm.selectSection(XtreamSection.SERIES)
+        vm.selectSection(XtreamSection.MOVIES)
+        runCurrent()
+        assertEquals("only the entry is auto-advanced, a chosen tab is the viewer's call", XtreamSection.MOVIES, vm.uiState.value.section)
+    }
+
+    @Test
+    fun `nothing remembered opens on Live TV`() = runTest(main.dispatcher) {
+        remembered = null
+        val vm = hub()
+        runCurrent()
+        assertEquals(XtreamSection.LIVE, vm.uiState.value.section)
     }
 }

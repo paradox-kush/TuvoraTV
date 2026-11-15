@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.R
+import com.nuvio.tv.core.iptv.LoadStatus
 import com.nuvio.tv.core.contracts.LivePausePhase
 import com.nuvio.tv.core.picture.aspectModeLabel
 import com.nuvio.tv.core.picture.nextAspectMode
@@ -60,7 +61,10 @@ internal class FullscreenControlsState {
  */
 internal object GuideBodyProjection {
     fun of(state: LiveGuideUiState): LiveGuideUiState =
-        if (state.focusedChannelId == null) state else state.copy(focusedChannelId = null)
+        if (state.focusedChannelId == null && state.historyLoad == LoadStatus.Idle && state.historyChannelId == null) state
+        // The past-window load status belongs to the timeline row and the info pane (UX275), which read it
+        // themselves: its Loading -> Loaded flips on every focus must not restart the body either.
+        else state.copy(focusedChannelId = null, historyLoad = LoadStatus.Idle, historyChannelId = null)
 }
 
 /**

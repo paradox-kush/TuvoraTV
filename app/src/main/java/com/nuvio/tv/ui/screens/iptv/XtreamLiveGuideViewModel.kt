@@ -154,6 +154,14 @@ data class LiveGuideUiState(
     /** F01: the channel search the "Search" row shows results for (blank = not searched yet). */
     val searchQuery: String = "",
     val epg: Map<Int, GuideEpg> = emptyMap(),
+    /**
+     * UX331/UX337/UX359: stream ids whose guide the source ladder answered EMPTY (no row, no cell). The grid reads
+     * them, with [epg], to tell "this playlist sent no guide" from "still asking". Reset with the guide's data.
+     */
+    val epgEmpty: Set<Int> = emptySet(),
+    /** UX275: the focused channel's catch-up history fetch (bounded), and whose it is. */
+    val historyLoad: LoadStatus = LoadStatus.Idle,
+    val historyChannelId: String? = null,
     val focusedChannelId: String? = null,
     /** The category column's load (the playlist import for M3U/Stalker). Entered only through [BoundedLoad]. */
     val categoriesLoad: LoadStatus = LoadStatus.Idle,
@@ -371,6 +379,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         if (!GuideDataRefreshPolicy.appliesTo(playlistId, account?.id)) return
         epgAdmission.invalidate()
         epgRequested.clear()
+        _uiState.update { it.copy(epgEmpty = emptySet()) }
         val state = _uiState.value
         val focused = state.channels.indexOfFirst { it.contentId == state.focusedChannelId }
         val ids = GuideDataRefreshPolicy.streamIdsToReask(
@@ -730,6 +739,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 selectedCategoryId = null,
                 channels = emptyList(),
                 epg = emptyMap(),
+                epgEmpty = emptySet(),
+                historyLoad = LoadStatus.Idle,
+                historyChannelId = null,
                 focusedChannelId = null,
                 categoriesLoad = LoadStatus.Idle,
                 channelsLoad = LoadStatus.Idle,
@@ -1315,6 +1327,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 if (programs.isEmpty()) {
                     epgAdmission.recordEmpty(streamId.toString(), nowMs)
                     epgRequested.remove(streamId)
+                    _uiState.update { if (streamId in it.epgEmpty) it else it.copy(epgEmpty = it.epgEmpty + streamId) }
                     return@withPermit
                 }
                 epgAdmission.recordAnswered(streamId.toString())
@@ -1325,7 +1338,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 // Merge, never replace: a row already drawn from stored rows keeps its cells (the
                 // past lives only there) and takes just the fresh now/next — B11.
                 _uiState.update {
-                    it.copy(epg = it.epg + (streamId to GuideWindowRows.mergeNowNext(it.epg[streamId], now, next, programs)))
+                    it.copy(
+                        epg = it.epg + (streamId to GuideWindowRows.mergeNowNext(it.epg[streamId], now, next, programs)),
+                        epgEmpty = it.epgEmpty - streamId,
+                    )
                 }
                 // A Stalker portal's now/next is answered FROM its bulk guide, so the stored window is on
                 // disk exactly now: a window read made before the first ingest landed found nothing, and
@@ -1458,8 +1474,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // The per-channel history table is the Xtream panel's (get_simple_data_table). An M3U playlist's
         // past programmes come from its XMLTV, already on disk.
         if (acc.sourceType != XtreamAccount.SOURCE_XTREAM) return
+        // UX275: the fetch is a bounded load, so a past window can say Loading or Failed (with Retry) instead of
+        // reading as "no guide data for this time". Failure used to be swallowed by runCatching.
+        _uiState.update { it.copy(historyChannelId = channel.contentId, historyLoad = BoundedLoad.begin(LoadSurface.GUIDE_HISTORY)) }
         viewModelScope.launch {
-            runCatching {
+            val outcome = BoundedLoad.run(
+                surface = LoadSurface.GUIDE_HISTORY,
+                report = mapOf("source_type" to acc.sourceType),
+            ) {
                 historyFetcher.ensure(
                     playlistId = acc.id,
                     channelId = epgChannelKey(channel.streamId),
@@ -1467,8 +1489,24 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     nowMs = System.currentTimeMillis(),
                 )
             }
+            // A newer focus owns the status now; this answer is for a channel the viewer already left.
+            _uiState.update { if (it.historyChannelId == channel.contentId) it.copy(historyLoad = outcome.status) else it }
             publishWindows(listOf(channel))
         }
+    }
+
+    /** UX275: Retry on a failed past-window load. Asked by the viewer only, never by a loop. */
+    fun retryHistory() {
+        val channel = _uiState.value.focusedChannel ?: return
+        if (_uiState.value.historyLoad !is LoadStatus.Failed) return
+        ensureHistory(channel)
+    }
+
+    /** UX389: this playlist's most recently watched channels, newest first (entry focus; never tunes). */
+    suspend fun recentContentIds(): List<String> {
+        val acc = account ?: return emptyList()
+        val prefix = XtreamItemRegistry.accountPrefix(acc.id)
+        return liveStore.recents.first().map { it.id }.filter { it.startsWith(prefix) }
     }
 
     /** Streams get_simple_data_table into the EPG table, atomically per channel, pruning as it goes. */
@@ -1483,8 +1521,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
             if (rows.size < PROGRAMME_CAP) rows.add(row)
         }
         // A failed fetch stamps nothing, so the next open tries again rather than reading as
-        // "this channel has no history" for the life of the install.
-        if (parsed.isFailure) return
+        // "this channel has no history" for the life of the install. It is thrown, not returned: the bounded
+        // load around it turns it into Failed (UX275), where it used to read as an empty past.
+        parsed.exceptionOrNull()?.let { throw it }
         contentDb.refillChannelEpg(playlistId, channelId, rows, nowMs)
         contentDb.pruneEpg(playlistId, com.nuvio.tv.core.iptv.CatchUpEpgWindow.pruneCutoffMs(nowMs, catchUpDays))
     }

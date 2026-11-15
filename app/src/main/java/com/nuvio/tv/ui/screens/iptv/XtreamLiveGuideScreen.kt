@@ -63,6 +63,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import com.nuvio.tv.core.iptv.GuideDisplayPreferences
+import com.nuvio.tv.core.iptv.LoadStatus
 import com.nuvio.tv.core.iptv.GuideLayoutPreset
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -147,6 +148,11 @@ fun LiveGuide(
     searchRequest: Int = 0,
     /** The Recordings page, for "View recordings" on the record confirmation. */
     onOpenRecordings: () -> Unit = {},
+    /** UX389: true on the hub's first entry only. Focus then goes to the channel list (never the tab row, never a tune). */
+    entryFocusPending: Boolean = false,
+    onEntryFocusConsumed: () -> Unit = {},
+    /** UX331: "Fix guide" — open this playlist's guide settings. */
+    onFixGuide: (accountId: String) -> Unit = {},
     viewModel: XtreamLiveGuideViewModel = hiltViewModel(),
 ) {
     val playbackViewModel: CleanLiveGuidePlaybackViewModel = hiltViewModel()
@@ -257,6 +263,42 @@ fun LiveGuide(
         pendingRestoreEntityId = null
     }
 
+    // UX389: entry focus. Once the list has landed on the hub's first entry, focus goes to the last-watched channel's
+    // row (else row 1) - the channel list, not the tab row. Focus only: nothing tunes, so a single-use provider link
+    // is not spent by opening the page. Never taken from a viewer who already moved (any key cancels the pending flag).
+    val entryListLanded = displayChannels.isNotEmpty() && uiState.channelsLoad !is com.nuvio.tv.core.iptv.LoadStatus.Loading
+    LaunchedEffect(entryFocusPending, entryListLanded) {
+        if (!GuideEntryFocusPolicy.due(entryFocusPending, entryListLanded, focusAlreadyInGuide = inCategory)) return@LaunchedEffect
+        val target = GuideEntryFocusPolicy.target(viewModel.recentContentIds(), displayChannels.map { it.contentId })
+            ?: return@LaunchedEffect
+        val index = displayChannels.indexOfFirst { it.contentId == target }
+        val entityId = displayChannels.getOrNull(index)?.entityId ?: return@LaunchedEffect
+        onEntryFocusConsumed()
+        channelListState.scrollToItem((index - 2).coerceAtLeast(0))
+        val landed = GuideFocusRequestLoop.requestUntilLanded {
+            channelRowRequesters[entityId]?.requestFocusOrFalse() == true
+        }
+        if (!landed) channelListFocus.requestFocusOrFalse()
+    }
+
+    // UX331: one verdict per group, not one sentence per row. Only rows whose guide has been asked count.
+    val noGuide = remember(uiState.epg, uiState.epgEmpty, displayChannels) {
+        val sample = displayChannels.take(NO_GUIDE_SAMPLE_ROWS)
+        val answered = HashMap<Int, Boolean>()
+        for (ch in sample) {
+            val epgRow = uiState.epg[ch.streamId]
+            when {
+                epgRow != null -> answered[ch.streamId] = epgRow.programmes.isNotEmpty() || epgRow.now != null
+                ch.streamId in uiState.epgEmpty -> answered[ch.streamId] = false
+            }
+        }
+        GuideNoGuidePolicy.groupHasNoGuide(displayChannels.size, answered)
+    }
+    val fixGuideFocus = remember { FocusRequester() }
+    // UX275: the past-window history load, read by the timeline row only (the body projection leaves it out).
+    val historyFlow = remember(viewModel) { viewModel.uiState.map { it.historyChannelId to it.historyLoad }.distinctUntilChanged() }
+    val historyState = historyFlow.collectAsStateWithLifecycle(initialValue = viewModel.uiState.value.historyChannelId to viewModel.uiState.value.historyLoad)
+
     // Focus inside the timeline: which channel's cells the cursor is in, and which edge to restore
     // to after the window scrolls (the cell that was focused no longer exists once it rebuilds).
     var timelineChannelId by remember { mutableStateOf<String?>(null) }
@@ -365,6 +407,7 @@ fun LiveGuide(
     )
     val playingContentId = readyPlayback?.target?.contentId?.value
     var requestedContentId by remember(account.id) { mutableStateOf<String?>(null) }
+    var requestedName by remember(account.id) { mutableStateOf<String?>(null) }
     val pendingSelection by playbackViewModel.pendingSelection.collectAsStateWithLifecycle()
     val pendingContentId = pendingSelection?.value
     // B256: a wait the session never ended (the outcome backstop) reads as failed, with Retry.
@@ -395,6 +438,7 @@ fun LiveGuide(
         val selection = ProviderSelectionId(contentId)
         val hostActivity = activity ?: return
         requestedContentId = contentId
+        requestedName = uiState.channels.firstOrNull { it.contentId == contentId }?.name
         if (readyPlayback == null) {
             playbackViewModel.attachGuide(
                 initialContentId = selection,
@@ -638,7 +682,7 @@ fun LiveGuide(
                     GuideCategoryRow(
                         entryFocusRequester = if (index == categoryEntryIndex) categoryEntryFocus else null,
                         label = if (cat.special == GuideSpecial.SEARCH && uiState.searchQuery.isNotBlank()) {
-                            "Search: \u201C${uiState.searchQuery}\u201D"
+                            stringResource(R.string.iptv_guide_search_label, uiState.searchQuery)
                         } else {
                             cat.name
                         },
@@ -672,6 +716,8 @@ fun LiveGuide(
                                 GuideEmptyMessagePolicy.Kind.SEARCH_HINT -> R.string.iptv_guide_search_hint
                                 GuideEmptyMessagePolicy.Kind.EMPTY_WINDOW -> R.string.iptv_guide_empty_window
                                 GuideEmptyMessagePolicy.Kind.DATA_UNAVAILABLE -> R.string.iptv_guide_data_unavailable
+                                GuideEmptyMessagePolicy.Kind.HISTORY_LOADING -> R.string.iptv_guide_history_loading
+                                GuideEmptyMessagePolicy.Kind.HISTORY_FAILED -> R.string.iptv_guide_history_failed
                             },
                         ),
                         // A playback notice (stopped / can't open / no recording) shows here beside the
@@ -702,6 +748,14 @@ fun LiveGuide(
                     nowMs = nowMs,
                     labelWidth = guideLayout.channelWidthDp.dp,
                 )
+                if (noGuide && displayChannels.isNotEmpty() && uiState.channelsLoad !is com.nuvio.tv.core.iptv.LoadStatus.Loading) {
+                    NoGuideBanner(
+                        onFixGuide = { onFixGuide(account.id) },
+                        focusRequester = fixGuideFocus,
+                        down = firstChannelFocus,
+                        up = selectedTabRequester,
+                    )
+                }
 
                 // Both waits end at their own deadline even if the work never returns (BoundedLoad).
                 val channelsStatus = rememberEffectiveLoadStatus(uiState.channelsLoad)
@@ -727,8 +781,9 @@ fun LiveGuide(
                     // Before the category column lands there is nothing selected yet: still loading, not empty.
                     categoriesStatus is com.nuvio.tv.core.iptv.LoadStatus.Loading && uiState.channels.isEmpty() -> GuideChannelListSkeleton(guideLayout)
                     uiState.selectedCategoryId == XtreamLiveGuideViewModel.SEARCH_ID && uiState.channels.isEmpty() -> EmptyScreenState(
-                        title = if (uiState.searchQuery.isBlank()) "Search channels" else "No channels match \u201C${uiState.searchQuery}\u201D",
-                        subtitle = "Press OK on Search to type a channel name",
+                        title = if (uiState.searchQuery.isBlank()) stringResource(R.string.iptv_guide_search_empty_title)
+                        else stringResource(R.string.iptv_guide_search_no_match, uiState.searchQuery),
+                        subtitle = stringResource(R.string.iptv_guide_search_hint),
                         height = 280.dp
                     )
                     uiState.channels.isEmpty() -> EmptyScreenState(
@@ -760,7 +815,19 @@ fun LiveGuide(
                                 focusRequester = channelRowRequesters.getOrPut(ch.entityId) { FocusRequester() },
                                 entryFocusRequester = if (index == 0) firstChannelFocus else null,
                                 clampUp = index == 0,
-                                upFocusRequester = if (awayFromNow && index == 0) returnToNowFocus else null,
+                                upFocusRequester = when {
+                                    awayFromNow && index == 0 -> returnToNowFocus
+                                    // UX331: UP from row 1 reaches the group's "Fix guide" action.
+                                    noGuide && index == 0 -> fixGuideFocus
+                                    else -> null
+                                },
+                                noGuide = noGuide,
+                                historyView = historyState.value.let { (id, load) ->
+                                    if (isTimelineRow && id == ch.contentId) {
+                                        GuideHistoryStatusPolicy.view(awayFromNow, (uiState.epg[ch.streamId]?.programmes?.any { p -> p.endMs > windowStartMs && p.startMs < windowStartMs + GuideTimeTravel.WINDOW_MS } == true), com.nuvio.tv.core.iptv.BoundedLoad.effectiveAt(load, nowMs))
+                                    } else GuideHistoryStatusPolicy.View.NONE
+                                },
+                                onRetryHistory = viewModel::retryHistory,
                                 // B254: UP from row one reaches the tabs without the trip through Search.
                                 onUpToTabs = selectedTabRequester?.let { tab -> { tab.requestFocus() } },
                                 layout = guideLayout,
@@ -959,6 +1026,8 @@ fun LiveGuide(
                 LiveChannelListOverlay(
                     // T4: the fullscreen list is the playing playlist's own lineup.
                     channels = viewModel.zapLineup(),
+                    // UX107: with the playing channel hidden, the list opens on the aimed neighbour, not row 1.
+                    aimedContentId = aimedChannel()?.contentId,
                     epg = uiState.epg,
                     playingContentId = playingContentId,
                     favoriteIds = favoriteIds,
@@ -977,11 +1046,28 @@ fun LiveGuide(
                     },
                 )
             }
-            playbackUi?.bottomStatusCode?.takeIf { !fullscreen }?.let { status ->
-                LiveRetryStatus(
-                    message = status.name.lowercase().replace('_', ' '),
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                        .padding(bottom = NuvioTheme.spacing.lg),
+            if (!fullscreen) {
+                // Words, never the enum: "Tuning…" until the first frame, "Reconnecting…" while it recovers.
+                val statusRes = playbackUi?.bottomStatusCode?.let(GuidePreviewStatusPolicy::statusRes)
+                val tuningNow = playbackUi?.spinnerVisible == true || statusRes == R.string.iptv_guide_tuning
+                val pillRes = if (tuningNow) R.string.iptv_guide_tuning else statusRes
+                pillRes?.let { res ->
+                    LiveRetryStatus(
+                        message = stringResource(res),
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                            .padding(bottom = NuvioTheme.spacing.lg),
+                    )
+                }
+                // "Playing: X" while focus is on another channel, so the picture is never read as the focused row.
+                val playingName = uiState.channels.firstOrNull { it.contentId == playingContentId }?.name
+                    ?: requestedName?.takeIf { requestedContentId == playingContentId }
+                PreviewPlayingCaption(
+                    viewModel = viewModel,
+                    playingContentId = playingContentId,
+                    playingName = playingName,
+                    tuning = tuningNow,
+                    failed = playbackError != null,
+                    modifier = Modifier.align(Alignment.TopStart).padding(NuvioTheme.spacing.sm),
                 )
             }
         }
@@ -1480,6 +1566,11 @@ internal fun GuideChannelRow(
     stripFocus: FocusRequester? = null,
     nowFraction: Float? = null,
     layout: GuideLayoutPreset = GuideLayoutPreset.STANDARD,
+    /** UX331: this playlist sent no guide: the strip shows the channel name, dim, instead of per-row text. */
+    noGuide: Boolean = false,
+    /** UX275: the past window's history load for this row (the timeline row only). */
+    historyView: GuideHistoryStatusPolicy.View = GuideHistoryStatusPolicy.View.NONE,
+    onRetryHistory: () -> Unit = {},
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val latestOnFocused by rememberUpdatedState(onFocused)
@@ -1576,11 +1667,16 @@ internal fun GuideChannelRow(
                 modifier = Modifier.width(30.dp),
                 maxLines = 1
             )
-            AsyncImage(
-                model = logo,
-                contentDescription = null,
-                modifier = Modifier.size(30.dp).clip(RoundedCornerShape(NuvioTheme.radii.xs))
-            )
+            if (GuideNoGuidePolicy.needsMonogram(logo)) {
+                // UX64: no logo is a monogram tile, not an empty square.
+                MonogramTile(name = name, modifier = Modifier.size(30.dp))
+            } else {
+                AsyncImage(
+                    model = logo,
+                    contentDescription = null,
+                    modifier = Modifier.size(30.dp).clip(RoundedCornerShape(NuvioTheme.radii.xs))
+                )
+            }
             if (isPlaying) {
                 Icon(
                     imageVector = Icons.Default.PlayArrow,
@@ -1635,6 +1731,33 @@ internal fun GuideChannelRow(
             stripFocus = stripFocus,
             nowFraction = nowFraction,
             onExitTimeline = onBackOutOfTimeline,
+            emptyLabel = when {
+                historyView == GuideHistoryStatusPolicy.View.LOADING -> stringResource(R.string.iptv_guide_history_loading)
+                historyView == GuideHistoryStatusPolicy.View.FAILED -> stringResource(R.string.iptv_guide_history_failed)
+                noGuide -> name
+                else -> null
+            },
+            dimEmptyLabel = noGuide && historyView == GuideHistoryStatusPolicy.View.NONE,
+            // OK on a failed past window is Retry (the viewer's call, never a loop); otherwise it leaves the timeline.
+            onStripOk = if (historyView == GuideHistoryStatusPolicy.View.FAILED) onRetryHistory else null,
+        )
+    }
+}
+
+/** UX64: the channel's first letter on a tile in the app's neutral surface, for a channel with no logo. */
+@Composable
+internal fun MonogramTile(name: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(NuvioTheme.radii.xs))
+            .background(NuvioTheme.colors.BackgroundElevated),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = GuideNoGuidePolicy.monogram(name),
+            style = MaterialTheme.typography.labelLarge,
+            color = NuvioTheme.colors.TextSecondary,
+            fontWeight = FontWeight.Bold,
         )
     }
 }
@@ -1652,6 +1775,8 @@ internal fun PreviewInfoPane(
     viewedTimeMs: Long? = null,
     emptyGuideMessage: String? = null,
     categoryFocused: Boolean = false,
+    /** UX327: a playback failure on the focused channel says OK retries (see GuidePlaybackInteractionPolicy.click). */
+    retryHint: Boolean = false,
 ) {
     Column(
         modifier = modifier.padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.md)
@@ -1683,6 +1808,15 @@ internal fun PreviewInfoPane(
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis
             )
+            if (retryHint) {
+                Text(
+                    text = stringResource(R.string.iptv_guide_preview_retry_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NuvioTheme.colors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         } else if (now != null) {
             Spacer(Modifier.height(2.dp))
             Text(
@@ -1807,8 +1941,76 @@ private fun LiveRetryStatus(
     }
 }
 
+/**
+ * "Playing: X" over the docked preview while focus is on another channel (UX333, UX357), or "Tuning…" before the
+ * first frame. Reads the aim in a scope of its own (B180), so a zap press recomposes this and not the guide.
+ */
+@Composable
+private fun PreviewPlayingCaption(
+    viewModel: XtreamLiveGuideViewModel,
+    playingContentId: String?,
+    playingName: String?,
+    tuning: Boolean,
+    failed: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val aimedIsPlaying by remember(viewModel, playingContentId) {
+        viewModel.uiState.map { it.focusedChannelId == null || it.focusedChannelId == playingContentId }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = true)
+    val label = GuidePreviewStatusPolicy.label(tuning, playingName, aimedIsPlaying, failed)
+    if (label is GuidePreviewStatusPolicy.Label.Playing) {
+        Text(
+            text = stringResource(R.string.iptv_guide_preview_playing, label.name),
+            style = MaterialTheme.typography.labelMedium,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = modifier
+                .clip(RoundedCornerShape(NuvioTheme.radii.xs))
+                .background(Color.Black.copy(alpha = 0.72f))
+                .padding(horizontal = NuvioTheme.spacing.sm, vertical = 2.dp),
+        )
+    }
+}
+
+/**
+ * UX331: one line for the whole group when its playlist sent no guide, with an action to the playlist's guide
+ * settings. A real focus target in the app's own vocabulary (the TV [Button]: FocusRing outline), reached by UP from
+ * row 1 and left by DOWN to row 1 or UP to the tabs.
+ */
+@Composable
+private fun NoGuideBanner(
+    onFixGuide: () -> Unit,
+    focusRequester: FocusRequester,
+    down: FocusRequester,
+    up: FocusRequester?,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.xs),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.iptv_guide_no_guide_group),
+            style = MaterialTheme.typography.labelMedium,
+            color = NuvioTheme.colors.TextSecondary,
+        )
+        Spacer(Modifier.width(NuvioTheme.spacing.md))
+        Button(
+            onClick = onFixGuide,
+            modifier = Modifier
+                .focusRequester(focusRequester)
+                .focusProperties {
+                    this.down = down
+                    this.up = up ?: FocusRequester.Default
+                },
+        ) { Text(stringResource(R.string.iptv_guide_fix_guide)) }
+    }
+}
+
 internal fun timeRange(p: XtreamProgram): String = "${guideHhMm(p.startMs)}–${guideHhMm(p.endMs)}"
 
+private const val NO_GUIDE_SAMPLE_ROWS = 100
 private val CATEGORY_COL_WIDTH = 220.dp
 private val GUIDE_START_PADDING = 52.dp                   // the app-wide content gutter (Modern rails)
 private const val GUIDE_SKELETON_ROW_COUNT = 10
@@ -1821,8 +2023,8 @@ private fun GuideSearchDialog(initialQuery: String, onSearch: (String) -> Unit, 
     LaunchedEffect(Unit) { runCatching { fieldFocus.requestFocus() } }
     NuvioDialog(
         onDismiss = onDismiss,
-        title = "Search channels",
-        subtitle = "Type part of a channel name, like \u201Cbbc\u201D or \u201Csky sports\u201D.",
+        title = stringResource(R.string.iptv_guide_search_title),
+        subtitle = stringResource(R.string.iptv_guide_search_dialog_subtitle),
         width = 520.dp
     ) {
         androidx.compose.material3.OutlinedTextField(
@@ -1845,8 +2047,8 @@ private fun GuideSearchDialog(initialQuery: String, onSearch: (String) -> Unit, 
                 cursorColor = NuvioTheme.colors.FocusRing,
             ),
         )
-        Button(onClick = { onSearch(text) }, modifier = Modifier.fillMaxWidth()) { Text("Search") }
-        Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+        Button(onClick = { onSearch(text) }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.iptv_hub_search)) }
+        Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.action_cancel)) }
     }
 }
 
@@ -1868,16 +2070,32 @@ private fun FocusedPreviewInfoPane(
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     val focused = ui.focusedChannel
+    val playbackFailure = playbackError.takeIf {
+        GuidePlaybackInteractionPolicy.showFocusedError(ui.focusedChannelId, errorChannelId)
+    }
+    // UX275: a past window with no programmes says Loading / Failed, not "No guide data for this time".
+    val historyStatus = rememberEffectiveLoadStatus(if (focused != null && ui.historyChannelId == focused.contentId) ui.historyLoad else LoadStatus.Idle)
+    val focusedEpg = focused?.let { ui.epg[it.streamId] }
+    val history = GuideHistoryStatusPolicy.view(
+        awayFromNow = viewedTimeMs != null,
+        hasProgrammesInWindow = viewedTimeMs != null && focusedEpg?.programmes?.any {
+            it.endMs > viewedTimeMs && it.startMs < viewedTimeMs + GuideTimeTravel.WINDOW_MS
+        } == true,
+        load = historyStatus,
+    )
     PreviewInfoPane(
         channelName = focused?.name,
-        epg = focused?.let { ui.epg[it.streamId] },
+        epg = focusedEpg,
         nowMs = nowMs,
         inspectedProgramme = inspectedProgramme,
         viewedTimeMs = viewedTimeMs,
-        emptyGuideMessage = emptyGuideMessage,
-        previewError = (playbackError.takeIf {
-            GuidePlaybackInteractionPolicy.showFocusedError(ui.focusedChannelId, errorChannelId)
-        }) ?: ui.actionError.takeIf { ui.replayRetry == null }, // a Retry notice shows its own message
+        emptyGuideMessage = when (history) {
+            GuideHistoryStatusPolicy.View.LOADING -> stringResource(R.string.iptv_guide_history_loading)
+            GuideHistoryStatusPolicy.View.FAILED -> stringResource(R.string.iptv_guide_history_failed)
+            GuideHistoryStatusPolicy.View.NONE -> emptyGuideMessage
+        },
+        previewError = playbackFailure ?: ui.actionError.takeIf { ui.replayRetry == null }, // a Retry notice shows its own message
+        retryHint = GuidePreviewStatusPolicy.offersRetryHint(playbackFailure != null),
         categoryFocused = categoryFocused,
         modifier = modifier,
     )
