@@ -410,6 +410,8 @@ internal fun GuideTimeHeaderWithDay(
     labelWidth: Dp,
     /** Change 8: the shown group ("Sport · 42") in place of "Today" while at now and the group column is closed. */
     groupLabel: String? = null,
+    /** Change 10: the schedule pill, which outranks the group name and the day. */
+    scheduleLabel: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -423,10 +425,14 @@ internal fun GuideTimeHeaderWithDay(
         ) {
             val atLive = GuideTimeTravel.isAtLiveEdge(windowStartMs, nowMs)
             Text(
-                text = groupLabel?.takeIf { atLive } ?: guideDayLabel(windowStartMs, nowMs),
+                text = scheduleLabel ?: groupLabel?.takeIf { atLive } ?: guideDayLabel(windowStartMs, nowMs),
                 style = MaterialTheme.typography.labelSmall,
-                color = if (atLive) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.Primary,
-                fontWeight = if (atLive) FontWeight.Normal else FontWeight.Bold,
+                color = when {
+                    scheduleLabel != null -> NuvioTheme.colors.FocusRing
+                    atLive -> NuvioTheme.colors.TextSecondary
+                    else -> NuvioTheme.colors.Primary
+                },
+                fontWeight = if (atLive && scheduleLabel == null) FontWeight.Normal else FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

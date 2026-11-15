@@ -965,6 +965,11 @@ fun LiveGuide(
                     groupLabel = if (inCategory) uiState.categories.firstOrNull { it.id == uiState.selectedCategoryId }?.let {
                         stringResource(R.string.iptv_guide_group_label, it.name, displayChannels.size)
                     } else null,
+                    // Change 10: in the cells or away from now, the schedule pill says where in time and how to get back.
+                    scheduleLabel = if (GuideSchedulePillPolicy.shows(timelineChannelId != null, awayFromNow)) {
+                        val at = GuideSchedulePillPolicy.timeMs(inspectedProgramme?.startMs, windowStartMs, nowMs, awayFromNow)
+                        stringResource(R.string.iptv_guide_schedule_pill, guideDayLabel(at, nowMs), guideHhMm(at))
+                    } else null,
                 )
                 if (noGuide && displayChannels.isNotEmpty() && uiState.channelsLoad !is com.nuvio.tv.core.iptv.LoadStatus.Loading) {
                     NoGuideBanner(

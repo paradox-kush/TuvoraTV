@@ -3663,6 +3663,8 @@
     <string name="iptv_voice_idle_preview">Quiet in here.</string>
     <string name="iptv_voice_no_guide">It forgot to pack one.</string>
     <string name="iptv_guide_idle_preview_fact">Press OK on a channel to watch it here.</string>
+    <!-- Change 10: the schedule pill. -->
+    <string name="iptv_guide_schedule_pill">Schedule · %1$s %2$s · Back = now</string>
     <!-- B4: captions in the group column. -->
     <string name="iptv_guide_recent_groups">Recent groups</string>
     <string name="iptv_guide_all_groups">Groups</string>
