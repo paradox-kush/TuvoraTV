@@ -14,6 +14,40 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class GuideCategorySettleTest {
 
+    // A12 (redesign 2026-11-15): by default resting on a group never opens it; OK / RIGHT does. The settle tests below
+    // pin selectOnFocus = true, the owner's other choice.
+    @Test
+    fun `by default resting on a group never opens it and OK opens it at once`() = runTest {
+        assertEquals("A12 default", false, GuideCategorySettlePolicy.SELECT_ON_FOCUS)
+        val selected = mutableListOf<String?>()
+        val settler = GuideCategorySettler(this) { selected += it }
+        settler.focus("b", selectedId = "a")
+        advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS * 5)
+        assertEquals("resting does not open", emptyList<String?>(), selected)
+        settler.commitNow()
+        assertEquals("OK / RIGHT opens it", listOf<String?>("b"), selected)
+    }
+
+    @Test
+    fun `by default passing groups then leaving the column opens nothing`() = runTest {
+        val selected = mutableListOf<String?>()
+        val settler = GuideCategorySettler(this) { selected += it }
+        repeat(20) { i -> settler.focus("cat$i", selectedId = "all") }
+        settler.cancel()
+        settler.commitNow()
+        advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS * 5)
+        assertEquals("nothing", emptyList<String?>(), selected)
+    }
+
+    @Test
+    fun `by default OK on the shown group only returns to its rows`() = runTest {
+        val selected = mutableListOf<String?>()
+        val settler = GuideCategorySettler(this) { selected += it }
+        settler.focus("a", selectedId = "a")
+        settler.commitNow()
+        assertEquals("no reload", emptyList<String?>(), selected)
+    }
+
     @Test
     fun `policy - a different category waits for focus to settle`() {
         assertEquals(
@@ -37,7 +71,7 @@ class GuideCategorySettleTest {
     @Test
     fun `passing twenty categories switches the guide once to the last one`() = runTest {
         val selected = mutableListOf<String?>()
-        val settler = GuideCategorySettler(this) { selected += it }
+        val settler = GuideCategorySettler(this, selectOnFocus = true) { selected += it }
         repeat(20) { i ->
             settler.focus("cat$i", selectedId = "all")
             advanceTimeBy(GuideKeyRepeatPolicy.VERTICAL_GATE_MS)
@@ -51,7 +85,7 @@ class GuideCategorySettleTest {
     @Test
     fun `coming back to the shown category drops the pending switch`() = runTest {
         val selected = mutableListOf<String?>()
-        val settler = GuideCategorySettler(this) { selected += it }
+        val settler = GuideCategorySettler(this, selectOnFocus = true) { selected += it }
         settler.focus("b", selectedId = "a")
         settler.focus("a", selectedId = "a")
         advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS * 2)
@@ -63,7 +97,7 @@ class GuideCategorySettleTest {
     @Test
     fun `entering the category commits the pending switch at once and only once`() = runTest {
         val selected = mutableListOf<String?>()
-        val settler = GuideCategorySettler(this) { selected += it }
+        val settler = GuideCategorySettler(this, selectOnFocus = true) { selected += it }
         settler.focus("b", selectedId = "a")
         settler.commitNow()
         assertEquals(listOf<String?>("b"), selected)
@@ -74,7 +108,7 @@ class GuideCategorySettleTest {
     @Test
     fun `commit with nothing pending does nothing`() = runTest {
         val selected = mutableListOf<String?>()
-        val settler = GuideCategorySettler(this) { selected += it }
+        val settler = GuideCategorySettler(this, selectOnFocus = true) { selected += it }
         settler.commitNow()
         settler.focus("b", selectedId = "a")
         settler.cancel()
@@ -88,7 +122,7 @@ class GuideCategorySettleTest {
     @Test
     fun `cancel when focus leaves the column drops the pending switch`() = runTest {
         val selected = mutableListOf<String?>()
-        val settler = GuideCategorySettler(this) { selected += it }
+        val settler = GuideCategorySettler(this, selectOnFocus = true) { selected += it }
         settler.focus("b", selectedId = "a")
         settler.cancel()
         advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS * 2)
@@ -100,7 +134,7 @@ class GuideCategorySettleTest {
         // RIGHT commits in the key handler, before focus crosses into the channel list and the
         // column reports focus lost; the cancel that follows must find nothing left to drop.
         val selected = mutableListOf<String?>()
-        val settler = GuideCategorySettler(this) { selected += it }
+        val settler = GuideCategorySettler(this, selectOnFocus = true) { selected += it }
         settler.focus("b", selectedId = "a")
         settler.commitNow()
         settler.cancel()
@@ -125,7 +159,7 @@ class GuideCategorySettleTest {
     @Test
     fun `focusing blank Search leaves the shown category and drops any pending switch`() = runTest {
         val selected = mutableListOf<String?>()
-        val settler = GuideCategorySettler(this) { selected += it }
+        val settler = GuideCategorySettler(this, selectOnFocus = true) { selected += it }
         settler.focus("b", selectedId = "a")
         settler.focus(XtreamLiveGuideViewModel.SEARCH_ID, selectedId = "a", searchQuery = "")
         advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS * 2)
@@ -138,7 +172,7 @@ class GuideCategorySettleTest {
     @Test
     fun `focusing Search with a query still shows its results`() = runTest {
         val selected = mutableListOf<String?>()
-        val settler = GuideCategorySettler(this) { selected += it }
+        val settler = GuideCategorySettler(this, selectOnFocus = true) { selected += it }
         settler.focus(XtreamLiveGuideViewModel.SEARCH_ID, selectedId = "a", searchQuery = "bbc")
         advanceTimeBy(GuideCategorySettlePolicy.SETTLE_MS + 1)
         assertEquals(listOf<String?>(XtreamLiveGuideViewModel.SEARCH_ID), selected)

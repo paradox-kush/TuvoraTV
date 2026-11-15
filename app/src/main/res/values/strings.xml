@@ -3605,11 +3605,79 @@
     <string name="iptv_guide_no_information">No information</string>
     <string name="iptv_guide_min_left">%1$d min left</string>
     <string name="iptv_guide_next_programme">Next: %1$s · %2$s</string>
-    <string name="iptv_guide_hint">OK preview · OK again fullscreen · hold OK favorite · MENU hide or move · RIGHT timeline · LEFT/RIGHT time · BACK now</string>
     <string name="iptv_guide_channel_list_title">Channels</string>
     <string name="iptv_guide_paused">Paused</string>
     <string name="iptv_guide_live">Live</string>
     <string name="iptv_guide_tuning">Tuning…</string>
+    <string name="iptv_guide_preview_buffering">Buffering…</string>
+    <string name="iptv_guide_preview_reconnecting">Reconnecting…</string>
+    <string name="iptv_guide_preview_playing">Playing: %1$s</string>
+    <string name="iptv_guide_preview_retry_hint">Press OK to try again.</string>
+    <string name="iptv_guide_search_title">Search channels</string>
+    <string name="iptv_guide_search_dialog_subtitle">Type part of a channel name, like “bbc” or “sky sports”.</string>
+    <string name="iptv_guide_search_empty_title">Search channels</string>
+    <string name="iptv_guide_search_no_match">No channels match “%1$s”</string>
+    <string name="iptv_guide_search_label">Search: “%1$s”</string>
+    <string name="iptv_guide_no_guide_group">This playlist sent no guide.</string>
+    <string name="iptv_guide_fix_guide">Fix guide</string>
+    <!-- B11 (IPTV redesign 2026-11-15): every empty view names its cause and holds one action. -->
+    <string name="iptv_guide_empty_favorites_title">No favourites yet</string>
+    <string name="iptv_guide_empty_recent_title">Nothing watched yet</string>
+    <string name="iptv_guide_empty_recent_fact">Channels you watch show up here, newest first.</string>
+    <string name="iptv_guide_empty_search_fact">Type part of a channel name. Only this playlist is searched.</string>
+    <string name="iptv_guide_empty_search_miss_fact">Try fewer letters, or another spelling.</string>
+    <string name="iptv_guide_empty_playlist_title">This playlist sent no channels</string>
+    <string name="iptv_guide_empty_playlist_fact">The provider answered, but with an empty list. Check the playlist in its settings.</string>
+    <string name="iptv_guide_empty_group_fact">This group is empty on the provider’s side. Pick another group.</string>
+    <string name="iptv_guide_empty_browse_all">Browse All channels</string>
+    <string name="iptv_guide_empty_clear_search">Clear search</string>
+    <string name="iptv_guide_empty_pick_group">Pick another group</string>
+    <string name="iptv_guide_playlist_settings">Playlist settings</string>
+    <!-- Redesign change 7 + B1: number entry readout. -->
+    <string name="iptv_number_match">%1$s · %2$s</string>
+    <string name="iptv_number_no_match">No channel %1$s</string>
+    <string name="iptv_number_previous">Previous channel</string>
+    <string name="iptv_number_previous_named">Back to %1$s · %2$s</string>
+    <!-- Redesign change 4: the zap banner while surfing a single-use playlist. -->
+    <string name="iptv_zap_surf_still_watching">Still watching %1$s</string>
+    <string name="iptv_zap_surf_switch_to">Switch to %1$s?</string>
+    <string name="iptv_zap_surf_hint">OK tunes now · Back cancels</string>
+    <!-- Redesign change 3: the channel options panel. -->
+    <string name="iptv_panel_watch_fullscreen">Watch full screen</string>
+    <string name="iptv_panel_open_guide">Open the guide</string>
+    <string name="iptv_panel_open_guide_sub">The picture keeps playing in the preview.</string>
+    <string name="iptv_panel_hide_sub">Leaves the guide. You can undo it right after.</string>
+    <string name="iptv_panel_fix_guide_sub">This playlist sent no guide. Opens its settings.</string>
+    <string name="iptv_panel_section_watch">Watch</string>
+    <string name="iptv_panel_section_favorites">Favorites</string>
+    <string name="iptv_panel_section_order">Order in Favorites</string>
+    <string name="iptv_panel_section_guide">Guide</string>
+    <string name="iptv_panel_section_tidy">Tidy</string>
+    <string name="iptv_panel_section_info">Info</string>
+    <!-- Change 8: the shown group above the rows while the group column is closed. -->
+    <string name="iptv_guide_group_label">%1$s · %2$d</string>
+    <!-- B12 / A7: the playful voice, quiet moments only; each quip sits beside a plain fact. -->
+    <string name="iptv_voice_empty_favorites">Nothing starred yet. Your remote has commitment issues.</string>
+    <string name="iptv_voice_empty_recent">No history yet. Your secret is safe.</string>
+    <string name="iptv_voice_search_miss">No channel by that name. It may be hiding under a worse one.</string>
+    <string name="iptv_voice_empty_group">Tumbleweeds.</string>
+    <string name="iptv_voice_empty_playlist">This playlist showed up empty-handed.</string>
+    <string name="iptv_voice_idle_preview">Quiet in here.</string>
+    <string name="iptv_voice_no_guide">It forgot to pack one.</string>
+    <string name="iptv_guide_idle_preview_fact">Press OK on a channel to watch it here.</string>
+    <!-- Change 10: the schedule pill. -->
+    <string name="iptv_guide_schedule_pill">Schedule · %1$s %2$s · Back = now</string>
+    <!-- Change 15: Guide options. -->
+    <string name="iptv_guide_options">Guide options</string>
+    <string name="iptv_guide_options_opening">When the guide opens</string>
+    <string name="iptv_guide_options_resume">Resume the last channel</string>
+    <string name="iptv_guide_options_resume_off">Off: opening the guide plays nothing and spends no connection.</string>
+    <string name="iptv_guide_options_resume_on">On: the last channel plays in the preview when the guide opens.</string>
+    <!-- B4: captions in the group column. -->
+    <string name="iptv_guide_recent_groups">Recent groups</string>
+    <string name="iptv_guide_all_groups">Groups</string>
+    <string name="iptv_guide_history_loading">Loading this channel’s schedule…</string>
+    <string name="iptv_guide_history_failed">Couldn’t load this channel’s schedule. Press OK to try again.</string>
     <string name="iptv_guide_unavailable">Can\'t play</string>
     <string name="sub_startup_mode_title">Addon Subtitle Loading</string>
     <string name="sub_startup_mode_fast">Fast startup</string>
@@ -3626,7 +3694,7 @@
     <string name="iptv_remove_playlist_message_all_devices">Its favourites, Continue Watching entries and watch progress go with it, on all your devices. This can\'t be undone.</string>
     <string name="iptv_remove_playlist_message_if_you_sync">Its favourites, Continue Watching entries and watch progress go with it. If you sync, it is removed from your other devices too. This can\'t be undone.</string>
     <string name="iptv_playlist_removed">Playlist removed</string>
-    <string name="iptv_guide_favorites_empty">Hold OK on a channel to add it to Favorites</string>
+    <string name="iptv_guide_favorites_empty">Press MENU or hold OK on a channel, then choose Add to Favorites.</string>
     <string name="addon_not_synced_yet">Not synced yet</string>
     <string name="auth_qr_phone_hint_scan_or_email">Scan the code with your phone, or sign in with email on this TV.</string>
     <string name="auth_qr_phone_hint_scan_only">Scan the code with your phone to sign in.</string>
@@ -3822,11 +3890,13 @@
     <string name="sub_mode_overlay_canvas_sub">HDR support with canvas rendering. May block UI thread.</string>
     <string name="iptv_guide_remote_hint">OK preview · OK again fullscreen · MENU or hold OK for options</string>
     <string name="iptv_guide_remote_hint_category">OK or RIGHT to browse channels</string>
+    <string name="iptv_guide_remote_hint_playing">OK full screen · MENU or hold OK for options</string>
     <string name="iptv_guide_add_favorite">Add to Favorites</string>
     <string name="iptv_guide_size">Guide size</string>
     <string name="iptv_guide_size_compact">Compact</string>
     <string name="iptv_guide_size_standard">Standard</string>
     <string name="iptv_guide_size_large">Large</string>
+    <string name="iptv_guide_size_current">Current</string>
 
     <!-- Recordings (catch-up saves). Plain words; a problem never shows an exception message or a host. -->
     <string name="rec_screen_title">Recordings</string>

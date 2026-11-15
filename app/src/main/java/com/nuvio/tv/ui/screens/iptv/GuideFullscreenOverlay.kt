@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.R
+import com.nuvio.tv.core.iptv.LoadStatus
 import com.nuvio.tv.core.contracts.LivePausePhase
 import com.nuvio.tv.core.picture.aspectModeLabel
 import com.nuvio.tv.core.picture.nextAspectMode
@@ -47,9 +48,29 @@ internal class FullscreenControlsState {
     /** The controls on screen came from a zap and nothing else has touched them since (LiveControlsPolicy). */
     var zapReveal by mutableStateOf(false)
 
-    fun show() { visible = true; tick++ }
+    fun show() { visible = true; bannerVisible = false; tick++ }
+
+    /** Redesign change 4: the zap banner (no focus target, leaves by itself; see [GuideZapBanner]). */
+    var bannerVisible by mutableStateOf(false)
+    var bannerTick by mutableIntStateOf(0)
+    fun showBanner() { bannerVisible = true; bannerTick++ }
+
+    /** A zap: the banner while the control bar is down, else the bar stays up and names the channel. */
+    fun onZap() { if (LiveZapModePolicy.showsBanner(visible)) showBanner() else keepAlive() }
     fun keepAlive() { tick++ }
-    fun reset() { visible = false; zapReveal = false; moreOpen = false }
+
+    /**
+     * Device pass 2, D1: a channel swap (number, "0" / LAST, CH+ / CH-). The bar goes when it was up
+     * ([LiveZapModePolicy.swapHidesBar]) and the banner names the channel. True when the bar went, so the caller
+     * parks focus behind the video.
+     */
+    fun onChannelSwap(): Boolean {
+        val dropBar = LiveZapModePolicy.swapHidesBar(visible)
+        if (dropBar) reset()
+        showBanner()
+        return dropBar
+    }
+    fun reset() { visible = false; zapReveal = false; moreOpen = false; bannerVisible = false }
 }
 
 /**
@@ -60,7 +81,10 @@ internal class FullscreenControlsState {
  */
 internal object GuideBodyProjection {
     fun of(state: LiveGuideUiState): LiveGuideUiState =
-        if (state.focusedChannelId == null) state else state.copy(focusedChannelId = null)
+        if (state.focusedChannelId == null && state.historyLoad == LoadStatus.Idle && state.historyChannelId == null) state
+        // The past-window load status belongs to the timeline row and the info pane (UX275), which read it
+        // themselves: its Loading -> Loaded flips on every focus must not restart the body either.
+        else state.copy(focusedChannelId = null, historyLoad = LoadStatus.Idle, historyChannelId = null)
 }
 
 /**

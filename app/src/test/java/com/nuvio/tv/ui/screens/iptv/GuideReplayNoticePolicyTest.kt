@@ -52,4 +52,12 @@ class GuideReplayNoticePolicyTest {
         val again = GuideReplayNoticePolicy.refused(retried, "x", channel, programme)
         assertNotNull("retry", again.replayRetry)
     }
+
+    /** UX278: the notice let go after 20 s, so a later OK fell through to the channel row and tuned a live preview. */
+    @Test fun `the Retry notice outlives a slow viewer`() {
+        org.junit.Assert.assertTrue(
+            "a notice that lets go lets OK fall through to the row (UX278); it stays until dismissed or at least 60 s",
+            GuideReplayNoticePolicy.RETRY_NOTICE_MS >= 60_000L,
+        )
+    }
 }

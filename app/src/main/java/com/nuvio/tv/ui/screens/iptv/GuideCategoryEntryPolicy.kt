@@ -17,11 +17,18 @@ internal object GuideCategoryEntryPolicy {
 
 /** Which message the preview pane shows when the focused channel has no guide data. */
 internal object GuideEmptyMessagePolicy {
-    enum class Kind { FAVORITES_EMPTY, SEARCH_HINT, EMPTY_WINDOW, DATA_UNAVAILABLE }
+    enum class Kind { FAVORITES_EMPTY, SEARCH_HINT, EMPTY_WINDOW, DATA_UNAVAILABLE, HISTORY_LOADING, HISTORY_FAILED }
 
-    fun kind(awayFromNow: Boolean, selectedCategoryId: String?, channelsEmpty: Boolean): Kind = when {
+    fun kind(
+        awayFromNow: Boolean,
+        selectedCategoryId: String?,
+        channelsEmpty: Boolean,
+        history: GuideHistoryStatusPolicy.View = GuideHistoryStatusPolicy.View.NONE,
+    ): Kind = when {
         channelsEmpty && (selectedCategoryId == "__fav" || selectedCategoryId == "__allfav") -> Kind.FAVORITES_EMPTY
         channelsEmpty && selectedCategoryId == XtreamLiveGuideViewModel.SEARCH_ID -> Kind.SEARCH_HINT
+        history == GuideHistoryStatusPolicy.View.LOADING -> Kind.HISTORY_LOADING
+        history == GuideHistoryStatusPolicy.View.FAILED -> Kind.HISTORY_FAILED
         awayFromNow -> Kind.EMPTY_WINDOW
         else -> Kind.DATA_UNAVAILABLE
     }

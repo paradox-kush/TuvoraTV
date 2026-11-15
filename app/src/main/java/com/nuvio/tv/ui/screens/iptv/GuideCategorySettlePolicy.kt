@@ -15,6 +15,13 @@ import kotlinx.coroutines.launch
  */
 object GuideCategorySettlePolicy {
     /**
+     * A12 (IPTV redesign 2026-11-15, owner default): moving through the group list no longer swaps the channel
+     * list; a group opens on OK or RIGHT ([GuideCategorySettler.commitNow]). With 100+ groups this stops a reload per
+     * row rested on. Flip to true for the old show-after-[SETTLE_MS] behaviour.
+     */
+    const val SELECT_ON_FOCUS = false
+
+    /**
      * Longer than a held key's repeat ([GuideKeyRepeatPolicy.VERTICAL_GATE_MS]) so a held key
      * never switches mid-travel; short enough that stopping on a category still feels immediate.
      */
@@ -40,6 +47,7 @@ object GuideCategorySettlePolicy {
  */
 class GuideCategorySettler(
     private val scope: CoroutineScope,
+    private val selectOnFocus: Boolean = GuideCategorySettlePolicy.SELECT_ON_FOCUS,
     private val select: (String?) -> Unit,
 ) {
     private var job: Job? = null
@@ -50,6 +58,14 @@ class GuideCategorySettler(
     fun focus(focusedId: String?, selectedId: String?, searchQuery: String = "") {
         cancel()
         if (!GuideCategorySettlePolicy.selectsOnFocus(focusedId, searchQuery)) return
+        if (!selectOnFocus) {
+            // A12: remember the group only; OK / RIGHT ([commitNow]) opens it. The shown group needs nothing.
+            if (focusedId != selectedId) {
+                pendingId = focusedId
+                hasPending = true
+            }
+            return
+        }
         val wait = GuideCategorySettlePolicy.delayMs(focusedId, selectedId)
         if (wait <= 0L) {
             select(focusedId)

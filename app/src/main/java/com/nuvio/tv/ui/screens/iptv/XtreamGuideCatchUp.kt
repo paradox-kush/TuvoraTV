@@ -116,6 +116,12 @@ internal fun RowScope.GuideProgrammeCells(
     stripFocus: FocusRequester? = null,
     nowFraction: Float? = null,
     onExitTimeline: (() -> Unit)? = null,
+    /** Text for a window with no programmes; null keeps "No guide data for this time" (UX275, UX331). */
+    emptyLabel: String? = null,
+    /** The empty label is the channel's own name (no guide): drawn dim and italic, not as a sentence. */
+    dimEmptyLabel: Boolean = false,
+    /** OK on the strip; null = leave the timeline. Set while a failed past-window load waits for Retry (UX275). */
+    onStripOk: (() -> Unit)? = null,
 ) {
     val windowEndMs = windowStartMs + GuideTimeTravel.WINDOW_MS
     val visible = programmes
@@ -215,13 +221,13 @@ internal fun RowScope.GuideProgrammeCells(
                         }
                         // The app's D-pad vocabulary: a focused strip is outlined like a cell.
                         .border(
-                            if (stripFocused) 2.dp else 0.dp,
+                            if (stripFocused) GuideFocusLanguage.RING_DP.dp else 0.dp,
                             if (stripFocused) NuvioTheme.colors.BorderFocused else Color.Transparent,
                             RoundedCornerShape(NuvioTheme.radii.xs),
                         )
                         // clickable for reliable D-pad focus (see GuideCell); OK on an empty
                         // stretch of time has nothing to do.
-                        .clickable { onExitTimeline?.invoke() }
+                        .clickable { (onStripOk ?: onExitTimeline)?.invoke() }
                 } else Modifier
             )
     ) {
@@ -231,12 +237,13 @@ internal fun RowScope.GuideProgrammeCells(
         ) {
             if (visible.isEmpty()) {
                 GuideCell(
-                    title = stringResource(R.string.iptv_guide_empty_window),
+                    title = emptyLabel ?: stringResource(R.string.iptv_guide_empty_window),
                     weightMs = GuideTimeTravel.WINDOW_MS,
                     action = ProgrammeAction.NONE,
                     live = false,
                     filler = true,
                     onClick = {},
+                    dim = dimEmptyLabel,
                 )
             } else {
                 var cursor = windowStartMs
@@ -315,6 +322,8 @@ private fun RowScope.GuideCell(
     identity: Long = 0L,
     /** Scheduled or recording: draws the REC badge, styled like the catch-up glyph. */
     recording: Boolean = false,
+    /** A filler that names the channel (no guide): dim and italic, so it never reads as a programme. */
+    dim: Boolean = false,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val latestOnClick by rememberUpdatedState(onClick)
@@ -339,7 +348,7 @@ private fun RowScope.GuideCell(
                 }
             )
             .border(
-                if (isFocused) 2.dp else 0.dp,
+                if (isFocused) GuideFocusLanguage.RING_DP.dp else 0.dp,
                 if (isFocused) NuvioTheme.colors.BorderFocused else Color.Transparent,
                 RoundedCornerShape(NuvioTheme.radii.xs)
             )
@@ -378,7 +387,8 @@ private fun RowScope.GuideCell(
                     isFocused -> NuvioTheme.colors.FocusContent
                     live -> NuvioTheme.colors.TextPrimary
                     else -> NuvioTheme.colors.TextSecondary
-                },
+                }.let { if (dim && !isFocused) it.copy(alpha = 0.55f) else it },
+                fontStyle = if (dim) androidx.compose.ui.text.font.FontStyle.Italic else null,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -398,6 +408,10 @@ internal fun GuideTimeHeaderWithDay(
     windowStartMs: Long,
     nowMs: Long,
     labelWidth: Dp,
+    /** Change 8: the shown group ("Sport · 42") in place of "Today" while at now and the group column is closed. */
+    groupLabel: String? = null,
+    /** Change 10: the schedule pill, which outranks the group name and the day. */
+    scheduleLabel: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -411,10 +425,14 @@ internal fun GuideTimeHeaderWithDay(
         ) {
             val atLive = GuideTimeTravel.isAtLiveEdge(windowStartMs, nowMs)
             Text(
-                text = guideDayLabel(windowStartMs, nowMs),
+                text = scheduleLabel ?: groupLabel?.takeIf { atLive } ?: guideDayLabel(windowStartMs, nowMs),
                 style = MaterialTheme.typography.labelSmall,
-                color = if (atLive) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.Primary,
-                fontWeight = if (atLive) FontWeight.Normal else FontWeight.Bold,
+                color = when {
+                    scheduleLabel != null -> NuvioTheme.colors.FocusRing
+                    atLive -> NuvioTheme.colors.TextSecondary
+                    else -> NuvioTheme.colors.Primary
+                },
+                fontWeight = if (atLive && scheduleLabel == null) FontWeight.Normal else FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

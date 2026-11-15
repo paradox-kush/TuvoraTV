@@ -72,23 +72,19 @@ class HubSectionTabFocusTest {
         rule.runOnIdle { assertTrue(content.requestFocusOrFalse()) }
         rule.runOnIdle { assertTrue("focus lands on the Live tab", live.requestFocusOrFalse()) }
         rule.runOnIdle { assertEquals("a landing is not a choice", XtreamSection.MOVIES, section) }
-
-        rule.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
-        rule.runOnIdle { assertEquals("RIGHT onto Movies", XtreamSection.MOVIES, section) }
-        rule.onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
-        rule.runOnIdle { assertEquals("LEFT along the header selects Live", XtreamSection.LIVE, section) }
     }
 
+    /** A2: tabs change on OK only. Arrowing along the header passes tabs without loading them. */
     @Test
-    fun `after leaving the header a landing on another tab does not switch`() {
+    fun `arrowing along the header never switches and OK does`() {
         setHub()
-        rule.runOnIdle { assertTrue(movies.requestFocusOrFalse()) }
-        rule.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
-        rule.runOnIdle { assertEquals("travel onto Series", XtreamSection.SERIES, section) }
-        // DOWN into the rows, then something (Back, a restore) puts focus straight onto the Live tab.
-        rule.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
-        rule.runOnIdle { assertTrue("focus is down in the rows", content.requestFocusOrFalse()) }
         rule.runOnIdle { assertTrue(live.requestFocusOrFalse()) }
-        rule.runOnIdle { assertEquals("a landing after leaving keeps Series", XtreamSection.SERIES, section) }
+        rule.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+        rule.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+        rule.runOnIdle { assertEquals("RIGHT past Movies onto Series keeps Movies", XtreamSection.MOVIES, section) }
+        rule.onRoot().performKeyInput { pressKey(Key.DirectionCenter) }
+        rule.runOnIdle { assertEquals("OK on Series selects it", XtreamSection.SERIES, section) }
+        rule.onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+        rule.runOnIdle { assertEquals("LEFT onto Movies is not a choice", XtreamSection.SERIES, section) }
     }
 }

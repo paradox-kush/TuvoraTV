@@ -46,7 +46,8 @@ import javax.inject.Inject
 
 /** A category entry in the guide's left column. [special] marks the synthetic ones. */
 enum class GuideSpecial { SEARCH, FAVORITES, RECENT, ALL, GROUP, ALL_FAVORITES }
-data class GuideCategory(val id: String, val name: String, val special: GuideSpecial? = null)
+/** [aliasOf]: B4, a "recent groups" copy of the group with that id (its own id keeps LazyColumn keys unique). */
+data class GuideCategory(val id: String, val name: String, val special: GuideSpecial? = null, val aliasOf: String? = null)
 
 /** One channel row in the guide. [categoryId] is null for synthetic rows (Favorites/Recent
  *  restores), which are never category-filtered. */
@@ -154,6 +155,14 @@ data class LiveGuideUiState(
     /** F01: the channel search the "Search" row shows results for (blank = not searched yet). */
     val searchQuery: String = "",
     val epg: Map<Int, GuideEpg> = emptyMap(),
+    /**
+     * UX331/UX337/UX359: stream ids whose guide the source ladder answered EMPTY (no row, no cell). The grid reads
+     * them, with [epg], to tell "this playlist sent no guide" from "still asking". Reset with the guide's data.
+     */
+    val epgEmpty: Set<Int> = emptySet(),
+    /** UX275: the focused channel's catch-up history fetch (bounded), and whose it is. */
+    val historyLoad: LoadStatus = LoadStatus.Idle,
+    val historyChannelId: String? = null,
     val focusedChannelId: String? = null,
     /** The category column's load (the playlist import for M3U/Stalker). Entered only through [BoundedLoad]. */
     val categoriesLoad: LoadStatus = LoadStatus.Idle,
@@ -161,6 +170,8 @@ data class LiveGuideUiState(
     val channelsLoad: LoadStatus = LoadStatus.Idle,
     /** Channel-list (or category-column) load failure, rendered in place of the grid with Retry. */
     val error: String? = null,
+    /** B11: [error] is the provider blocking us (a retry will not help), so Playlist settings leads. */
+    val errorBlocked: Boolean = false,
     /** Non-playback action notice, currently used by catch-up availability. */
     val actionError: String? = null,
     /** The replay [actionError] can re-run (Retry); null when the notice has nothing to retry. */
@@ -375,6 +386,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
         if (!GuideDataRefreshPolicy.appliesTo(playlistId, account?.id)) return
         epgAdmission.invalidate()
         epgRequested.clear()
+        _uiState.update { it.copy(epgEmpty = emptySet()) }
         val state = _uiState.value
         val focused = state.channels.indexOfFirst { it.contentId == state.focusedChannelId }
         val ids = GuideDataRefreshPolicy.streamIdsToReask(
@@ -574,10 +586,28 @@ class XtreamLiveGuideViewModel @Inject constructor(
         }
     }
 
+    /** B11: the group shown before a search, for "Clear search". */
+    private var categoryBeforeSearch: String? = null
+
+    /** B11: "Browse All channels" from an empty Favorites or Recent view. */
+    fun showAllChannels() {
+        val all = _uiState.value.categories.firstOrNull { it.special == GuideSpecial.ALL }?.id ?: return
+        selectCategory(all)
+    }
+
+    /** B11: "Clear search": drop the query and go back to the group shown before it (else All channels). */
+    fun clearSearch() {
+        val back = categoryBeforeSearch?.takeIf { id -> _uiState.value.categories.any { it.id == id } }
+            ?: _uiState.value.categories.firstOrNull { it.special == GuideSpecial.ALL }?.id
+        _uiState.update { it.copy(searchQuery = "") }
+        selectCategory(back)
+    }
+
     /** F01: run [query] on the Search row (OK on "Search" opens the keyboard; submitting lands here). */
     fun searchChannels(query: String) {
         val acc = account ?: return
         val token = accountCommitFence.capture(acc.id) ?: return
+        _uiState.value.selectedCategoryId?.takeIf { it != SEARCH_ID }?.let { categoryBeforeSearch = it }
         _uiState.update { it.copy(searchQuery = query.trim(), selectedCategoryId = SEARCH_ID, channels = emptyList()) }
         selectCategoryFor(acc, SEARCH_ID, force = false, token = token)
     }
@@ -734,6 +764,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 selectedCategoryId = null,
                 channels = emptyList(),
                 epg = emptyMap(),
+                epgEmpty = emptySet(),
+                historyLoad = LoadStatus.Idle,
+                historyChannelId = null,
                 focusedChannelId = null,
                 categoriesLoad = LoadStatus.Idle,
                 channelsLoad = LoadStatus.Idle,
@@ -790,6 +823,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
                         categories = visible,
                         categoriesLoad = outcome.status,
                         error = failureText(acc, (outcome as? LoadOutcome.Failed)?.error),
+                        errorBlocked = IptvLoadFailurePolicy.classify(
+                            (outcome as? LoadOutcome.Failed)?.error, IptvPanelGuard.panelOriginUrlOf(acc),
+                        ).kind == IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER,
                     )
                 }
                 return@launch
@@ -811,11 +847,40 @@ class XtreamLiveGuideViewModel @Inject constructor(
         }
     }
 
-    /** "All channels" — or All favorites while a cross-playlist favourite waits to be tuned (F03). */
-    private fun defaultCategoryId(visible: List<GuideCategory>): String? =
-        (if (_uiState.value.pendingTune != null) visible.firstOrNull { it.special == GuideSpecial.ALL_FAVORITES } else null)?.id
-            ?: visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id
-            ?: visible.firstOrNull()?.id
+    /**
+     * All favorites while a cross-playlist favourite waits to be tuned (F03); else B4: the group this playlist was
+     * left on, else Favorites when it has any, else All channels.
+     */
+    private fun defaultCategoryId(visible: List<GuideCategory>): String? {
+        if (_uiState.value.pendingTune != null) {
+            visible.firstOrNull { it.special == GuideSpecial.ALL_FAVORITES }?.let { return it.id }
+        }
+        val accountId = account?.id
+        val prefix = accountId?.let(XtreamItemRegistry::accountPrefix)
+        return GuideGroupMemoryPolicy.initialCategory(
+            visible = visible,
+            remembered = accountId?.let(GuideGroupMemory::lastGroup),
+            hasFavorites = prefix != null && favoriteLiveIds.value.any { it.startsWith(prefix) },
+        )
+    }
+
+    /**
+     * B4: the viewer opened [category] (OK / RIGHT on its row). It joins the recent groups under the pinned rows;
+     * the column is republished only when that list actually changed.
+     */
+    fun onGroupEntered(category: GuideCategory) {
+        val acc = account ?: return
+        val id = GuideGroupMemoryPolicy.resolve(category)
+        val real = _uiState.value.categories.firstOrNull { it.id == id } ?: return
+        if (!GuideGroupMemory.onGroupEntered(acc.id, id, real.special)) return
+        _uiState.update { st ->
+            st.copy(
+                categories = GuideGroupMemoryPolicy.withRecentGroups(
+                    st.categories.filter { it.aliasOf == null }, GuideGroupMemory.recentGroups(acc.id),
+                ),
+            )
+        }
+    }
 
     /** The classified, photograph-friendly failure line (same wording as the hub's error card). */
     private fun failureText(acc: XtreamAccount, error: Throwable?): String {
@@ -855,7 +920,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** Category selections hide deselected provider categories; the synthetic ones
      *  (Favorites/Recent/All channels) are always shown. */
     private fun filteredCategories(acc: XtreamAccount, full: List<GuideCategory>): List<GuideCategory> =
-        full.filter { it.special != null || acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.id) }
+        GuideGroupMemoryPolicy.withRecentGroups(
+            full.filter { it.special != null || acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.id) },
+            // B4: the last groups opened sit right under the pinned rows.
+            GuideGroupMemory.recentGroups(acc.id),
+        )
 
     /** A category row took D-pad focus. See [GuideCategorySettlePolicy]. */
     fun onCategoryFocused(categoryId: String?) =
@@ -888,7 +957,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
         token: LiveGuideAccountCommitToken,
     ) {
         if (!isCurrentAccount(token)) return
-        val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        val found = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        // B4: a "recent groups" copy shows the group it stands for.
+        found.aliasOf?.let { real -> selectCategoryFor(acc, real, force, token); return }
+        val category = found
+        GuideGroupMemory.onGroupShown(acc.id, category.id, category.special)
         if (!force && categoryId == _uiState.value.selectedCategoryId && _uiState.value.channels.isNotEmpty()) return
         // The lineup pool (Search, custom groups) is the whole lineup; hold it only while one is open.
         if (category.special != GuideSpecial.SEARCH && category.special != GuideSpecial.GROUP) lineupPool = null
@@ -1084,6 +1157,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
      */
     fun onChannelFocused(channel: GuideChannel, index: Int = -1) {
         noteGuideActivity()
+        // B4: the row each group was left on, so reopening the group lands there.
+        val shown = _uiState.value
+        if (shown.accountId != null && shown.selectedCategoryId != null) {
+            GuideGroupMemory.onRowFocused(shown.accountId, shown.selectedCategoryId, channel.entityId)
+        }
         if (channel.contentId == _uiState.value.focusedChannelId) return
         // Moving to a different channel clears the previous channel's playback notice.
         _uiState.update { GuidePlaybackInteractionPolicy.focus(it, channel.contentId) }
@@ -1326,6 +1404,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 if (programs.isEmpty()) {
                     epgAdmission.recordEmpty(streamId.toString(), nowMs)
                     epgRequested.remove(streamId)
+                    _uiState.update { if (streamId in it.epgEmpty) it else it.copy(epgEmpty = it.epgEmpty + streamId) }
                     return@withPermit
                 }
                 epgAdmission.recordAnswered(streamId.toString())
@@ -1336,7 +1415,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 // Merge, never replace: a row already drawn from stored rows keeps its cells (the
                 // past lives only there) and takes just the fresh now/next — B11.
                 _uiState.update {
-                    it.copy(epg = it.epg + (streamId to GuideWindowRows.mergeNowNext(it.epg[streamId], now, next, programs)))
+                    it.copy(
+                        epg = it.epg + (streamId to GuideWindowRows.mergeNowNext(it.epg[streamId], now, next, programs)),
+                        epgEmpty = it.epgEmpty - streamId,
+                    )
                 }
                 // A Stalker portal's now/next is answered FROM its bulk guide, so the stored window is on
                 // disk exactly now: a window read made before the first ingest landed found nothing, and
@@ -1469,8 +1551,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
         // The per-channel history table is the Xtream panel's (get_simple_data_table). An M3U playlist's
         // past programmes come from its XMLTV, already on disk.
         if (acc.sourceType != XtreamAccount.SOURCE_XTREAM) return
+        // UX275: the fetch is a bounded load, so a past window can say Loading or Failed (with Retry) instead of
+        // reading as "no guide data for this time". Failure used to be swallowed by runCatching.
+        _uiState.update { it.copy(historyChannelId = channel.contentId, historyLoad = BoundedLoad.begin(LoadSurface.GUIDE_HISTORY)) }
         viewModelScope.launch {
-            runCatching {
+            val outcome = BoundedLoad.run(
+                surface = LoadSurface.GUIDE_HISTORY,
+                report = mapOf("source_type" to acc.sourceType),
+            ) {
                 historyFetcher.ensure(
                     playlistId = acc.id,
                     channelId = epgChannelKey(channel.streamId),
@@ -1478,8 +1566,24 @@ class XtreamLiveGuideViewModel @Inject constructor(
                     nowMs = System.currentTimeMillis(),
                 )
             }
+            // A newer focus owns the status now; this answer is for a channel the viewer already left.
+            _uiState.update { if (it.historyChannelId == channel.contentId) it.copy(historyLoad = outcome.status) else it }
             publishWindows(listOf(channel))
         }
+    }
+
+    /** UX275: Retry on a failed past-window load. Asked by the viewer only, never by a loop. */
+    fun retryHistory() {
+        val channel = _uiState.value.focusedChannel ?: return
+        if (_uiState.value.historyLoad !is LoadStatus.Failed) return
+        ensureHistory(channel)
+    }
+
+    /** UX389: this playlist's most recently watched channels, newest first (entry focus; never tunes). */
+    suspend fun recentContentIds(): List<String> {
+        val acc = account ?: return emptyList()
+        val prefix = XtreamItemRegistry.accountPrefix(acc.id)
+        return liveStore.recents.first().map { it.id }.filter { it.startsWith(prefix) }
     }
 
     /** Streams get_simple_data_table into the EPG table, atomically per channel, pruning as it goes. */
@@ -1494,8 +1598,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
             if (rows.size < PROGRAMME_CAP) rows.add(row)
         }
         // A failed fetch stamps nothing, so the next open tries again rather than reading as
-        // "this channel has no history" for the life of the install.
-        if (parsed.isFailure) return
+        // "this channel has no history" for the life of the install. It is thrown, not returned: the bounded
+        // load around it turns it into Failed (UX275), where it used to read as an empty past.
+        parsed.exceptionOrNull()?.let { throw it }
         contentDb.refillChannelEpg(playlistId, channelId, rows, nowMs)
         contentDb.pruneEpg(playlistId, com.nuvio.tv.core.iptv.CatchUpEpgWindow.pruneCutoffMs(nowMs, catchUpDays))
     }

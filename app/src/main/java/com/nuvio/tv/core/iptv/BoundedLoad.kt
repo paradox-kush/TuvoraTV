@@ -63,6 +63,8 @@ enum class LoadSurface(val key: String, val stallMs: Long, val reportsEveryOutco
     PLAYLIST_REFRESH("playlist_refresh", 90_000L, reportsEveryOutcome = true),
     /** Starting a live pause / rewind buffer: the first playable piece (or a Failed the viewer can Retry). */
     LIVE_PAUSE("live_pause", 20_000L, reportsEveryOutcome = true),
+    /** UX275: the focused channel's catch-up history (get_simple_data_table) behind a past guide window. Failures only. */
+    GUIDE_HISTORY("guide_history", 20_000L, reportsEveryOutcome = false),
     /**
      * B256: one live viewing's terminal outcome (a channel that played and then failed, or a wait the
      * session never ended). Not a [run] surface: the playback owner reports it through [BoundedLoad.report]

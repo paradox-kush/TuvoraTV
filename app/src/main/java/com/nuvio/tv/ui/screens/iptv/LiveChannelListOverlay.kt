@@ -70,12 +70,16 @@ internal fun BoxScope.LiveChannelListOverlay(
     channels: List<GuideChannel>,
     epg: Map<Int, GuideEpg>,
     playingContentId: String?,
+    /** UX107: the aimed channel — the anchor when the playing channel is no longer a row (it was hidden). */
+    aimedContentId: String? = null,
     favoriteIds: Set<String>,
+    /** B5: the clock for each row's progress line. */
+    nowMs: Long = System.currentTimeMillis(),
     onBrowse: (GuideChannel) -> Unit,
     onPick: (GuideChannel) -> Unit,
     onClose: () -> Unit,
 ) {
-    val startIndex = channels.indexOfFirst { it.contentId == playingContentId }.coerceAtLeast(0)
+    val startIndex = MiniGuideStartPolicy.startIndex(channels.map { it.contentId }, playingContentId, aimedContentId)
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = (startIndex - 3).coerceAtLeast(0))
     val startFocus = remember { FocusRequester() }
     val latestClose by rememberUpdatedState(onClose)
@@ -129,6 +133,7 @@ internal fun BoxScope.LiveChannelListOverlay(
                     number = index + 1,
                     channel = channel,
                     nowTitle = epg[channel.streamId]?.now?.title,
+                    nowProgress = epg[channel.streamId]?.now?.let { GuideNowProgress.fraction(it.startMs, it.endMs, nowMs) },
                     playing = channel.contentId == playingContentId,
                     favorite = channel.contentId in favoriteIds,
                     focusRequester = if (index == startIndex) startFocus else null,
@@ -145,6 +150,8 @@ internal fun ChannelListRow(
     number: Int,
     channel: GuideChannel,
     nowTitle: String?,
+    /** B5: how far the programme on now has run, or null for no line. */
+    nowProgress: Float? = null,
     playing: Boolean,
     favorite: Boolean,
     focusRequester: FocusRequester?,
@@ -160,12 +167,8 @@ internal fun ChannelListRow(
             .fillMaxWidth()
             .height(CHANNEL_LIST_ROW_HEIGHT)
             .clip(shape)
-            .background(if (focused) NuvioTheme.colors.Primary.copy(alpha = 0.22f) else Color.Transparent)
-            .border(
-                if (focused) NuvioTheme.spacing.xxs else 0.dp,
-                if (focused) NuvioTheme.colors.Primary else Color.Transparent,
-                shape,
-            )
+            // Redesign change 2: the guide's focus language (ring = cursor, red edge = playing).
+            .guideFocusLook(GuideFocusLanguage.look(focused = focused, selected = false, playing = playing), shape)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
@@ -176,25 +179,21 @@ internal fun ChannelListRow(
         Text(
             text = number.toString(),
             style = MaterialTheme.typography.labelMedium,
-            color = NuvioTheme.colors.TextSecondary,
+            color = if (playing) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary,
             modifier = Modifier.width(34.dp),
             maxLines = 1,
         )
-        AsyncImage(
-            model = channel.logo,
-            contentDescription = null,
-            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(NuvioTheme.radii.xs)),
-        )
+        if (GuideNoGuidePolicy.needsMonogram(channel.logo)) {
+            MonogramTile(name = channel.name, modifier = Modifier.size(36.dp))
+        } else {
+            AsyncImage(
+                model = channel.logo,
+                contentDescription = null,
+                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(NuvioTheme.radii.xs)),
+            )
+        }
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)) {
-                if (playing) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        tint = NuvioTheme.colors.Primary,
-                        modifier = Modifier.size(NuvioTheme.spacing.lg),
-                    )
-                }
                 Text(
                     text = channel.name,
                     style = MaterialTheme.typography.bodyMedium,
@@ -221,6 +220,14 @@ internal fun ChannelListRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            nowProgress?.let { fraction ->
+                Box(
+                    Modifier.padding(top = 2.dp).fillMaxWidth().height(2.dp)
+                        .clip(RoundedCornerShape(1.dp)).background(NuvioTheme.colors.Border),
+                ) {
+                    Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().background(NuvioTheme.colors.FocusRing))
+                }
             }
         }
     }

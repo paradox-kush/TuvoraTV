@@ -70,7 +70,7 @@ data class XtreamHubUiState(
     val accounts: List<XtreamAccount> = emptyList(),
     val hasConfiguredAccounts: Boolean = accounts.isNotEmpty(),
     val selectedAccountId: String? = null,
-    val section: XtreamSection = XtreamSection.MOVIES,
+    val section: XtreamSection = XtreamSection.LIVE,
     val categories: List<XtreamCategory> = emptyList(),
     val itemsByCategory: Map<String, List<XtreamHubItem>> = emptyMap(),
     /** categoryId -> more rows exist past the loaded window (item 5). */
@@ -235,6 +235,13 @@ class XtreamHubViewModel @Inject constructor(
             posterEnricher.updates.collect { u -> applyPosterUpdate(u) }
         }
         viewModelScope.launch {
+            // UX389: the entry tab proving empty hands over (see advanceEntryIfEmpty). Reads the state only; never polls.
+            _uiState
+                .map { Triple(it.section, it.categoriesLoad, it.unavailableSection) }
+                .distinctUntilChanged()
+                .collect { (section, load, unavailable) -> advanceEntryIfEmpty(section, load, unavailable) }
+        }
+        viewModelScope.launch {
             // Self-heal, event-driven (never a poll): an import the page gave up waiting on has landed, or
             // a playlist's catalog index finished building — show it, and ask the failed rows once more.
             IptvImportProgress.completed.collect { onCatalogLanded(it) }
@@ -252,14 +259,20 @@ class XtreamHubViewModel @Inject constructor(
                 .distinctUntilChanged()
                 .collect { (hasConfiguredAccounts, accounts) ->
                     val selected = resolveStickyAccount(_uiState.value.selectedAccountId, remembered.accountId, accounts)
-                    val wanted = if (restoreSection) {
+                    val selectedAccount = accounts.firstOrNull { it.id == selected }
+                    val section = if (restoreSection) {
                         restoreSection = false
-                        resolveStickySection(remembered.section, _uiState.value.section)
+                        // UX389: the remembered tab is kept only while it is enabled and not known empty; otherwise
+                        // (and with nothing remembered) the first tab with content, Live TV first.
+                        HubEntrySectionPolicy.initial(
+                            remembered = XtreamSection.entries.firstOrNull { it.name == remembered.section },
+                            enabled = enabledSections(selectedAccount),
+                            knownEmpty = knownEmptySections(selectedAccount),
+                        )
                     } else {
-                        _uiState.value.section
+                        // A disabled content type hides its tab — never leave the section on one.
+                        coerceSection(_uiState.value.section, selectedAccount)
                     }
-                    // A disabled content type hides its tab — never leave the section on one.
-                    val section = coerceSection(wanted, accounts.firstOrNull { it.id == selected })
                     _uiState.update { it.copy(accounts = accounts, hasConfiguredAccounts = hasConfiguredAccounts, selectedAccountId = selected, section = section) }
                     if (accounts.isEmpty()) {
                         _uiState.update { it.copy(categoriesLoad = LoadStatus.Idle) }
@@ -270,8 +283,38 @@ class XtreamHubViewModel @Inject constructor(
         }
     }
 
+    /**
+     * UX389: true until the viewer picks a tab or a playlist themselves. While it holds, an entry tab that
+     * proves empty ("Nothing here") hands over to the next tab with content, Live first; a tab the viewer
+     * chose is never moved.
+     */
+    private var entryAdvancePending = true
+    private val entryTried = mutableSetOf<XtreamSection>()
+
+    private fun enabledSections(acc: XtreamAccount?): Set<XtreamSection> =
+        XtreamSection.entries.filter { acc == null || acc.typeEnabled(it.typeKey) }.toSet()
+
+    /** Positive evidence only: a portal that reported no series. "Not loaded yet" is never listed here. */
+    private fun knownEmptySections(acc: XtreamAccount?): Set<XtreamSection> =
+        if (acc != null && acc.id in _uiState.value.seriesUnavailableIds) setOf(XtreamSection.SERIES) else emptySet()
+
+    /** The entry tab proved empty: move on to the next tab with content (never a loop: every tab is tried once). */
+    private fun advanceEntryIfEmpty(section: XtreamSection, load: LoadStatus, unavailable: XtreamSection?) {
+        if (!entryAdvancePending || section == XtreamSection.LIVE) return
+        if (load !is LoadStatus.Empty && unavailable != section) {
+            if (load is LoadStatus.Loaded) entryAdvancePending = false
+            return
+        }
+        entryTried += section
+        val acc = _uiState.value.selectedAccount
+        val next = HubEntrySectionPolicy.advanceFrom(section, enabledSections(acc), entryTried)
+        if (next == null) { entryAdvancePending = false; return }
+        switchSection(next, persist = false)
+    }
+
     fun selectAccount(accountId: String) {
         if (accountId == _uiState.value.selectedAccountId) return
+        entryAdvancePending = false
         // Whatever browse work the OLD provider still has queued belongs to a screen the user just
         // left — drop it rather than let it drain ahead of the new provider (which may share the
         // same throttled host; measured on a phone: Xtream posters waiting minutes behind an
@@ -286,8 +329,14 @@ class XtreamHubViewModel @Inject constructor(
 
     fun selectSection(section: XtreamSection) {
         if (section == _uiState.value.section) return
+        entryAdvancePending = false
+        switchSection(section, persist = true)
+    }
+
+    private fun switchSection(section: XtreamSection, persist: Boolean) {
+        if (section == _uiState.value.section) return
         _uiState.update { it.copy(section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap(), unavailableSection = null) }
-        rememberSelection()
+        if (persist) rememberSelection()
         loadCategories()
     }
 

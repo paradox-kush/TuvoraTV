@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -47,19 +48,29 @@ class GuideRemoteInteractionDeviceTest {
     private fun setup() {
         compose.setContent {
             NuvioTheme {
-                Box(Modifier.width(900.dp)) {
+                Box(Modifier.width(900.dp).height(540.dp)) {
                     GuideChannelRow(number = 1, name = channel.name, isPlaying = true, logo = null, epg = null,
                         windowStartMs = 0, nowMs = 0, isFavorite = false, isPinned = false, lockFocus = false,
                         onFocused = {}, onClick = { plays++ }, onLongClick = { menu = true }, onHide = { menu = true },
                         focusRequester = focus, channel = channel, catchUpSupported = false, timelineActive = false,
                         onEnterTimeline = {}, onLeaveTimeline = {}, onTravel = { false }, onBackOutOfTimeline = {},
                         onProgrammeClick = {}, layout = preset)
+                    fun close() { menu = false; size = false }
+                    // Redesign change 3: Watch full screen, Add to Favorites, Add to Multiview, Guide size, Hide channel.
+                    if (menu) GuideChannelPanel(channel.name,
+                        GuideChannelPanelPolicy.rows(GuideChannelPanelPolicy.Variant.CHANNEL, false,
+                            listOf(GuideChannelMenuPolicy.Action.HIDE), noGuide = false, guideSizeHere = true),
+                        focusRow = null, guideSize = preset,
+                        onRow = { row ->
+                            when (row) {
+                                GuideChannelPanelPolicy.Row.ADD_FAVORITE -> { favorites++; close() }
+                                GuideChannelPanelPolicy.Row.HIDE -> { hidden++; close() }
+                                GuideChannelPanelPolicy.Row.GUIDE_SIZE -> { menu = false; size = true }
+                                else -> close()
+                            }
+                        }, onClose = { close() })
+                    if (size) GuideLayoutPanel(preset, onSelect = { preset = it; close() }, onClose = { close() })
                 }
-                fun close() { menu = false; size = false }
-                if (menu) GuideChannelActionsDialog(channel.name, false, listOf(GuideChannelMenuPolicy.Action.HIDE),
-                    onFavorite = { favorites++; close() }, onAction = { hidden++; close() },
-                    onGuideSize = { menu = false; size = true }, onDismiss = { close() })
-                if (size) GuideLayoutDialog(preset, onSelect = { preset = it; close() }, onDismiss = { close() })
                 LaunchedEffect(menu, size) { if (!menu && !size) focus.requestFocus() }
             }
         }
@@ -76,6 +87,7 @@ class GuideRemoteInteractionDeviceTest {
     @Test fun menuAndBackLeaveChannelUnchangedUntilAnActionIsChosen() {
         setup()
         key(KeyEvent.KEYCODE_MENU)
+        compose.onNodeWithText("Watch full screen").assertIsFocused()
         compose.onNodeWithText("Add to Favorites").assertIsDisplayed()
         compose.onNodeWithText("Hide channel").assertIsDisplayed()
         assertEquals(0, favorites); assertEquals(0, hidden); assertEquals(0, plays)
@@ -85,7 +97,7 @@ class GuideRemoteInteractionDeviceTest {
         key(KeyEvent.KEYCODE_DPAD_CENTER)
         assertEquals(1, plays)
         key(KeyEvent.KEYCODE_MENU)
-        key(KeyEvent.KEYCODE_DPAD_DOWN)
+        repeat(4) { key(KeyEvent.KEYCODE_DPAD_DOWN) }
         key(KeyEvent.KEYCODE_DPAD_CENTER)
         assertEquals(1, hidden); assertEquals(0, favorites)
     }
@@ -105,8 +117,7 @@ class GuideRemoteInteractionDeviceTest {
         setup()
         for ((label, expected) in listOf("Compact" to GuideLayoutPreset.COMPACT, "Large" to GuideLayoutPreset.LARGE, "Standard" to GuideLayoutPreset.STANDARD)) {
             key(KeyEvent.KEYCODE_MENU)
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            repeat(3) { key(KeyEvent.KEYCODE_DPAD_DOWN) }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             compose.onNodeWithText("Compact").assertIsDisplayed()
             // The picker opens on the size already in use, so arrow presses are relative to it.
@@ -142,7 +153,7 @@ class GuideRemoteInteractionDeviceTest {
                     }
                 }) {
                     Box(Modifier.focusRequester(anchor).focusable())
-                    if (panel) LiveChannelListOverlay(listOf(channel, second), emptyMap(), channel.contentId, emptySet(),
+                    if (panel) LiveChannelListOverlay(listOf(channel, second), emptyMap(), channel.contentId, favoriteIds = emptySet(),
                         onBrowse = {}, onPick = { picked = it.contentId; panel = false }, onClose = { panel = false })
                 }
                 LaunchedEffect(panel) { if (!panel) anchor.requestFocus() }

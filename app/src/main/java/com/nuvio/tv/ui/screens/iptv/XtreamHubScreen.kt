@@ -31,6 +31,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -133,6 +136,12 @@ fun XtreamHubScreen(
     }
     var openCategoryId by remember(uiState.selectedAccountId, uiState.section) { mutableStateOf<String?>(null) }
     val firstFocus = remember { FocusRequester() }
+    // UX389: the first entry puts focus in the channel list (last-watched row, else row 1), not on the tab row.
+    // One shot, and cancelled by the viewer's first key so a late list never steals focus from where they went.
+    var entryFocusPending by remember { mutableStateOf(true) }
+    // Device pass 1, finding 4: the content region RIGHT out of the side rail returns to.
+    val contentReturn = remember { HubContentReturn() }
+    val fixGuideViewModel: GuideFixActionViewModel = hiltViewModel()
 
     // Per-tab focus targets so D-pad UP from the first content row lands back on the
     // active tab, and focusRestorer restores focus to it when returning to the header.
@@ -179,6 +188,9 @@ fun XtreamHubScreen(
     // Live: the guide owns channel search (its Search row); the same chip asks it to open, so Search sits in one place on every section.
     val liveSearchApplies = anyTypeEnabled && account != null && uiState.section == XtreamSection.LIVE
     var liveSearchRequest by remember { mutableStateOf(0) }
+    // Change 15: the guide's options panel, opened from the header while Live TV shows.
+    var guideOptionsRequest by remember { mutableStateOf(0) }
+    val guideOptionsChip = remember { FocusRequester() }
     LaunchedEffect(uiState.selectedAccountId, uiState.section) {
         showSearchDialog = false
         searchViewModel.close()
@@ -295,7 +307,17 @@ fun XtreamHubScreen(
         return
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(top = if (liveFullscreen) 0.dp else NuvioTheme.spacing.xl)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = if (liveFullscreen) 0.dp else NuvioTheme.spacing.xl)
+            // Device pass 1, finding 4: RIGHT out of the side rail returns to the control the viewer left.
+            .hubContentFocusRestore(contentReturn)
+            .onPreviewKeyEvent { event ->
+                if (entryFocusPending && event.type == KeyEventType.KeyDown) entryFocusPending = false
+                false
+            },
+    ) {
         // Header: section tabs lead, provider picker sits out on the right.
         //
         // The provider chip is NOT a section — it selects data, not a destination. Sitting first
@@ -308,13 +330,15 @@ fun XtreamHubScreen(
           // another screen) comes back with "focus came from outside".
           val headerFocus = remember { HubHeaderFocus() }
           val section = uiState.section
-          val selectSection: (XtreamSection) -> Unit = viewModel::selectSection
+          val selectSection: (XtreamSection) -> Unit = { entryFocusPending = false; viewModel.selectSection(it) }
           val notATab: () -> Unit = { headerFocus.onControlFocused(null, section) }
           Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = HubRowStartPadding, end = HubRowStartPadding, bottom = NuvioTheme.spacing.md)
                 .hubHeaderFocusScope(headerFocus)
+                // Leaving from the header (LEFT on Live TV) comes back to the header.
+                .onFocusChanged { if (it.hasFocus) contentReturn.onHeaderFocused() }
                 .focusRestorer(headerRestoreTarget),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
@@ -332,6 +356,13 @@ fun XtreamHubScreen(
                 focusRequester = searchChip,
                 onFocusGained = notATab,
                 onClick = { if (liveSearchApplies) liveSearchRequest++ else showSearchDialog = true }
+            )
+            if (uiState.section == XtreamSection.LIVE) HubChip(
+                label = stringResource(R.string.iptv_guide_options),
+                selected = false,
+                focusRequester = guideOptionsChip,
+                onFocusGained = notATab,
+                onClick = { guideOptionsRequest++ },
             )
             if (showLive) HubChip(
                 label = stringResource(R.string.multiview_entry),
@@ -381,8 +412,14 @@ fun XtreamHubScreen(
                 onPlayCatchUp = onPlayCatchUp,
                 onSwitchAccount = viewModel::selectAccount,
                 searchRequest = liveSearchRequest,
+                guideOptionsRequest = guideOptionsRequest,
+                onGuideOptionsClosed = { guideOptionsChip.requestFocusOrFalse() },
                 onOpenRecordings = onOpenRecordings,
                 onOpenMultiview = { onOpenMultiview(it) },
+                entryFocusPending = entryFocusPending && uiState.section == XtreamSection.LIVE,
+                onEntryFocusConsumed = { entryFocusPending = false },
+                contentReturn = contentReturn,
+                onFixGuide = { id -> fixGuideViewModel.openPlaylistSettings(id); onManagePlaylists() },
             )
         } else {
             HubBrowseContent(
@@ -1005,8 +1042,8 @@ internal fun Modifier.hubHeaderFocusScope(headerFocus: HubHeaderFocus): Modifier
 private val hubHeaderMainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
 /**
- * A section tab: OK selects it; focus selects it only when the viewer arrowed onto it along the
- * header (B132 — a landing from Back, a restore or the sidebar never switches the section).
+ * A section tab: OK selects it. A2 (redesign 2026-11-15): focus alone never switches the section
+ * ([HubSectionFocusPolicy.SWITCH_ON_FOCUS]); with that flag on, only travel along the header would (B132).
  */
 @Composable
 internal fun HubSectionTab(
@@ -1026,9 +1063,8 @@ internal fun HubSectionTab(
 }
 
 /**
- * Header control for the provider picker + section tabs. Section tabs switch on FOCUS
- * (TiViMate-style) — arrow onto a tab and it selects, no OK needed; OK/click still works.
- * Only travel that starts inside the header counts (B132, [HubSectionTab]).
+ * Header control for the provider picker + section tabs. Section tabs change on OK (A2,
+ * [HubSectionFocusPolicy.SWITCH_ON_FOCUS]); see [HubSectionTab].
  *
  * Speaks the sidebar's dialect ([SidebarNavigation]) rather than a header vocabulary of its own:
  * nothing is drawn at rest, the active section takes a soft neutral fill, and focus takes a solid
@@ -1055,17 +1091,12 @@ internal fun HubChip(
     // The sidebar's nav-item radius, not a full pill: the hub is app navigation, so it should
     // look like the app's navigation.
     val chipShape = NuvioTheme.shapes.button
-    val surface = hubChipSurface(selected = selected, focused = focused)
-    val containerColor = when (surface) {
-        HubChipSurface.AccentFill -> NuvioTheme.colors.Primary
-        HubChipSurface.SoftFill -> NuvioTheme.colors.FocusBackground
-        HubChipSurface.None -> Color.Transparent
-    }
-    val contentColor = when (surface) {
-        HubChipSurface.AccentFill -> NuvioTheme.colors.OnPrimary
-        HubChipSurface.SoftFill -> NuvioTheme.colors.TextPrimary
-        HubChipSurface.None -> NuvioTheme.colors.TextSecondary
-    }
+    // Redesign change 2: the FocusRing is the cursor, the soft fill marks the active section (GuideFocusLanguage).
+    val look = GuideFocusLanguage.look(focused = focused, selected = selected)
+    val containerColor = if (look.softFill) {
+        NuvioTheme.colors.FocusBackground.copy(alpha = GuideFocusLanguage.SELECTED_FILL_ALPHA)
+    } else Color.Transparent
+    val contentColor = if (focused || selected) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary
     Card(
         onClick = onClick,
         modifier = Modifier
@@ -1078,13 +1109,17 @@ internal fun HubChip(
         shape = CardDefaults.shape(shape = chipShape),
         colors = CardDefaults.colors(
             containerColor = containerColor,
-            focusedContainerColor = NuvioTheme.colors.Primary
+            focusedContainerColor = containerColor,
         ),
         border = CardDefaults.border(
             border = Border.None,
-            focusedBorder = Border.None
+            focusedBorder = Border(
+                border = androidx.compose.foundation.BorderStroke(GuideFocusLanguage.RING_DP.dp, NuvioTheme.colors.FocusRing),
+                shape = chipShape,
+            ),
         ),
-        scale = CardDefaults.scale(focusedScale = 1.02f)
+        // The ring is drawn inside; no scale, so a focused chip never grows into its neighbour.
+        scale = CardDefaults.scale(focusedScale = 1f)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.sm),
@@ -1094,7 +1129,8 @@ internal fun HubChip(
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelLarge,
-                color = contentColor
+                color = contentColor,
+                fontWeight = if (look.boldText) androidx.compose.ui.text.font.FontWeight.Bold else null,
             )
             if (showDropdownIcon) {
                 Icon(
