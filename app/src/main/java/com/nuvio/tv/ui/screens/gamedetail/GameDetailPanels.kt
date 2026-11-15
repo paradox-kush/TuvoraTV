@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -52,6 +53,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.core.sports.detail.Side
 import com.nuvio.tv.core.sports.detail.SideKey
 import com.nuvio.tv.core.sports.detail.GameBlock
+import com.nuvio.tv.core.sports.detail.screen.ChartMarkers
 import com.nuvio.tv.core.sports.detail.screen.GameSection
 import com.nuvio.tv.core.sports.detail.screen.GameDetailTvModel
 import com.nuvio.tv.core.sports.detail.screen.MotionSpec
@@ -140,22 +142,49 @@ internal fun LastPlayCard(play: TvLastPlay, colors: TeamColors) {
     }
 }
 
-/** Win-chance chart: 50 % dashed line, the home share in the home colour, an end dot. The newest segment draws over COUNT_MS. */
+/**
+ * Win-chance chart: 50 % dashed line, the home share in the home colour, an end dot. The newest segment draws over COUNT_MS. Phase D: hollow
+ * dots on the line at real scoring moments (label above the line from 50 %, below under it; a new one scales in over QUICK_MS) and faint
+ * period dividers with labels under the chart. One Canvas; nothing loops.
+ */
 @Composable
-internal fun WinChart(chart: TvChart, color: Color, modifier: Modifier) {
+internal fun WinChart(chart: TvChart, color: Color, awayColor: Color, modifier: Modifier) {
     val n = chart.homeShare.size
     val draw = remember { Animatable(1f) }
     LaunchedEffect(n) { if (draw.value == 1f && n > 2) { draw.snapTo(0f); draw.animateTo(1f, tween(MotionSpec.COUNT_MS, easing = Standard)) } }
+    // A marker that was not there before scales in once; the markers present on first composition are shown as they are.
+    var known by remember { mutableStateOf(chart.markers.map { it.playId }.toSet()) }
+    val newIds = chart.markers.map { it.playId }.toSet() - known
+    val pop = remember { Animatable(1f) }
+    LaunchedEffect(newIds) {
+        if (newIds.isNotEmpty()) { pop.snapTo(0f); pop.animateTo(1f, tween(MotionSpec.QUICK_MS, easing = Enter)); known = known + newIds }
+    }
     val grid = NuvioTheme.colors.Border
+    val ink = NuvioTheme.colors.TextSecondary
+    val labelPaint = remember { android.graphics.Paint().apply { isAntiAlias = true; textAlign = android.graphics.Paint.Align.CENTER } }
     Canvas(modifier) {
-        val w = size.width; val h = size.height
+        val w = size.width; val h = size.height - (if (chart.dividers.isNotEmpty()) 12.dp.toPx() else 0f)
         fun pt(i: Int) = Offset(w * i / (n - 1).coerceAtLeast(1), h * (1f - chart.homeShare[i]))
         drawLine(grid, Offset(0f, h / 2), Offset(w, h / 2), 1.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)))
+        labelPaint.textSize = 9.dp.toPx(); labelPaint.color = ink.toArgb()
+        chart.dividers.forEach { (x, text) ->
+            drawLine(grid.copy(alpha = 0.6f), Offset(w * x, 0f), Offset(w * x, h), 1f)
+            drawContext.canvas.nativeCanvas.drawText(text, w * x, size.height - 1.dp.toPx(), labelPaint)
+        }
         for (i in 0 until n - 2) drawLine(color, pt(i), pt(i + 1), 3f, StrokeCap.Round)
         val a = pt(n - 2); val b = pt(n - 1)
         val end = Offset(a.x + (b.x - a.x) * draw.value, a.y + (b.y - a.y) * draw.value)
         drawLine(color, a, end, 3f, StrokeCap.Round)
         drawCircle(color, 5f, end)
+        chart.markers.take(ChartMarkers.TV_MAX_MARKERS).forEach { m ->
+            val s = if (m.playId in newIds) pop.value else 1f
+            val c = Offset(w * m.x, h * (1f - m.y))
+            val markerColor = if (m.side == SideKey.AWAY) awayColor else color
+            drawCircle(markerColor, 6.dp.toPx() * s, c, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+            labelPaint.color = markerColor.toArgb()
+            val ty = if (ChartMarkers.labelAbove(m)) c.y - 9.dp.toPx() else c.y + 17.dp.toPx()
+            drawContext.canvas.nativeCanvas.drawText(m.label, c.x, ty, labelPaint)
+        }
     }
 }
 
@@ -206,7 +235,15 @@ internal fun SectionChips(
 
 /** The one panel of the selected section. Rows are capped by [PanelFit] from the measured height: whole rows only, never clipped. */
 @Composable
-internal fun SectionPanel(section: GameSection, model: GameDetailTvModel, hasPreview: Boolean, colors: TeamColors, modifier: Modifier) {
+internal fun SectionPanel(section: GameSection, model: GameDetailTvModel, hasPreview: Boolean, colors: TeamColors, moments: MomentBatch, modifier: Modifier) {
+    // Selecting another section cross-fades the content (QUICK_MS); the same section updating in place does not.
+    Crossfade(targetState = section, animationSpec = tween(MotionSpec.QUICK_MS, easing = Enter), label = "sectionContent", modifier = modifier) { sec ->
+        SectionPanelBody(sec, model, hasPreview, colors, moments, Modifier)
+    }
+}
+
+@Composable
+private fun SectionPanelBody(section: GameSection, model: GameDetailTvModel, hasPreview: Boolean, colors: TeamColors, moments: MomentBatch, modifier: Modifier) {
     if (section == GameSection.LINEUPS) { PitchPanel(model, colors, modifier); return }
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val h = maxHeight.value.toInt()
@@ -215,7 +252,8 @@ internal fun SectionPanel(section: GameSection, model: GameDetailTvModel, hasPre
                 GameSection.PLAYS -> {
                     val n = PanelFit.rows(section, h, hasPreview, model.playRows.size)
                     CardTitle(if (model.isLive) "Plays" else "Scoring & plays")
-                    model.playRows.take(n).forEach { PlayLine(it, colors) }
+                    val newest = moments.moments.any { it is Moment.NewPlay }
+                    model.playRows.take(n).forEachIndexed { i, row -> PlayLine(row, colors, fadeIn = i == 0 && newest, key = moments.seq) }
                 }
                 GameSection.STATS -> {
                     val fit = PanelFit.fit(section, h, hasPreview, model.statLines.size, hasExtra = model.linescore != null)
@@ -242,8 +280,11 @@ internal fun SectionPanel(section: GameSection, model: GameDetailTvModel, hasPre
 }
 
 @Composable
-private fun PlayLine(p: TvPlay, colors: TeamColors) {
-    Row(Modifier.fillMaxWidth().height(PanelFit.ROW_PLAYS_DP.dp).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun PlayLine(p: TvPlay, colors: TeamColors, fadeIn: Boolean, key: Int) {
+    // A new play fades in at the top (QUICK_MS, enter easing); no list-wide motion.
+    val alpha = remember { Animatable(1f) }
+    LaunchedEffect(key) { if (fadeIn) { alpha.snapTo(0f); alpha.animateTo(1f, tween(MotionSpec.QUICK_MS, easing = Enter)) } }
+    Row(Modifier.fillMaxWidth().height(PanelFit.ROW_PLAYS_DP.dp).padding(vertical = 2.dp).graphicsLayer { this.alpha = alpha.value }, verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.width(58.dp)) {
             Text(p.time, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = NuvioTheme.colors.TextSecondary, maxLines = 1)
             p.period?.let { Text(it.take(8), fontSize = 10.sp, color = NuvioTheme.colors.TextSecondary.copy(alpha = 0.7f), maxLines = 1) }
@@ -264,7 +305,8 @@ private fun StatLine(st: TvStatLine, colors: TeamColors) {
             Text(st.away, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = if (st.leader == SideKey.AWAY) colors.away else NuvioTheme.colors.TextPrimary, textAlign = TextAlign.End, modifier = Modifier.width(72.dp))
         }
         st.homeFraction?.let { f0 ->
-            val f = f0.coerceIn(0.02f, 0.98f)
+            // Stat bars flex over MOVE_MS when the value changes (the first composition shows the value as is).
+            val f by animateFloatAsState(f0.coerceIn(0.02f, 0.98f), tween(MotionSpec.MOVE_MS, easing = Standard), label = "statBar")
             Spacer(Modifier.height(2.dp))
             Row(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(NuvioTheme.colors.Border)) {
                 Box(Modifier.weight(f).fillMaxHeight().background(colors.home))

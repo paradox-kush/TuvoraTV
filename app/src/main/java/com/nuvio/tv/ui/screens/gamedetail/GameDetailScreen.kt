@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -313,7 +316,7 @@ fun GameDetailScreen(
                             if (showPreview) PreviewBox(slot = preview, surfaceOwner = surfaceOwner, ready = previewReady)
                             if (sectioned) {
                                 SectionChips(chipSections, shownSection, { sec -> requesters.getValue(FocusKey.of(sec)!!) }, { sec -> onFocused(FocusKey.of(sec)!!) })
-                                shownSection?.let { SectionPanel(it, model, showPreview, colors, Modifier.weight(1f)) }
+                                shownSection?.let { SectionPanel(it, model, showPreview, colors, moments, Modifier.weight(1f)) }
                             } else {
                             if (model.leaders.isNotEmpty()) PerformersCard(model.leaders.take(if (showPreview) 2 else 3))
                             // The stats comparison gives way to the preview box: the right column is a fixed height.
@@ -420,7 +423,13 @@ private fun StatePill(model: GameDetailTvModel) {
 
 @Composable
 private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean, colors: TeamColors, moments: MomentBatch) {
-    Card {
+    // Screen readers: only a score change is announced ("Dallas 2, Buffalo 0"), at most once per update; the description changes only with the score.
+    val scoreSpoken = model.sides.takeIf { it.size == 2 && model.isLive }?.joinToString(", ") { "${it.name} ${it.score.orEmpty()}" }
+    Card(
+        Modifier.semantics(mergeDescendants = true) {
+            if (scoreSpoken != null) { contentDescription = scoreSpoken; liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }
+        },
+    ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 model.subtitle.orEmpty().uppercase(), fontSize = 14.sp, letterSpacing = 1.sp, color = NuvioTheme.colors.TextSecondary,
@@ -510,7 +519,7 @@ private fun SituationCard(model: GameDetailTvModel, colors: TeamColors, showChar
             }
             if (model.chart != null && showChart) {
                 Spacer(Modifier.height(6.dp))
-                WinChart(model.chart, colors.home, Modifier.fillMaxWidth().height(70.dp))
+                WinChart(model.chart, colors.home, colors.away, Modifier.fillMaxWidth().height(70.dp))
             }
             w.line?.let {
                 Spacer(Modifier.height(8.dp))

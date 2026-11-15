@@ -208,6 +208,7 @@ class GameDetailResolver(
             availability = availability,
             asOf = loads.filterValues { it.outcome == FetchOutcome.HIT }.mapValues { now },
             headerFromPrimary = header != null,
+            uiSwitches = mapping.uiSwitches,
         )
     }
 

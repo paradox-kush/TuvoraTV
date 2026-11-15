@@ -335,9 +335,31 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
         val allow = (spec["allow"] as? JsonArray)?.mapNotNull { str(it) }.orEmpty()
         val ids = competitorIds(docs)
         // Feeds list plays oldest first; the Plays section is newest first.
-        val items = raw.mapNotNull { m -> playItem(spec, profile, docs, ids, m.value, allow) }.reversed()
+        val chronological = raw.mapNotNull { m -> playItem(spec, profile, docs, ids, m.value, allow) }
+        val items = chronological.reversed()
         val cap = ((spec["extra"] as? JsonObject)?.get("last") as? JsonPrimitive)?.content?.toIntOrNull()?.takeIf { it > 0 } ?: DEFAULT_PLAYS_CAP
-        return items.take(cap).takeIf { it.isNotEmpty() }?.let { GameBlock.Plays(SourceId.ESPN, it) }
+        return items.take(cap).takeIf { it.isNotEmpty() }?.let { GameBlock.Plays(SourceId.ESPN, it, chartItems(spec, profile, docs, ids, raw.map { it.value })) }
+    }
+
+    /**
+     * Every goal / touchdown-or-field-goal / red card and every period boundary of the game, oldest first and uncapped, so the win-chance chart
+     * can mark the whole game and not only the newest plays. Soccer lists its commentary types in the spec's `extra.chart` (a halftime is a
+     * boundary, not a row in the plays list).
+     */
+    private fun chartItems(spec: JsonObject, profile: String, docs: EspnDocs, ids: Pair<String?, String?>, raw: List<JsonElement>): List<TimelineItem> {
+        val chart = ((spec["extra"] as? JsonObject)?.get("chart") as? JsonArray)?.mapNotNull { str(it) }.orEmpty()
+        return raw.mapNotNull { pl ->
+            if (chart.isNotEmpty()) {
+                val type = str(spec["type"])?.let { r.firstText(pl, it) } ?: return@mapNotNull null
+                if (chart.none { type.startsWith(it, ignoreCase = true) }) return@mapNotNull null
+                playItem(spec, profile, docs, ids, pl, emptyList())
+            } else {
+                playItem(spec, profile, docs, ids, pl, emptyList())?.takeIf {
+                    it.kind == TimelineKind.GOAL || it.kind == TimelineKind.PPG || it.kind == TimelineKind.PERIOD_START || it.kind == TimelineKind.PERIOD_END ||
+                        (it.kind == TimelineKind.SCORE && profile == "football")
+                }
+            }
+        }
     }
 
     private fun playItem(spec: JsonObject, profile: String, docs: EspnDocs, ids: Pair<String?, String?>, p: JsonElement, allow: List<String>): TimelineItem? {
@@ -370,6 +392,8 @@ class EspnBlockAssembler(private val mapping: SportsMapping) {
             "shot" in t -> TimelineKind.SHOT
             "offside" in t -> TimelineKind.OFFSIDE
             t.startsWith("var") -> TimelineKind.VAR
+            t == "period start" -> TimelineKind.PERIOD_START
+            t == "end period" || t == "period end" || t == "end of half" || t == "halftime" || t == "end regular time" -> TimelineKind.PERIOD_END
             else -> kindOf(typeText, scoring)
         }
     }

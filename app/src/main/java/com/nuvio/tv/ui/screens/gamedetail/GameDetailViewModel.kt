@@ -149,6 +149,8 @@ class GameDetailViewModel @Inject constructor(
     /** Runs while the screen is RESUMED (the caller wraps it in repeatOnLifecycle); returns when the game is idle. */
     suspend fun poll() {
         val poller = pollerReady.await()
+        // The first snapshot after a resume is `prev = null`: nothing animates on app resume (spec 05 D2).
+        lastDetail = null
         poller.run(::onLoad)
     }
 

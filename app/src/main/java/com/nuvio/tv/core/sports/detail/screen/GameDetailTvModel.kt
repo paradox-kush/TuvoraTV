@@ -46,7 +46,7 @@ data class TvStatLine(val label: String, val home: String, val away: String, val
 data class TvPitch(val homeFormation: String?, val awayFormation: String?, val home: List<PitchSpot>, val away: List<PitchSpot>)
 
 /** Win-chance chart: home share per point, oldest first, 0..1. Drawn only with >= 2 points; no markers (Phase D). */
-data class TvChart(val homeShare: List<Float>)
+data class TvChart(val homeShare: List<Float>, val markers: List<ChartMarker> = emptyList(), val dividers: List<Pair<Float, String>> = emptyList())
 
 data class TvLeader(val category: String, val athlete: String, val value: String, val tag: String?, val side: SideKey?)
 
@@ -203,7 +203,9 @@ data class GameDetailTvModel(
                 )
             }
             val statLines = (d.block(BlockType.STATS) as? GameBlock.Stats)?.rows.orEmpty().take(STAT_LINES).map { statLine(it) }
-            val chart = winBlock?.history?.sortedBy { it.t }?.takeIf { it.size >= 2 }?.let { h -> TvChart(h.map { (it.home / 100f).coerceIn(0f, 1f) }) }
+            val chart = winBlock?.history?.let { h -> GameDetailUiPolicy.chartPoints(h) }?.let { pts ->
+                TvChart(pts, ChartMarkers.markersFor(d, ChartMarkers.TV_MAX_MARKERS), ChartMarkers.dividersFor(d))
+            }
             val pill = when (d.state) {
                 GameState.LIVE -> if (line != null) "LIVE · ${line.replace(" · ", " ")}" else "LIVE"
                 GameState.FINAL -> "FINAL"

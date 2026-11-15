@@ -4,6 +4,19 @@ import com.nuvio.tv.core.sports.detail.GameBlock
 
 /** Small pure decisions the game screen shares with the Mobile `GameDetailUiPolicy` (same names, same results). */
 object GameDetailUiPolicy {
+    private const val CHART_MAX_POINTS = 60
+
+    /** The DRAWN series: time-ordered and down-sampled to at most 60 points (null when < 2 points). Markers sit on exactly these points. */
+    fun chartSeries(history: List<com.nuvio.tv.core.sports.detail.WinPoint>): List<com.nuvio.tv.core.sports.detail.WinPoint>? {
+        if (history.size < 2) return null
+        val sorted = history.sortedBy { it.t }
+        return if (sorted.size <= CHART_MAX_POINTS) sorted else (0 until CHART_MAX_POINTS).map { sorted[(it.toLong() * (sorted.size - 1) / (CHART_MAX_POINTS - 1)).toInt()] }
+    }
+
+    /** Momentum line as given by the server (home's per-point non-draw share): 0..1, time-ordered, at most 60 points; null when < 2 points. */
+    fun chartPoints(history: List<com.nuvio.tv.core.sports.detail.WinPoint>): List<Float>? = chartSeries(history)?.map { it.home.coerceIn(0, 100) / 100f }
+
+
     /** Stat rows where the LOWER value leads (turnovers, fouls...): the leading side's emphasis flips. */
     private val LOWER_IS_BETTER = setOf("turnovers", "fouls", "personal fouls", "penalty minutes", "giveaways", "penalties", "total penalties")
 

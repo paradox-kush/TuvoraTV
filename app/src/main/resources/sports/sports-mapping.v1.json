@@ -52,7 +52,7 @@
     "soccer": {
       "blocks": ["header", "watch", "stats", "timeline", "lineup", "form", "standings", "highlights", "next", "plays", "standingsTable", "soccerStrip"],
       "soccerStrip": {"from": "scoreboard", "details": "competitions[0].details[*]", "stats": "competitions[0].competitors[*].statistics[*]", "commentary": "commentary[*]"},
-      "plays": {"from": "summary", "path": "commentary[*]", "id": "play.id", "text": "text", "period": "play.period.number", "time": "time.displayValue", "team": "play.team.displayName", "wallclock": "play.wallclock", "type": "play.type.text", "allow": ["Goal", "Penalty - Scored", "Own Goal", "Yellow Card", "Red Card", "Substitution", "Corner Awarded", "Shot On Target", "VAR"], "extra": {"last": 60}},
+      "plays": {"from": "summary", "path": "commentary[*]", "id": "play.id", "text": "text", "period": "play.period.number", "time": "time.displayValue", "team": "play.team.displayName", "wallclock": "play.wallclock", "type": "play.type.text", "allow": ["Goal", "Penalty - Scored", "Own Goal", "Yellow Card", "Red Card", "Substitution", "Corner Awarded", "Shot On Target", "VAR"], "extra": {"last": 60, "chart": ["Goal", "Penalty - Scored", "Own Goal", "Red Card", "Halftime", "End Regular Time"]}},
       "standingsTable": {"from": "summary", "path": "standings.groups[*]", "group": "header", "entries": "standings.entries[*]", "team": "team", "teamId": "id", "allow": ["rank", "gamesPlayed", "wins", "ties", "losses", "pointDifferential", "points"], "extra": {"labels": ["#", "P", "W", "D", "L", "GD", "PTS"]}},
       "linescore": null,
       "stats": { "from": "summary", "path": "boxscore.teams[*].statistics[*]", "label": "label", "value": "displayValue",

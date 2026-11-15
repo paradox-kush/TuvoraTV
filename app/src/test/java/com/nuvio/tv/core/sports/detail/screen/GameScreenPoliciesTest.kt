@@ -29,9 +29,9 @@ private val E = SourceId.ESPN
 internal fun detailOf(
     vararg blocks: GameBlock,
     home: Side = Side("Home", score = "10"), away: Side = Side("Away", score = "7"),
-    state: GameState = GameState.LIVE, id: String = "espn:1",
+    state: GameState = GameState.LIVE, id: String = "espn:1", sport: String = "Basketball",
 ) = GameDetail(
-    gameId = id, sport = "Basketball", leagueId = "1", leagueName = "NBA", profile = "basketball", round = null, venue = null,
+    gameId = id, sport = sport, leagueId = "1", leagueName = "NBA", profile = "basketball", round = null, venue = null,
     startsAtMs = 0, state = state, header = GameHeader.Teams(home, away), live = null, blocks = blocks.toList(), sources = emptyMap(),
     sourceStatus = emptyMap(), availability = Availability.FULL, asOf = emptyMap(),
 )

@@ -44,7 +44,7 @@ enum class BlockType(val wire: String) {
 }
 
 enum class SideKey { HOME, AWAY }
-enum class TimelineKind { GOAL, CARD, SUB, SCORE, PENALTY, CORNER, SHOT, OFFSIDE, VAR, PPG }
+enum class TimelineKind { GOAL, CARD, SUB, SCORE, PENALTY, CORNER, SHOT, OFFSIDE, VAR, PPG, PERIOD_START, PERIOD_END }
 enum class RefreshPart { SCOREBOARD, SUMMARY; companion object { val ALL: Set<RefreshPart> = entries.toSet() } }
 
 /** Per-source result of one load, and the closed vocabulary of the `sports_detail` telemetry outcome. */
@@ -144,7 +144,15 @@ sealed interface GameBlock {
         override val type get() = BlockType.STANDINGS
     }
     /** Newest first (Phase A). */
-    data class Plays(override val source: SourceId, val items: List<TimelineItem>) : GameBlock {
+    data class Plays(
+        override val source: SourceId,
+        val items: List<TimelineItem>,
+        /**
+         * Every chart-worthy key event of the game, OLDEST first and NOT capped (the display [items] are capped): goals, touchdowns / field
+         * goals, red cards and the period boundaries (kinds PERIOD_START / PERIOD_END). Phase D: chart markers and dividers.
+         */
+        val chartItems: List<TimelineItem> = emptyList(),
+    ) : GameBlock {
         override val type get() = BlockType.PLAYS
     }
     data class StandingsTable(override val source: SourceId, val groups: List<StandingsGroup>) : GameBlock {
@@ -300,6 +308,8 @@ data class GameDetail(
      * ESPN when the primary is switched off). false = the hub seed stood in; [mergeOver] then keeps the older ones.
      */
     val headerFromPrimary: Boolean = true,
+    /** The remote UI switches that are ON for this snapshot (mapping `uiSwitches`), e.g. "chartMarkers". A switch not listed is OFF. */
+    val uiSwitches: Set<String> = emptySet(),
 ) {
     val startsAtIso: String get() = Instant.ofEpochMilli(startsAtMs).toString()
 
@@ -331,6 +341,7 @@ data class GameDetail(
             live = if (mergedState == GameState.LIVE) live ?: older.live else live,
             availability = if (shown.isNotEmpty()) Availability.FULL else availability,
             headerFromPrimary = authoritative || older.headerFromPrimary,
+            uiSwitches = uiSwitches,
         )
     }
 
