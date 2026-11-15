@@ -142,7 +142,7 @@ class GuideRemoteInteractionDeviceTest {
                     }
                 }) {
                     Box(Modifier.focusRequester(anchor).focusable())
-                    if (panel) LiveChannelListOverlay(listOf(channel, second), emptyMap(), channel.contentId, emptySet(),
+                    if (panel) LiveChannelListOverlay(listOf(channel, second), emptyMap(), channel.contentId, favoriteIds = emptySet(),
                         onBrowse = {}, onPick = { picked = it.contentId; panel = false }, onClose = { panel = false })
                 }
                 LaunchedEffect(panel) { if (!panel) anchor.requestFocus() }
