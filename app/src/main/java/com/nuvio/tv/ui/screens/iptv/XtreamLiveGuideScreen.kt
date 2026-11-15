@@ -991,6 +991,7 @@ fun LiveGuide(
                         playbackError = playbackError,
                         errorChannelId = errorChannelId,
                         categoryFocused = !inCategory,
+                        playingContentId = playingContentId,
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                 }
@@ -2223,6 +2224,8 @@ internal fun PreviewInfoPane(
     viewedTimeMs: Long? = null,
     emptyGuideMessage: String? = null,
     categoryFocused: Boolean = false,
+    /** D5: the focused row is the one in the preview, so OK goes straight to full screen. */
+    aimedIsPlaying: Boolean = false,
     /** UX327: a playback failure on the focused channel says OK retries (see GuidePlaybackInteractionPolicy.click). */
     retryHint: Boolean = false,
 ) {
@@ -2347,9 +2350,10 @@ internal fun PreviewInfoPane(
         // off at "hold OK to" — the part that says what holding does (seen on the emulator).
         Text(
             text = stringResource(
-                when (GuideRemoteHintPolicy.hintFor(categoryFocused)) {
+                when (GuideRemoteHintPolicy.hintFor(categoryFocused, aimedIsPlaying)) {
                     GuideRemoteHintPolicy.Hint.CATEGORY -> R.string.iptv_guide_remote_hint_category
                     GuideRemoteHintPolicy.Hint.CHANNEL -> R.string.iptv_guide_remote_hint
+                    GuideRemoteHintPolicy.Hint.CHANNEL_PLAYING -> R.string.iptv_guide_remote_hint_playing
                 }
             ),
             style = MaterialTheme.typography.labelSmall,
@@ -2628,6 +2632,7 @@ private fun FocusedPreviewInfoPane(
     playbackError: String?,
     errorChannelId: String?,
     categoryFocused: Boolean,
+    playingContentId: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -2659,6 +2664,7 @@ private fun FocusedPreviewInfoPane(
         previewError = playbackFailure ?: ui.actionError.takeIf { ui.replayRetry == null }, // a Retry notice shows its own message
         retryHint = GuidePreviewStatusPolicy.offersRetryHint(playbackFailure != null),
         categoryFocused = categoryFocused,
+        aimedIsPlaying = focused != null && focused.contentId == playingContentId,
         modifier = modifier,
     )
 }
