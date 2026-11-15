@@ -3633,6 +3633,9 @@
     <string name="iptv_guide_empty_clear_search">Clear search</string>
     <string name="iptv_guide_empty_pick_group">Pick another group</string>
     <string name="iptv_guide_playlist_settings">Playlist settings</string>
+    <!-- B4: captions in the group column. -->
+    <string name="iptv_guide_recent_groups">Recent groups</string>
+    <string name="iptv_guide_all_groups">Groups</string>
     <string name="iptv_guide_history_loading">Loading this channel’s schedule…</string>
     <string name="iptv_guide_history_failed">Couldn’t load this channel’s schedule. Press OK to try again.</string>
     <string name="iptv_guide_unavailable">Can\'t play</string>

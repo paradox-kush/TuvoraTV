@@ -46,7 +46,8 @@ import javax.inject.Inject
 
 /** A category entry in the guide's left column. [special] marks the synthetic ones. */
 enum class GuideSpecial { SEARCH, FAVORITES, RECENT, ALL, GROUP, ALL_FAVORITES }
-data class GuideCategory(val id: String, val name: String, val special: GuideSpecial? = null)
+/** [aliasOf]: B4, a "recent groups" copy of the group with that id (its own id keeps LazyColumn keys unique). */
+data class GuideCategory(val id: String, val name: String, val special: GuideSpecial? = null, val aliasOf: String? = null)
 
 /** One channel row in the guide. [categoryId] is null for synthetic rows (Favorites/Recent
  *  restores), which are never category-filtered. */
@@ -842,11 +843,40 @@ class XtreamLiveGuideViewModel @Inject constructor(
         }
     }
 
-    /** "All channels" — or All favorites while a cross-playlist favourite waits to be tuned (F03). */
-    private fun defaultCategoryId(visible: List<GuideCategory>): String? =
-        (if (_uiState.value.pendingTune != null) visible.firstOrNull { it.special == GuideSpecial.ALL_FAVORITES } else null)?.id
-            ?: visible.firstOrNull { c -> c.special == GuideSpecial.ALL }?.id
-            ?: visible.firstOrNull()?.id
+    /**
+     * All favorites while a cross-playlist favourite waits to be tuned (F03); else B4: the group this playlist was
+     * left on, else Favorites when it has any, else All channels.
+     */
+    private fun defaultCategoryId(visible: List<GuideCategory>): String? {
+        if (_uiState.value.pendingTune != null) {
+            visible.firstOrNull { it.special == GuideSpecial.ALL_FAVORITES }?.let { return it.id }
+        }
+        val accountId = account?.id
+        val prefix = accountId?.let(XtreamItemRegistry::accountPrefix)
+        return GuideGroupMemoryPolicy.initialCategory(
+            visible = visible,
+            remembered = accountId?.let(GuideGroupMemory::lastGroup),
+            hasFavorites = prefix != null && favoriteLiveIds.value.any { it.startsWith(prefix) },
+        )
+    }
+
+    /**
+     * B4: the viewer opened [category] (OK / RIGHT on its row). It joins the recent groups under the pinned rows;
+     * the column is republished only when that list actually changed.
+     */
+    fun onGroupEntered(category: GuideCategory) {
+        val acc = account ?: return
+        val id = GuideGroupMemoryPolicy.resolve(category)
+        val real = _uiState.value.categories.firstOrNull { it.id == id } ?: return
+        if (!GuideGroupMemory.onGroupEntered(acc.id, id, real.special)) return
+        _uiState.update { st ->
+            st.copy(
+                categories = GuideGroupMemoryPolicy.withRecentGroups(
+                    st.categories.filter { it.aliasOf == null }, GuideGroupMemory.recentGroups(acc.id),
+                ),
+            )
+        }
+    }
 
     /** The classified, photograph-friendly failure line (same wording as the hub's error card). */
     private fun failureText(acc: XtreamAccount, error: Throwable?): String {
@@ -886,7 +916,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** Category selections hide deselected provider categories; the synthetic ones
      *  (Favorites/Recent/All channels) are always shown. */
     private fun filteredCategories(acc: XtreamAccount, full: List<GuideCategory>): List<GuideCategory> =
-        full.filter { it.special != null || acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.id) }
+        GuideGroupMemoryPolicy.withRecentGroups(
+            full.filter { it.special != null || acc.allowsCategory(XtreamAccount.TYPE_LIVE, it.id) },
+            // B4: the last groups opened sit right under the pinned rows.
+            GuideGroupMemory.recentGroups(acc.id),
+        )
 
     /** A category row took D-pad focus. See [GuideCategorySettlePolicy]. */
     fun onCategoryFocused(categoryId: String?) =
@@ -919,7 +953,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
         token: LiveGuideAccountCommitToken,
     ) {
         if (!isCurrentAccount(token)) return
-        val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        val found = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        // B4: a "recent groups" copy shows the group it stands for.
+        found.aliasOf?.let { real -> selectCategoryFor(acc, real, force, token); return }
+        val category = found
+        GuideGroupMemory.onGroupShown(acc.id, category.id, category.special)
         if (!force && categoryId == _uiState.value.selectedCategoryId && _uiState.value.channels.isNotEmpty()) return
         // The lineup pool (Search, custom groups) is the whole lineup; hold it only while one is open.
         if (category.special != GuideSpecial.SEARCH && category.special != GuideSpecial.GROUP) lineupPool = null
@@ -1115,6 +1153,11 @@ class XtreamLiveGuideViewModel @Inject constructor(
      */
     fun onChannelFocused(channel: GuideChannel, index: Int = -1) {
         noteGuideActivity()
+        // B4: the row each group was left on, so reopening the group lands there.
+        val shown = _uiState.value
+        if (shown.accountId != null && shown.selectedCategoryId != null) {
+            GuideGroupMemory.onRowFocused(shown.accountId, shown.selectedCategoryId, channel.entityId)
+        }
         if (channel.contentId == _uiState.value.focusedChannelId) return
         // Moving to a different channel clears the previous channel's playback notice.
         _uiState.update { GuidePlaybackInteractionPolicy.focus(it, channel.contentId) }

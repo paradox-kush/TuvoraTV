@@ -272,6 +272,22 @@ fun LiveGuide(
         if (!GuideFocusRequestLoop.requestUntilLanded { firstChannelFocus.requestFocusOrFalse() }) channelListFocus.requestFocusOrFalse()
     }
 
+    // B4: OK / RIGHT on a group lands on the row that group was left on (else row 1) once its list is in. Any key
+    // pressed meanwhile cancels it, so a list that lands late never pulls the cursor away (A16).
+    var pendingGroupRow by remember(account.id) { mutableStateOf<Pair<String, String?>?>(null) }
+    LaunchedEffect(pendingGroupRow, displayChannels, uiState.selectedCategoryId, uiState.channelsLoad is LoadStatus.Loading) {
+        val (groupId, remembered) = pendingGroupRow ?: return@LaunchedEffect
+        if (uiState.selectedCategoryId != groupId) return@LaunchedEffect
+        if (displayChannels.isEmpty() || uiState.channelsLoad is LoadStatus.Loading) return@LaunchedEffect
+        pendingGroupRow = null
+        val target = GuideGroupMemoryPolicy.rowOnOpen(remembered, displayChannels.map { it.entityId }) ?: return@LaunchedEffect
+        val index = displayChannels.indexOfFirst { it.entityId == target }
+        channelListState.scrollToItem((index - 2).coerceAtLeast(0))
+        if (!GuideFocusRequestLoop.requestUntilLanded { channelRowRequesters[target]?.requestFocusOrFalse() == true }) {
+            channelListFocus.requestFocusOrFalse()
+        }
+    }
+
     // UX389: entry focus. Once the list has landed on the hub's first entry, focus goes to the last-watched channel's
     // row (else row 1) - the channel list, not the tab row. Focus only: nothing tunes, so a single-use provider link
     // is not spent by opening the page. Never taken from a viewer who already moved (any key cancels the pending flag).
@@ -584,6 +600,8 @@ fun LiveGuide(
             // arrive there — intercept them in the preview phase before the row's clickable.
             // BACK is NOT consumed (BackHandler collapses). UP/DOWN zap channels.
             .onPreviewKeyEvent { event ->
+                // B4: a key pressed after opening a group means the viewer moved on; the late landing is dropped.
+                if (!fullscreen && event.type == KeyEventType.KeyDown) pendingGroupRow = null
                 if (!fullscreen) return@onPreviewKeyEvent false
                 // F28: the remote map lives in LiveControlsPolicy (shared with the clean live player).
                 // An open panel (the channel list, a picker, a hide notice's Undo) keeps its own keys.
@@ -687,22 +705,40 @@ fun LiveGuide(
                     .focusRestorer(categoryEntryFocus),
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
             ) {
+                val firstRecentGroup = uiState.categories.indexOfFirst { it.aliasOf != null }
+                val firstGroup = if (firstRecentGroup < 0) -1 else uiState.categories.indexOfFirst {
+                    it.aliasOf == null && GuideGroupMemoryPolicy.countsAsRecentGroup(it.special)
+                }
                 itemsIndexed(uiState.categories, key = { _, it -> it.id }) { index, cat ->
                     GuideCategoryRow(
+                        // B4: a caption over the recent groups and over the full list, only while recents exist.
+                        sectionLabel = when (index) {
+                            firstRecentGroup -> stringResource(R.string.iptv_guide_recent_groups)
+                            firstGroup -> stringResource(R.string.iptv_guide_all_groups)
+                            else -> null
+                        },
                         entryFocusRequester = if (index == categoryEntryIndex) categoryEntryFocus else null,
                         label = if (cat.special == GuideSpecial.SEARCH && uiState.searchQuery.isNotBlank()) {
                             stringResource(R.string.iptv_guide_search_label, uiState.searchQuery)
                         } else {
                             cat.name
                         },
-                        selected = cat.id == uiState.selectedCategoryId,
+                        selected = cat.id == uiState.selectedCategoryId || cat.aliasOf == uiState.selectedCategoryId,
                         rightFocus = channelListFocus,
                         // First category routes UP back to the active tab so the tabs stay reachable.
                         upFocus = if (index == 0) selectedTabRequester else null,
                         onFocused = { viewModel.onCategoryFocused(cat.id) },
-                        onEnter = viewModel::commitFocusedCategory,
+                        onEnter = {
+                            viewModel.commitFocusedCategory()
+                            viewModel.onGroupEntered(cat)
+                            // B4: the group reopens on the row it was left on (else row 1), once its list has landed.
+                            val groupId = GuideGroupMemoryPolicy.resolve(cat)
+                            if (cat.special != GuideSpecial.SEARCH) {
+                                pendingGroupRow = groupId to GuideGroupMemory.row(account.id, groupId)
+                            }
+                        },
                         // F02: MENU on a provider category offers to hide it (Favorites/Recent/All can't be hidden).
-                        onMenu = if (cat.special == null) { { viewModel.hideCategory(cat) } } else null,
+                        onMenu = if (cat.special == null && cat.aliasOf == null) { { viewModel.hideCategory(cat) } } else null,
                         // F01: OK on "Search" opens the keyboard (focus alone never does).
                         onClick = if (cat.special == GuideSpecial.SEARCH) { { searchDialogOpen = true } } else null,
                     )
@@ -1481,6 +1517,8 @@ private fun GuideSkeletonBlock(
 @Composable
 private fun GuideCategoryRow(
     label: String,
+    /** B4: a non-focusable caption drawn above this row ("Recent groups", "Groups"). */
+    sectionLabel: String? = null,
     selected: Boolean,
     rightFocus: FocusRequester,
     upFocus: FocusRequester? = null,
@@ -1493,6 +1531,15 @@ private fun GuideCategoryRow(
     var focused by remember { mutableStateOf(false) }
     val latestOnFocused by rememberUpdatedState(onFocused)
     LaunchedEffect(focused) { if (focused) latestOnFocused() }
+    Column {
+    if (sectionLabel != null) {
+        Text(
+            text = sectionLabel,
+            style = MaterialTheme.typography.labelSmall,
+            color = NuvioTheme.colors.TextTertiary,
+            modifier = Modifier.padding(start = NuvioTheme.spacing.md, top = NuvioTheme.spacing.sm),
+        )
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1548,6 +1595,7 @@ private fun GuideCategoryRow(
             }
         )
     }
+    } // Column (B4 caption)
 }
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
