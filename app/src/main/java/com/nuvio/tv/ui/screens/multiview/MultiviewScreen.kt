@@ -67,7 +67,7 @@ import androidx.compose.runtime.key as composeKey
  * Decisions live in [MultiviewController] and the policies in `core.multiview`.
  *
  * Back, innermost first: a picker sub-list or panel closes (the layout panel returns to the tile menu), a full-screen
- * tile returns to the grid, the grid leaves Multiview (a second Back within 2.5 s when two or more channels are open).
+ * tile returns to the grid, the grid leaves Multiview (a second Back within 3.5 s when two or more channels are open).
  */
 @Composable
 internal fun MultiviewScreen(
@@ -234,7 +234,7 @@ internal fun MultiviewScreen(
     }
 
     BackHandler {
-        // When the key went down, on the input clock; the leave guard measures its 2.5 s from that, not from now.
+        // When the key went down, on the input clock; the leave guard measures its 3.5 s from that, not from now.
         val handledAtMs = android.os.SystemClock.uptimeMillis()
         val backPressedAtMs = lastBackDownAtMs[0].also { lastBackDownAtMs[0] = 0L }
             .takeIf { it in (handledAtMs - BACK_EVENT_MAX_AGE_MS)..handledAtMs } ?: handledAtMs

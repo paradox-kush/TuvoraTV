@@ -57,7 +57,7 @@ internal class MultiviewLeaveGuard(private val windowMs: Long = WINDOW_MS) {
     }
 
     companion object {
-        const val WINDOW_MS = 2_500L
+        const val WINDOW_MS = 3_500L
         const val MIN_CHANNELS_TO_GUARD = 2
     }
 }

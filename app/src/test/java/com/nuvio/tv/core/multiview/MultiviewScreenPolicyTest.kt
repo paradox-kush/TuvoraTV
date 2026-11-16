@@ -36,19 +36,19 @@ class MultiviewScreenPolicyTest {
     // ---- leaving the grid ----
 
     @Test
-    fun `two or more channels take a second back within 2500 ms to leave`() {
+    fun `two or more channels take a second back within 3500 ms to leave`() {
         val guard = MultiviewLeaveGuard()
         assertEquals("first back only arms", MultiviewLeaveGuard.Result.ARMED, guard.onBack(10_000, channelsOnScreen = 2))
-        assertEquals("second back inside the window leaves", MultiviewLeaveGuard.Result.LEAVE, guard.onBack(12_400, 2))
-        assertEquals("and it is armed afresh after leaving", MultiviewLeaveGuard.Result.ARMED, guard.onBack(12_500, 2))
+        assertEquals("second back at 3.4 s still leaves", MultiviewLeaveGuard.Result.LEAVE, guard.onBack(13_400, 2))
+        assertEquals("and it is armed afresh after leaving", MultiviewLeaveGuard.Result.ARMED, guard.onBack(13_500, 2))
     }
 
     @Test
     fun `a second back after the window only arms again`() {
         val guard = MultiviewLeaveGuard()
         guard.onBack(0, 3)
-        assertEquals(MultiviewLeaveGuard.Result.ARMED, guard.onBack(2_501, 3))
-        assertEquals(MultiviewLeaveGuard.Result.LEAVE, guard.onBack(3_000, 3))
+        assertEquals(MultiviewLeaveGuard.Result.ARMED, guard.onBack(3_501, 3))
+        assertEquals(MultiviewLeaveGuard.Result.LEAVE, guard.onBack(4_000, 3))
     }
 
     @Test
@@ -72,6 +72,7 @@ class MultiviewScreenPolicyTest {
         assertEquals(4_000L, MultiviewNotice.CannotAdd("A").durationMs)
         assertEquals(3_500L, MultiviewNotice.AlreadyOnScreen("A").durationMs)
         assertEquals(MultiviewLeaveGuard.WINDOW_MS, MultiviewNotice.LeaveGuard.durationMs)
+        assertEquals("leave guard window", 3_500L, MultiviewLeaveGuard.WINDOW_MS)
     }
 
     // ---- what shows over the video ----
