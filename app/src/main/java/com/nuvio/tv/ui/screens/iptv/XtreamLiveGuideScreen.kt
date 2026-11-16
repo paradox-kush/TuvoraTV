@@ -650,7 +650,7 @@ fun LiveGuide(
     val liveChrome = playbackUi?.let { CleanLivePlayerUiPolicy.present(it) }
     val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected ||
         pauseFailed || playbackStalled
-    val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null || uiState.multiviewNotice != null || uiState.replayRetry != null
+    val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null || uiState.replayRetry != null
     // A zap retunes: the aimed channel isn't the playing one yet, or the spinner is up. Read at event time
     // (B180: the body's uiState has the aim cleared, so it must come from the view model, not composition).
     fun liveTuningNow(): Boolean = GuideZapTuningPolicy.tuning(
@@ -1674,31 +1674,17 @@ fun LiveGuide(
             )
         }
 
-        // "Add to Multiview": says how many are set aside, and offers to open it. Same toast as the other notices.
+        // "Add to Multiview": says how many are set aside. PASSIVE (no focus, no button, no keys): the row it came
+        // from is still there, so focus stays on it. Multiview opens from the hub chip / fullscreen controls.
         uiState.multiviewNotice?.let { result ->
-            fun restoreAfterMultiviewNotice() {
-                if (fullscreen) fullscreenAnchor.requestFocusOrFalse()
-                else if (!requestFocusedChannel() && !channelListFocus.requestFocusOrFalse()) {
-                    categoryListFocus.requestFocusOrFalse()
-                }
-            }
-            val opens = result.offersOpenNow
-            NuvioUndoToast(
+            MultiviewPassiveNotice(
                 message = when (result) {
                     is com.nuvio.tv.core.multiview.QueueResult.Added ->
                         stringResource(R.string.multiview_notice_added, result.count, com.nuvio.tv.core.multiview.MultiviewQueue.MAX)
                     is com.nuvio.tv.core.multiview.QueueResult.AlreadyQueued -> stringResource(R.string.multiview_notice_already)
                     com.nuvio.tv.core.multiview.QueueResult.Full -> stringResource(R.string.multiview_notice_full)
                 },
-                actionLabel = stringResource(if (opens) R.string.multiview_notice_open else R.string.multiview_notice_ok),
-                onAction = {
-                    viewModel.dismissMultiviewNotice()
-                    if (opens) onOpenMultiview(null) else restoreAfterMultiviewNotice()
-                },
-                onDismiss = {
-                    restoreAfterMultiviewNotice()
-                    viewModel.dismissMultiviewNotice()
-                },
+                onDismiss = { viewModel.dismissMultiviewNotice() },
                 durationMillis = GuideHideUndoPolicy.UNDO_WINDOW_MS,
                 key = result,
                 modifier = Modifier
