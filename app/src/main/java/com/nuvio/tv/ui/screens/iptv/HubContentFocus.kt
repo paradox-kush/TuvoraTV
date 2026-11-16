@@ -4,6 +4,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRestorer
 
 /**
  * Where focus goes when it comes back into the hub from the side rail.
@@ -56,4 +57,13 @@ internal fun Modifier.hubContentFocusRestore(contentReturn: HubContentReturn): M
  * full width) are not affected.
  */
 internal fun Modifier.collapsedFocusGuard(collapsed: Boolean): Modifier =
-    focusProperties { onEnter = { if (collapsed) cancelFocusChange() } }
+    // F1b (sim pass 2026-11-16): `onEnter` is set ONLY while collapsed. Set always (doing nothing when open), it
+    // replaced the column's focusRestorer enter, so every entry fell to Compose's default, the top row ("Search").
+    focusProperties { if (collapsed) onEnter = { cancelFocusChange() } }
+
+/**
+ * The group column's entry: refuses focus while collapsed ([collapsedFocusGuard]) and otherwise enters on the row it
+ * was left on, else [entryFocus] (the selected group, B238).
+ */
+internal fun Modifier.guideCategoryColumnEntry(collapsed: Boolean, entryFocus: FocusRequester): Modifier =
+    collapsedFocusGuard(collapsed).focusRestorer(entryFocus)

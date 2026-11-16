@@ -895,8 +895,7 @@ fun LiveGuide(
                     }
                     .guideKeyRepeatGate()
                     // Device pass 3, finding 2: collapsed to zero width, it is never a focus-search target.
-                    .collapsedFocusGuard(collapsed = inCategory)
-                    .focusRestorer(categoryEntryFocus),
+                    .guideCategoryColumnEntry(collapsed = inCategory, entryFocus = categoryEntryFocus),
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
             ) {
                 val firstRecentGroup = uiState.categories.indexOfFirst { it.aliasOf != null }

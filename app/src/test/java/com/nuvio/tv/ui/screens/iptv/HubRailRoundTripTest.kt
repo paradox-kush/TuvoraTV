@@ -107,7 +107,8 @@ class HubRailRoundTripTest {
                         }
                         Row {
                         LazyColumn(
-                            Modifier.width(columnWidth.dp).height(400.dp).collapsedFocusGuard(collapsed = columnWidth == 0)
+                            Modifier.width(columnWidth.dp).height(400.dp)
+                                .guideCategoryColumnEntry(collapsed = columnWidth == 0, entryFocus = groupRows[0])
                         ) {
                             items(groupRows.size) { i ->
                                 Box(Modifier.size(40.dp).focusRequester(groupRows[i]).named("group$i").focusable())
