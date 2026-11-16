@@ -7,6 +7,13 @@ import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.CatalogDescriptor
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.enabledAddons
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 
 internal data class LocalHomeCatalogSettingsState(
     val orderKeys: List<String> = emptyList(),
@@ -165,4 +172,55 @@ private fun CatalogDescriptor.shouldShowOnHomeForSync(): Boolean {
         return false
     }
     return !hasExplicitShowInHome || showInHome
+}
+
+private fun JsonElement.stringField(name: String): String? =
+    (this as? JsonObject)?.get(name)?.let { it as? JsonPrimitive }?.takeIf { it.isString }?.contentOrNull
+
+private fun JsonElement.isCollectionItem(): Boolean =
+    ((this as? JsonObject)?.get("is_collection") as? JsonPrimitive)?.booleanOrNull == true
+
+/** Identity of a stored catalog row, or null for a collection or a row the decoder would reject. */
+private fun JsonElement.catalogRowIdentity(): String? {
+    if (isCollectionItem()) return null
+    val addonId = stringField("addon_id") ?: return null
+    val type = stringField("type") ?: return null
+    val catalogId = stringField("catalog_id") ?: return null
+    return homeCatalogKey(addonId, type, catalogId)
+}
+
+private fun JsonElement.storedOrder(): Int =
+    ((this as? JsonObject)?.get("order") as? JsonPrimitive)?.intOrNull ?: Int.MAX_VALUE
+
+/**
+ * A TV exports rows only for add-ons that are installed AND whose manifest loaded. A push built from that
+ * export replaced the whole stored list, so a TV that had not loaded an add-on erased the rows the account
+ * already holds for it (device proof 2026-11-15, T3: 4 rows -> 0). The phone and desktop push from stored
+ * rows and never do this.
+ *
+ * Keeps every stored catalog row the device has no row for, in its stored position, and renumbers from 0.
+ * The device's own rows win for rows it knows; stored collections are not carried (the device is the source
+ * of truth for collections, as before); rows the decoder would reject are skipped; carried rows keep any
+ * fields this build does not model (e.g. the phone's `key`).
+ */
+internal fun carryForwardStoredHomeCatalogItems(
+    storedItems: JsonElement?,
+    localItems: JsonElement?
+): JsonArray {
+    val local = (localItems as? JsonArray).orEmpty().sortedBy { it.storedOrder() }
+    val stored = (storedItems as? JsonArray).orEmpty().sortedBy { it.storedOrder() }
+    val localKeys = local.mapNotNull { it.catalogRowIdentity() }.toSet()
+    val merged = local.toMutableList()
+    val carried = mutableSetOf<String>()
+    stored.forEachIndexed { index, row ->
+        val key = row.catalogRowIdentity() ?: return@forEachIndexed
+        if (key in localKeys || !carried.add(key)) return@forEachIndexed
+        merged.add(index.coerceAtMost(merged.size), row)
+    }
+    return JsonArray(
+        merged.mapIndexed { index, row ->
+            val obj = row as? JsonObject ?: return@mapIndexed row
+            JsonObject(obj + ("order" to JsonPrimitive(index)))
+        }
+    )
 }
