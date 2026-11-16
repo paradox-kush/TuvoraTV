@@ -32,14 +32,17 @@ internal class NumberEntryState {
         private set
     var tick by mutableIntStateOf(0)
         private set
-    /** "No channel 99" after a commit that matched nothing; cleared by the next digit or its own timeout. */
-    var noMatch by mutableStateOf<String?>(null)
+    /**
+     * "No channel 99" / "No previous channel" after a commit that landed nowhere (only [NumberEntryPolicy.Commit.NoChannel]
+     * or [NumberEntryPolicy.Commit.NoPrevious]); cleared by the next digit or its own timeout.
+     */
+    var notice by mutableStateOf<NumberEntryPolicy.Commit?>(null)
 
     val active: Boolean get() = buffer.isNotEmpty()
 
     fun digit(d: Int) {
         buffer = NumberEntryPolicy.append(buffer, d)
-        noMatch = null
+        notice = null
         tick++
     }
 
@@ -48,7 +51,7 @@ internal class NumberEntryState {
 
     fun cancel() {
         buffer = ""
-        noMatch = null
+        notice = null
     }
 }
 
@@ -87,8 +90,11 @@ internal fun BoxScope.NumberEntryReadout(
         state.active -> NumberEntryPolicy.match(state.buffer, count)?.let { index ->
             stringResource(R.string.iptv_number_match, (index + 1).toString(), nameAt(index).orEmpty())
         } ?: stringResource(R.string.iptv_number_no_match, state.buffer)
-        state.noMatch != null -> stringResource(R.string.iptv_number_no_match, state.noMatch!!)
-        else -> return
+        else -> when (val notice = state.notice) {
+            is NumberEntryPolicy.Commit.NoChannel -> stringResource(R.string.iptv_number_no_match, notice.typed)
+            NumberEntryPolicy.Commit.NoPrevious -> stringResource(R.string.iptv_number_no_previous)
+            else -> return
+        }
     }
     Text(
         text = text,
@@ -124,10 +130,10 @@ internal fun NumberEntryTimers(state: NumberEntryState, onCommit: () -> Unit) {
         }
     }
     androidx.compose.runtime.LaunchedEffect(state) {
-        androidx.compose.runtime.snapshotFlow { state.noMatch }.collectLatest {
+        androidx.compose.runtime.snapshotFlow { state.notice }.collectLatest {
             if (it == null) return@collectLatest
             kotlinx.coroutines.delay(NumberEntryPolicy.COMMIT_MS)
-            state.noMatch = null
+            state.notice = null
         }
     }
 }

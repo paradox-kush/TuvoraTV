@@ -27,6 +27,20 @@ internal object NumberEntryPolicy {
         return (1..count).firstOrNull { it.toString().startsWith(buffer) }?.minus(1)
     }
 
+    /** What a committed number does. The two misses say so on screen (sim pass 2026-11-16, UX: "999" did nothing). */
+    sealed interface Commit {
+        data class Jump(val index: Int) : Commit
+        data object Previous : Commit
+        data class NoChannel(val typed: String) : Commit
+        data object NoPrevious : Commit
+    }
+
+    /** [buffer] committed over [count] numbered rows; [hasPrevious] = a channel watched before is in this lineup. */
+    fun commit(buffer: String, count: Int, hasPrevious: Boolean): Commit {
+        if (isPreviousChannel(buffer)) return if (hasPrevious) Commit.Previous else Commit.NoPrevious
+        return match(buffer, count)?.let { Commit.Jump(it) } ?: Commit.NoChannel(buffer)
+    }
+
     /** "0" alone (committed) is the previous channel, not channel 0. */
     fun isPreviousChannel(buffer: String): Boolean = buffer == "0"
 

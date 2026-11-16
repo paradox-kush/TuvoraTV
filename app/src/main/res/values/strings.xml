@@ -3636,6 +3636,7 @@
     <!-- Redesign change 7 + B1: number entry readout. -->
     <string name="iptv_number_match">%1$s · %2$s</string>
     <string name="iptv_number_no_match">No channel %1$s</string>
+    <string name="iptv_number_no_previous">No previous channel</string>
     <string name="iptv_number_previous">Previous channel</string>
     <string name="iptv_number_previous_named">Back to %1$s · %2$s</string>
     <!-- Redesign change 4: the zap banner while surfing a single-use playlist. -->

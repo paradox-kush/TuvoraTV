@@ -662,9 +662,11 @@ fun LiveGuide(
     // highlight; full screen: tune), "0" or LAST = the previous channel, CH+ / CH- page the guide, Play/Pause in the
     // guide = full screen on what plays. Explicit handling: none of these is a focus move Compose could search.
     val numberEntry = remember { NumberEntryState() }
+    fun previousChannelId(): String? = zapBack.target(viewModel.zapLineup().map { it.contentId })
+    /** "0" / LAST. With no channel watched before it says so ("No previous channel") instead of doing nothing. */
     fun swapToPrevious() {
         surfAim = null
-        val id = zapBack.target(viewModel.zapLineup().map { it.contentId }) ?: return
+        val id = previousChannelId() ?: run { numberEntry.notice = NumberEntryPolicy.Commit.NoPrevious; return }
         viewModel.focusChannel(id)?.let(playbackViewModel::requestTune)
         if (fullscreen) afterChannelSwap()
         else pendingRestoreEntityId = displayChannels.firstOrNull { it.contentId == id }?.entityId
@@ -672,9 +674,11 @@ fun LiveGuide(
     fun commitNumber() {
         val typed = numberEntry.take()
         if (typed.isEmpty()) return
-        if (NumberEntryPolicy.isPreviousChannel(typed)) { swapToPrevious(); return }
-        val index = NumberEntryPolicy.match(typed, displayChannels.size)
-        if (index == null) { numberEntry.noMatch = typed; return }
+        val index = when (val outcome = NumberEntryPolicy.commit(typed, displayChannels.size, hasPrevious = previousChannelId() != null)) {
+            NumberEntryPolicy.Commit.Previous -> { swapToPrevious(); return }
+            is NumberEntryPolicy.Commit.NoChannel, NumberEntryPolicy.Commit.NoPrevious -> { numberEntry.notice = outcome; return }
+            is NumberEntryPolicy.Commit.Jump -> outcome.index
+        }
         val channel = displayChannels[index]
         if (fullscreen) {
             surfAim = null
@@ -834,12 +838,9 @@ fun LiveGuide(
                     // F08: back to the channel watched before (LAST/RECALL), if it is in this lineup.
                     LiveControlsPolicy.KeyAction.ZAP_BACK -> {
                         // T4: LAST stays in the playing playlist too (All favorites mixes playlists).
-                        // LAST is one explicit choice: it tunes at once, also on a surf playlist.
-                        surfAim = null
-                        zapBack.target(viewModel.zapLineup().map { it.contentId })
-                            ?.let(viewModel::focusChannel)
-                            ?.let(playbackViewModel::requestTune)
-                        afterChannelSwap()
+                        // LAST is one explicit choice: it tunes at once, also on a surf playlist. With nothing
+                        // watched before it says "No previous channel" (sim pass 2026-11-16).
+                        swapToPrevious()
                     }
                     // Time-shifted with the controls hidden: LEFT / RIGHT scrub inside the saved window.
                     LiveControlsPolicy.KeyAction.SCRUB_BACK,
