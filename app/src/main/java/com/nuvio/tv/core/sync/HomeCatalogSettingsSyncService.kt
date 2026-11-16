@@ -67,6 +67,10 @@ internal fun mergeHomeCatalogSettingsJson(
 ): JsonObject = buildJsonObject {
     remoteJson?.forEach { (key, value) -> put(key, value) }
     localJson.forEach { (key, value) -> put(key, value) }
+    // Rows are merged, not replaced: see carryForwardStoredHomeCatalogItems.
+    if (remoteJson != null && localJson.containsKey("items")) {
+        put("items", carryForwardStoredHomeCatalogItems(remoteJson["items"], localJson["items"]))
+    }
 }
 
 @Singleton
