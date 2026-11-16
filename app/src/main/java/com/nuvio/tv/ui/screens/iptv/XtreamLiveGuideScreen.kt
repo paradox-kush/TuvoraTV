@@ -936,10 +936,10 @@ fun LiveGuide(
                                 }
                             }
                         },
-                        label = if (cat.special == GuideSpecial.SEARCH && uiState.searchQuery.isNotBlank()) {
-                            stringResource(R.string.iptv_guide_search_label, uiState.searchQuery)
-                        } else {
-                            cat.name
+                        label = when (val label = GuideCategoryLabelPolicy.of(cat.special, cat.name, uiState.searchQuery)) {
+                            is GuideCategoryLabelPolicy.Label.Name -> label.name
+                            GuideCategoryLabelPolicy.Label.SearchChannels -> stringResource(R.string.iptv_guide_search_row)
+                            is GuideCategoryLabelPolicy.Label.SearchQuery -> stringResource(R.string.iptv_guide_search_label, label.query)
                         },
                         selected = cat.id == uiState.selectedCategoryId || cat.aliasOf == uiState.selectedCategoryId,
                         rightFocus = channelListFocus,
