@@ -1334,7 +1334,19 @@ private fun LeagueFixturesPage(
     val loaded = state.fixturesByLeague.containsKey(league.id)
     val followed = league.id in state.followedLeagueIds
     val headerFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { headerFocus.requestFocus() } }
+    val firstGameFocus = remember { FocusRequester() }
+    // Follow no longer takes entry focus (a stray OK unfollowed): the first game does, once, as fixtures land.
+    var focusPlaced by remember { mutableStateOf(false) }
+    val hasGames = upcoming.isNotEmpty() || recent.isNotEmpty()
+    LaunchedEffect(hasGames, loaded) {
+        val target = LeagueEntryFocusPolicy.target(hasGames, loaded, focusPlaced) ?: return@LaunchedEffect
+        // The LazyColumn item is composed a frame after the state flips; retry until it attaches.
+        val requester = if (target == LeagueEntryFocusPolicy.Target.FIRST_GAME) firstGameFocus else headerFocus
+        repeat(5) {
+            if (runCatching { requester.requestFocus() }.isSuccess) { focusPlaced = true; return@LaunchedEffect }
+            kotlinx.coroutines.delay(50)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -1376,10 +1388,11 @@ private fun LeagueFixturesPage(
                         modifier = Modifier.padding(vertical = NuvioTheme.spacing.sm),
                     )
                 }
-                items(upcoming, key = { "up-${it.id ?: it.hashCode()}" }) { fx ->
+                itemsIndexed(upcoming, key = { _, it -> "up-${it.id ?: it.hashCode()}" }) { index, fx ->
                     MatchCard(
                         fx, live = isLive(fx), onClick = { onMatch(fx) },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xs),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xs)
+                            .then(if (index == 0) Modifier.focusRequester(firstGameFocus) else Modifier),
                         liveScore = fx.id?.let { state.liveScores[it] },
                     )
                 }
@@ -1394,10 +1407,11 @@ private fun LeagueFixturesPage(
                         modifier = Modifier.padding(vertical = NuvioTheme.spacing.sm),
                     )
                 }
-                items(recent, key = { "rec-${it.id ?: it.hashCode()}" }) { fx ->
+                itemsIndexed(recent, key = { _, it -> "rec-${it.id ?: it.hashCode()}" }) { index, fx ->
                     MatchCard(
                         fx, live = false, onClick = { onMatch(fx) },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xs),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xs)
+                            .then(if (index == 0 && upcoming.isEmpty()) Modifier.focusRequester(firstGameFocus) else Modifier),
                         liveScore = fx.id?.let { state.liveScores[it] },
                     )
                 }
