@@ -2,9 +2,15 @@
 package com.nuvio.tv.core.multiview
 
 sealed interface QueueResult {
-    data class Added(val count: Int) : QueueResult
-    data class AlreadyQueued(val count: Int) : QueueResult
-    data object Full : QueueResult
+    /**
+     * Whether the notice offers "Open now" (and so owns D-pad focus). A duplicate or a full queue must not leave
+     * the viewer at a dead end; a plain Added is passive, the channel row it came from keeps focus.
+     */
+    val offersOpenNow: Boolean
+
+    data class Added(val count: Int) : QueueResult { override val offersOpenNow get() = false }
+    data class AlreadyQueued(val count: Int) : QueueResult { override val offersOpenNow get() = true }
+    data object Full : QueueResult { override val offersOpenNow get() = true }
 }
 
 /**

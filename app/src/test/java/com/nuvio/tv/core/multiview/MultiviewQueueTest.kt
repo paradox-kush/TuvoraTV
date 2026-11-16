@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.multiview
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,6 +37,13 @@ class MultiviewQueueTest {
         assertEquals(listOf("a", "b"), q.take())
         assertTrue(q.take().isEmpty())
         assertEquals("room again", QueueResult.Added(1), q.add("z"))
+    }
+
+    @Test
+    fun `only a duplicate or a full queue offers Open now`() {
+        assertFalse("added is passive", QueueResult.Added(1).offersOpenNow)
+        assertTrue("already set aside", QueueResult.AlreadyQueued(2).offersOpenNow)
+        assertTrue("full", QueueResult.Full.offersOpenNow)
     }
 
     @Test

@@ -4119,6 +4119,7 @@
     <string name="multiview_notice_added">Added to Multiview (%1$d of %2$d)</string>
     <string name="multiview_notice_already">Already set aside for Multiview</string>
     <string name="multiview_notice_full">Multiview is full</string>
+    <string name="multiview_notice_open">Open now</string>
     <string name="multiview_capacity_notice">Heads up: this box plays about %1$d at full quality. More may stutter.</string>
     <string name="multiview_notice_pick_failed">%1$s couldn\'t open. %2$s.</string>
     <string name="multiview_notice_cannot_add">%1$s can\'t be added. It is no longer in the playlist.</string>
