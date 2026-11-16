@@ -257,7 +257,7 @@ class MultiviewControllerTest {
         assertFalse("first back only arms", c.requestLeave())
         assertEquals(MultiviewNotice.LeaveGuard, c.state.value.notice)
         now = 2_000
-        assertTrue("second back inside 2.5 s leaves", c.requestLeave())
+        assertTrue("second back inside 3.5 s leaves", c.requestLeave())
     }
 
     @Test
@@ -271,7 +271,7 @@ class MultiviewControllerTest {
         runBlocking { c.start("a") }
         assertFalse("first back only arms", c.requestLeave(atMs = 10_000))
         handledAt = 16_000
-        assertTrue("second back pressed within 2.5 s of the first leaves", c.requestLeave(atMs = 10_500))
+        assertTrue("second back pressed within 3.5 s of the first leaves", c.requestLeave(atMs = 10_500))
     }
 
     @Test
@@ -282,7 +282,7 @@ class MultiviewControllerTest {
         c.onResume()
         runBlocking { c.start("a") }
         assertFalse(c.requestLeave(atMs = 10_000))
-        assertFalse("3 s later is a new first back", c.requestLeave(atMs = 13_000))
+        assertFalse("4 s later is a new first back", c.requestLeave(atMs = 14_000))
     }
 
     @Test

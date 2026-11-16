@@ -115,4 +115,13 @@ class MultiviewQueueNoticeTest {
         assertEquals("no focusable node besides the row", 0,
             rule.onAllNodes(isFocusable() and !hasContentDescription("row")).fetchSemanticsNodes().size)
     }
+
+    @Test
+    fun `the added notice names the tile count`() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Application>()
+        assertEquals(
+            "Added to Multiview · 2 of 4 tiles",
+            context.getString(com.nuvio.tv.R.string.multiview_notice_added, 2, 4),
+        )
+    }
 }
