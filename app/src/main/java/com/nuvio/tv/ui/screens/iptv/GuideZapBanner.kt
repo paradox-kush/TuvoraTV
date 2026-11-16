@@ -60,11 +60,11 @@ internal fun BoxScope.GuideZapBanner(
     val surfAim = surfAimOf()
     val surfTick = surfTickOf()
     LaunchedEffect(controls.bannerTick) {
-        delay(LiveZapModePolicy.BANNER_MS)
+        delay(GuideBannerPolicy.durationMs(controls.bannerReason))
         controls.bannerVisible = false
     }
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
-    val aimedId = ui.focusedChannelId ?: playingContentId
+    val aimedId = GuideBannerPolicy.channelId(controls.bannerReason, ui.focusedChannelId, playingContentId)
     val channel = ui.channels.firstOrNull { it.contentId == aimedId } ?: return
     val number = ui.channels.indexOfFirst { it.contentId == channel.contentId } + 1
     val epg = remember(ui.epg[channel.streamId], nowMs) { ui.epg[channel.streamId]?.let { GuideWindowRows.atTime(it, nowMs) } }

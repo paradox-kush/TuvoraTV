@@ -582,7 +582,8 @@ fun LiveGuide(
         if (fullscreen) {
             browsingOrigin = aimedChannel()?.entityId
             wasFullscreen = true
-            controls.showBanner()
+            // Sim pass 2026-11-16 (UX): entering full screen names the channel playing (GuideBannerPolicy).
+            controls.showBanner(GuideBannerPolicy.Reason.ENTRY)
         } else if (wasFullscreen) {
             wasFullscreen = false
             channelListOpen = false

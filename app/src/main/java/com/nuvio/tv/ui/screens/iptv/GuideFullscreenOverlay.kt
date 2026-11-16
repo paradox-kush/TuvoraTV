@@ -53,7 +53,13 @@ internal class FullscreenControlsState {
     /** Redesign change 4: the zap banner (no focus target, leaves by itself; see [GuideZapBanner]). */
     var bannerVisible by mutableStateOf(false)
     var bannerTick by mutableIntStateOf(0)
-    fun showBanner() { bannerVisible = true; bannerTick++ }
+    /** Why the banner is up: entering full screen names the channel playing for a shorter time (GuideBannerPolicy). */
+    var bannerReason by mutableStateOf(GuideBannerPolicy.Reason.ZAP)
+    fun showBanner(reason: GuideBannerPolicy.Reason = GuideBannerPolicy.Reason.ZAP) {
+        bannerReason = reason
+        bannerVisible = true
+        bannerTick++
+    }
 
     /** A zap: the banner while the control bar is down, else the bar stays up and names the channel. */
     fun onZap() { if (LiveZapModePolicy.showsBanner(visible)) showBanner() else keepAlive() }
