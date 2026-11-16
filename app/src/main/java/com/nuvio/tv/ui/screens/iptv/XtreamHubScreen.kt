@@ -442,6 +442,12 @@ fun XtreamHubScreen(
             title = stringResource(R.string.iptv_hub_choose_provider),
             scrollable = true, // many providers must all be reachable — don't clip past the dialog height
         ) {
+            // Sim pass 2026-11-16 (UX): open on the playlist in use ("Current"), not on "Manage playlists".
+            val currentIndex = HubPlaylistPickerPolicy.focusIndex(uiState.accounts.map { it.id }, uiState.selectedAccountId)
+            val currentRowFocus = remember { FocusRequester() }
+            LaunchedEffect(Unit) {
+                if (currentIndex != null) GuideFocusRequestLoop.requestUntilLanded { currentRowFocus.requestFocusOrFalse() }
+            }
             com.nuvio.tv.ui.screens.settings.SettingsActionRow(
                 title = stringResource(R.string.iptv_manage_playlists),
                 subtitle = null, value = null,
@@ -453,7 +459,8 @@ fun XtreamHubScreen(
                         ?: stringResource(R.string.multiview_picker_playlist_fallback, position + 1),
                     subtitle = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(acc.baseUrl), // T7
                     value = if (acc.id == uiState.selectedAccountId) stringResource(R.string.iptv_hub_provider_current) else null,
-                    onClick = { viewModel.selectAccount(acc.id); showAccountPicker = false }
+                    onClick = { viewModel.selectAccount(acc.id); showAccountPicker = false },
+                    modifier = if (position == currentIndex) Modifier.focusRequester(currentRowFocus) else Modifier,
                 )
             }
         }
@@ -1126,11 +1133,16 @@ internal fun HubChip(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
         ) {
+            // Sim pass 2026-11-16 (UX): a long playlist name wrapped mid-word ("MockStal / ker8911"): one line, ellipsized,
+            // and the dropdown arrow stays visible.
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelLarge,
                 color = contentColor,
                 fontWeight = if (look.boldText) androidx.compose.ui.text.font.FontWeight.Bold else null,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
             if (showDropdownIcon) {
                 Icon(
