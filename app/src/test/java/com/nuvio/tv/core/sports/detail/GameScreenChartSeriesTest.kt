@@ -72,7 +72,7 @@ class GameScreenChartSeriesTest {
 
     @Test fun `markers sit on the plotted line and flip with the leader`() {
         val t0 = 1_000_000L
-        val h = (0 until 20).map { WinPoint(t0 + it * 30_000L, 30) }
+        val h = (0 until 20).map { WinPoint(t0 + it * 30_000L, if (it == 0) 31 else 30) } // movement keeps the series visible (G3)
         val play = TimelineItem(time = "", period = null, side = SideKey.HOME, text = "Goal", kind = TimelineKind.GOAL, id = "g", wallclockMs = t0 + 5 * 30_000L)
         val m = ChartMarkers.markers(h, listOf(play), "Ice Hockey", spec = WinChanceSeries.specOf(two(30, h))).single()
         assertEquals("on the leader's line", 0.7f, m.y, 0.0001f)
@@ -90,20 +90,20 @@ class GameScreenChartSeriesTest {
     }
 
     @Test fun `chart returns the drawn series values capped at 120`() {
-        val h = (1L..400L).map { WinPoint(it, 40) }
+        val h = (1L..400L).map { WinPoint(it, if (it == 1L) 41 else 40) } // one point of movement: a flat series is hidden (G3)
         val c = WinChanceSeries.chart(h, WinChanceSeries.specOf(two(40, h)))!!
-        assertEquals("cap", 120, c.size); assertEquals("leader's share", 0.6f, c.first(), 0.0001f)
+        assertEquals("cap", 120, c.size); assertEquals("leader's share", 0.6f, c.last(), 0.0001f)
     }
 
     @Test fun `the TV model plots the leaders full three-way chance with the third reference`() {
-        val w = three(45, 30, 25, (0 until 5).map { WinPoint(1_800_000_000_000L + it * 30_000L, 64, draw = 30) })
+        val w = three(45, 30, 25, (0 until 5).map { WinPoint(1_800_000_000_000L + it * 30_000L, if (it == 0) 60 else 64, draw = 30) })
         val chart = GameDetailTvModel.from(detailOf(w), 0L).chart!!
         assertEquals("ends at the 45% headline", 0.448f, chart.values.last(), 0.0001f)
         assertEquals("reference", 1f / 3f, chart.reference, 0.0001f)
         assertFalse("home leads", chart.leaderIsAway)
     }
     @Test fun `the TV model colours an away leader and plots its share`() {
-        val w = two(30, (0 until 5).map { WinPoint(1_800_000_000_000L + it * 30_000L, 30) })
+        val w = two(30, (0 until 5).map { WinPoint(1_800_000_000_000L + it * 30_000L, if (it == 0) 31 else 30) })
         val chart = GameDetailTvModel.from(detailOf(w), 0L).chart!!
         assertEquals("away share", 0.7f, chart.values.last(), 0.0001f)
         assertTrue("away leads", chart.leaderIsAway)

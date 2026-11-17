@@ -120,6 +120,17 @@ class GameDetailResolverTest {
         assertEquals("espn game takes espn header", "E-home", (viaEspn.header as GameHeader.Teams).home.name)
     }
 
+    @Test fun `G6 - the team record survives the backend and ESPN header merge`() = runBlocking {
+        // Backend row has no record (an upcoming game); ESPN carries it. Same teams -> ESPN's record fills the gap.
+        val tsdbHeader = GameHeader.Teams(Side("Home FC", score = "1"), Side("Away FC", score = "0", record = "9-0"))
+        val espnHeader = GameHeader.Teams(Side("Home FC", score = "2", record = "7-2"), Side("Away FC", score = "1"))
+        val tsdb = FakeSource(SourceId.TSDB) { _, _ -> ok(header = tsdbHeader, state = GameState.LIVE) }
+        val espn = FakeSource(SourceId.ESPN) { _, _ -> ok(header = espnHeader, state = GameState.LIVE) }
+        val h = resolver(tsdb, espn).resolve(nbaRef("tsdb:5")).header as GameHeader.Teams
+        assertEquals("home record from ESPN", "7-2", h.home.record)
+        assertEquals("a record the backend already has is kept", "9-0", h.away.record)
+    }
+
     @Test fun `refresh parts are passed through to sources`() = runBlocking {
         val espn = FakeSource(SourceId.ESPN) { _, _ -> SourceLoad.miss() }
         resolver(null, espn).resolve(nbaRef(), setOf(RefreshPart.SCOREBOARD))

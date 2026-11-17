@@ -218,7 +218,7 @@ data class GameDetailTvModel(
             }
             return GameDetailTvModel(
                 title = title,
-                subtitle = gameSubtitle(d.leagueName, d.round),
+                subtitle = gameSubtitle(d.leagueName, d.round, d.sport),
                 sides = sides, state = d.state, pill = pill,
                 liveLine = line ?: (d.header as? GameHeader.Event)?.session,
                 isLive = live, situation = if (field != null) null else situation, // the field strip carries the same information
@@ -353,5 +353,17 @@ data class GameDetailTvModel(
 }
 
 /** "NBA", "FA Cup · Round 3": league plus a round only when the provider gave a real one (UX313: "0" is its default). */
-internal fun gameSubtitle(league: String, round: String?): String? =
-    listOfNotNull(league.takeIf { it.isNotBlank() }, radarRoundLabel(round)).joinToString(" · ").ifBlank { null }
+internal fun gameSubtitle(league: String, round: String?, sport: String? = null): String? =
+    listOfNotNull(league.takeIf { it.isNotBlank() }, roundText(round, sport)).joinToString(" · ").ifBlank { null }
+
+/**
+ * The header's round text. A numeric round counts in weeks for American football ("Week 11") and in rounds elsewhere ("Round 11");
+ * the radar's stage codes keep their names ("125" -> "Quarter-final"); a non-numeric round ("Quarterfinal") is shown as the feed wrote it.
+ */
+internal fun roundText(round: String?, sport: String?): String? {
+    val r = round?.trim()
+    if (r.isNullOrEmpty() || r == "0") return null
+    if (!r.all { it.isDigit() }) return r
+    val label = radarRoundLabel(r) ?: return null
+    return if (sport?.trim().equals("American Football", ignoreCase = true) && label.startsWith("Round ")) "Week ${label.removePrefix("Round ")}" else label
+}

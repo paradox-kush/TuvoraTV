@@ -5,12 +5,14 @@ package com.nuvio.tv.core.sports.detail.screen
  *  - a leading country/provider tag goes: `UK ||`, `US |`, `|UK|`, `[UK]`, `(DE)`, `USA:` (a short token of letters/digits followed by a
  *    pipe, colon or bracket; a hyphen is never a separator, so "A-League TV" is safe);
  *  - trailing quality tags go: HD, FHD, UHD, SD, 4K, 8K, RAW, 50/60 FPS, HEVC, H265, and a trailing [..] / (..);
+ *  - trailing separators go: `|`, `||`, `:`, `-` ("TSN 1 |" -> "TSN 1"; an inner hyphen stays);
  *  - an ALL-CAPS name is title-cased, keeping known acronyms and digit tokens ("F1", "ESPN 2") upper; mixed case is left as the provider wrote it;
  *  - cleaning that leaves nothing returns the trimmed raw text.
  * Pure: no I/O, no locale.
  */
 object ChannelLabelPolicy {
     private val prefix = Regex("""^\s*(?:[\[(]\s*[A-Za-z0-9]{1,5}\s*[\])]|\|{1,2}\s*[A-Za-z0-9]{1,5}\s*\|{1,2}|[A-Za-z0-9]{1,5}\s*(?:\|{1,2}|:))\s*""")
+    private val trailingSeparator = Regex("""\s*(?:\|{1,2}|:|-)\s*$""")
     private val trailingBracket = Regex("""\s*[\[(][^\])]*[\])]\s*$""")
     private val trailingTag = Regex("""\s+(?:HD|FHD|UHD|SD|4K|8K|RAW|HEVC|H\.?265|H\.?264|\d{2}\s?FPS)\s*$""", RegexOption.IGNORE_CASE)
     private val keepUpper = setOf(
@@ -23,7 +25,7 @@ object ChannelLabelPolicy {
         var s = trimmed
         s = prefix.replace(s, "")
         while (true) {
-            val next = trailingTag.replace(trailingBracket.replace(s, ""), "")
+            val next = trailingSeparator.replace(trailingTag.replace(trailingBracket.replace(s, ""), ""), "")
             if (next == s) break
             s = next
         }

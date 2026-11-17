@@ -61,7 +61,16 @@ object WinChanceSeries {
     /** The chart needs a line to draw: fewer points would be a dot or nothing (same name and value as Mobile). */
     const val MIN_POINTS = 2
 
-    fun isVisible(history: List<WinPoint>): Boolean = history.size >= MIN_POINTS
+    /** Smallest movement (in percentage points) worth a chart: a flat line says nothing. */
+    const val MIN_SPAN = 1
+
+    /** 2+ points AND the plotted values (home share, and the draw share when there is one) move by at least [MIN_SPAN] point. */
+    fun isVisible(history: List<WinPoint>): Boolean {
+        if (history.size < MIN_POINTS) return false
+        val home = history.map { it.home }
+        val draws = history.mapNotNull { it.draw }
+        return (home.max() - home.min() >= MIN_SPAN) || (draws.size >= 2 && draws.max() - draws.min() >= MIN_SPAN)
+    }
 
     /** The DRAWN line (at most 120 points, time-ordered): null with fewer than 2 points. Markers sit on exactly these x positions. */
     fun chart(history: List<WinPoint>, spec: WinChanceSpec): List<Float>? =
