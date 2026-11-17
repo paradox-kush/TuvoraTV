@@ -436,6 +436,8 @@ internal object CleanLivePlayerUiPolicy {
         // B259: a minted link whose server sent nothing says so; a named cause never gets here.
         is LivePlaybackUiErrorCode.PlaybackFailed -> if (code.providerSentNoVideo) {
             R.string.clean_live_error_provider_no_video
+        } else if (code.accountConnectionLimit) {
+            R.string.clean_live_error_connection_limit
         } else {
             playbackErrorMessageRes(code.reasonCode)
         }

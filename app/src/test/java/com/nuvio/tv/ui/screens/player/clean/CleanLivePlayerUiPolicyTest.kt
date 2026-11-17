@@ -144,6 +144,32 @@ class CleanLivePlayerUiPolicyTest {
         }
     }
 
+    @Test
+    fun `a 458 or 509 failure names the account connection limit while 429 keeps the generic copy`() {
+        listOf(458, 509).forEach { status ->
+            val ui = com.nuvio.tv.playback.ui.LivePlaybackUiPresenter.present(failedSnapshot(status))
+            assertEquals(
+                "HTTP $status",
+                com.nuvio.tv.R.string.clean_live_error_connection_limit,
+                CleanLivePlayerUiPolicy.errorMessageRes(ui.bottomErrorCode!!),
+            )
+        }
+        val rateLimited = com.nuvio.tv.playback.ui.LivePlaybackUiPresenter.present(failedSnapshot(429))
+        assertEquals(
+            "HTTP 429 keeps its copy",
+            com.nuvio.tv.R.string.clean_live_error_access,
+            CleanLivePlayerUiPolicy.errorMessageRes(rateLimited.bottomErrorCode!!),
+        )
+    }
+
+    private fun failedSnapshot(status: Int) = com.nuvio.tv.playback.core.PlaybackSnapshot(
+        state = com.nuvio.tv.playback.core.PlaybackState.FAILED,
+        failure = com.nuvio.tv.playback.core.HttpStatusFailures.forStatus(
+            status,
+            com.nuvio.tv.playback.core.FailurePhase.PLAYBACK,
+        ),
+    )
+
     // F28: the key map and auto-hide rules moved to LiveControlsPolicy (shared with the guide's
     // fullscreen) and are tested in LiveControlsPolicyTest, including the media-key repeat guard.
 

@@ -30,6 +30,8 @@ sealed interface LivePlaybackUiErrorCode {
         val reasonCode: FailureCode,
         /** B259: a minted link whose stream server sent nothing ([ProviderNoVideoPolicy]). */
         val providerSentNoVideo: Boolean = false,
+        /** The panel's own "max connections" answer (HTTP 458 / 509); 429 keeps the generic copy. */
+        val accountConnectionLimit: Boolean = false,
     ) : LivePlaybackUiErrorCode
 }
 
@@ -70,6 +72,8 @@ object LivePlaybackUiPresenter {
                 LivePlaybackUiErrorCode.PlaybackFailed(
                     snapshot.failure?.code ?: FailureCode.UNKNOWN,
                     providerSentNoVideo = ProviderNoVideoPolicy.applies(snapshot),
+                    accountConnectionLimit = snapshot.failure?.code == FailureCode.PROVIDER_CONNECTION_LIMIT &&
+                        snapshot.failure.httpStatus in ACCOUNT_CONNECTION_LIMIT_STATUSES,
                 )
             else -> null
         }
@@ -150,6 +154,8 @@ object LivePlaybackUiPresenter {
         PlaybackState.FAILED,
         -> null
     }
+
+    private val ACCOUNT_CONNECTION_LIMIT_STATUSES = setOf(458, 509)
 
     private val RECOVERY_STATES = setOf(
         PlaybackState.RESOLVING,
