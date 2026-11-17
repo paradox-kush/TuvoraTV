@@ -1371,9 +1371,8 @@ fun LiveGuide(
             }
             if (!fullscreen) {
                 // Words, never the enum: "Tuning…" until the first frame, "Reconnecting…" while it recovers.
-                val statusRes = playbackUi?.bottomStatusCode?.let(GuidePreviewStatusPolicy::statusRes)
-                val tuningNow = playbackUi?.spinnerVisible == true || statusRes == R.string.iptv_guide_tuning
-                val pillRes = if (tuningNow) R.string.iptv_guide_tuning else statusRes
+                val pillRes = GuidePreviewStatusPolicy.pillRes(playbackUi?.bottomStatusCode, playbackUi?.spinnerVisible == true)
+                val tuningNow = pillRes == R.string.iptv_guide_tuning
                 // The reconnect pill names the attempt and why, like the fullscreen status line.
                 val reconnectText = liveReconnectStatusText(playbackUi?.reconnect)
                 pillRes?.let { res ->

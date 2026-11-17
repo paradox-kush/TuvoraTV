@@ -322,6 +322,10 @@ class PlaybackPolicy(
                 domain = FailureDomain.NETWORK,
                 phase = FailurePhase.RECOVERY,
                 retryability = Retryability.FATAL,
+                // A provider that kept answering 5xx is a server problem, not the viewer's network:
+                // the status survives so the final message can say so.
+                httpStatus = lastAttemptFailure?.httpStatus?.takeIf { it in 500..599 },
+                statusProvenance = lastAttemptFailure?.statusProvenance?.takeIf { lastAttemptFailure.httpStatus in 500..599 },
             )
         }
 

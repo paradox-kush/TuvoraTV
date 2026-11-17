@@ -72,4 +72,17 @@ class GuidePreviewStatusPolicyTest {
         assertEquals(true, GuidePreviewStatusPolicy.offersRetryHint(failureShown = true))
         assertEquals(false, GuidePreviewStatusPolicy.offersRetryHint(failureShown = false))
     }
+
+    /** Device pass: during a reconnect the docked pill read "Tuning…" (the spinner won), so the attempt line never showed. */
+    @Test
+    fun `the docked pill says reconnecting while the reconnect's spinner is up`() {
+        assertEquals(
+            R.string.iptv_guide_preview_reconnecting,
+            GuidePreviewStatusPolicy.pillRes(LivePlaybackUiStatusCode.RECONNECTING, spinnerVisible = true),
+        )
+        assertEquals(R.string.iptv_guide_tuning, GuidePreviewStatusPolicy.pillRes(LivePlaybackUiStatusCode.STARTING, spinnerVisible = true))
+        assertEquals("a buffering spinner reads as tuning, as before", R.string.iptv_guide_tuning,
+            GuidePreviewStatusPolicy.pillRes(LivePlaybackUiStatusCode.BUFFERING, spinnerVisible = true))
+        assertNull(GuidePreviewStatusPolicy.pillRes(null, spinnerVisible = false))
+    }
 }

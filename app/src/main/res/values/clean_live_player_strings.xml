@@ -54,6 +54,8 @@
     <string name="clean_live_error_provider_no_video">The provider\'s server sent no video. Try again later, or check with your provider.</string>
     <!-- 458 / 509: the panel's "max connections" answer. Same wording as player_error_stream_connection_limit, without its leading line breaks. -->
     <string name="clean_live_error_connection_limit">Too many connections on this account. Close the stream on another device, or try again in a minute.</string>
+    <!-- The provider's server answered 5xx (after reconnects): its fault, not the viewer's connection. Fixed sentence: never a host or URL. -->
+    <string name="clean_live_error_provider_server">The provider\'s server had a problem. Try again in a little while.</string>
     <string name="clean_live_error_access">The provider refused or limited this playback connection.</string>
     <string name="clean_live_error_secure_connection">A secure connection to the channel could not be established.</string>
     <string name="clean_live_error_stream_format">The channel uses an unreadable stream format.</string>

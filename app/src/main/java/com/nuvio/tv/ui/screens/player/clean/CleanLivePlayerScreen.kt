@@ -438,6 +438,8 @@ internal object CleanLivePlayerUiPolicy {
             R.string.clean_live_error_provider_no_video
         } else if (code.accountConnectionLimit) {
             R.string.clean_live_error_connection_limit
+        } else if (code.providerServerError) {
+            R.string.clean_live_error_provider_server
         } else {
             playbackErrorMessageRes(code.reasonCode)
         }

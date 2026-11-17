@@ -32,6 +32,8 @@ sealed interface LivePlaybackUiErrorCode {
         val providerSentNoVideo: Boolean = false,
         /** The panel's own "max connections" answer (HTTP 458 / 509); 429 keeps the generic copy. */
         val accountConnectionLimit: Boolean = false,
+        /** The provider's server answered 5xx: its problem, not the viewer's connection. */
+        val providerServerError: Boolean = false,
     ) : LivePlaybackUiErrorCode
 }
 
@@ -74,6 +76,8 @@ object LivePlaybackUiPresenter {
                     providerSentNoVideo = ProviderNoVideoPolicy.applies(snapshot),
                     accountConnectionLimit = snapshot.failure?.code == FailureCode.PROVIDER_CONNECTION_LIMIT &&
                         snapshot.failure.httpStatus in ACCOUNT_CONNECTION_LIMIT_STATUSES,
+                    providerServerError = snapshot.failure?.code in SERVER_ERROR_CODES &&
+                        snapshot.failure?.httpStatus in 500..599,
                 )
             else -> null
         }
@@ -156,6 +160,11 @@ object LivePlaybackUiPresenter {
     }
 
     private val ACCOUNT_CONNECTION_LIMIT_STATUSES = setOf(458, 509)
+    private val SERVER_ERROR_CODES = setOf(
+        FailureCode.NETWORK_UNREACHABLE,
+        FailureCode.NETWORK_TIMEOUT,
+        FailureCode.LIVE_RECONNECT_EXHAUSTED,
+    )
 
     private val RECOVERY_STATES = setOf(
         PlaybackState.RESOLVING,

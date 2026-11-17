@@ -77,6 +77,14 @@ class PlaybackPolicyTest {
     }
 
     @Test
+    fun `reconnects spent on a provider server error keep that status for the final message`() {
+        val serverError = HttpStatusFailures.forStatus(503, FailurePhase.PLAYBACK)
+        val ended = PlaybackPolicy().liveReconnectExhaustedFailure(lastAttemptFailure = serverError)
+        assertEquals("still the exhausted code", FailureCode.LIVE_RECONNECT_EXHAUSTED, ended.code)
+        assertEquals("the server's answer is kept", 503, ended.httpStatus)
+    }
+
+    @Test
     fun `audio decoder failure enters audio ladder while video decoder never does`() {
         val current = requirements(
             preferredEngineOrder = listOf(EngineType.MEDIA3, EngineType.LIBMPV),
