@@ -58,6 +58,11 @@ object WinChanceSeries {
 
     fun plot(points: List<WinPoint>, spec: WinChanceSpec): List<Float> = withDrawFilled(points, spec).map { valueOf(it, spec) }
 
+    /** The chart needs a line to draw: fewer points would be a dot or nothing (same name and value as Mobile). */
+    const val MIN_POINTS = 2
+
+    fun isVisible(history: List<WinPoint>): Boolean = history.size >= MIN_POINTS
+
     /** The DRAWN line (at most 120 points, time-ordered): null with fewer than 2 points. Markers sit on exactly these x positions. */
     fun chart(history: List<WinPoint>, spec: WinChanceSpec): List<Float>? =
         GameDetailUiPolicy.chartSeries(withDrawFilled(history, spec))?.map { valueOf(it, spec) }

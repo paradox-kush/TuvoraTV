@@ -45,14 +45,14 @@ object WatchCopy {
     }
 
     fun statusLine(w: WatchUi): String = when (w.status) {
-        WatchStatus.FINDING -> if (w.mode == WatchMode.WATCHING && w.currentChannelName != null) "Watching ${w.currentChannelName} · finding channels…" else "Finding channels…"
+        WatchStatus.FINDING -> if (w.mode == WatchMode.WATCHING && w.currentChannelName != null) "Watching ${ChannelLabelPolicy.clean(w.currentChannelName)} · finding channels…" else "Finding channels…"
         WatchStatus.READY -> when (val p = w.primary) {
-            is PrimaryAction.Replay -> "Replay from kick-off on ${p.channel.name}"
-            is PrimaryAction.Switch -> "Watching ${w.currentChannelName ?: "a channel"} · switch to ${p.channel.name}"
-            is PrimaryAction.Play -> "On ${p.channel.name}"
-            else -> if (w.mode == WatchMode.WATCHING) "Watching ${w.currentChannelName ?: "a channel"}" else "Found on your channels"
+            is PrimaryAction.Replay -> "Replay from kick-off on ${ChannelLabelPolicy.clean(p.channel.name)}"
+            is PrimaryAction.Switch -> "Watching ${w.currentChannelName?.let(ChannelLabelPolicy::clean) ?: "a channel"} · switch to ${ChannelLabelPolicy.clean(p.channel.name)}"
+            is PrimaryAction.Play -> "On ${ChannelLabelPolicy.clean(p.channel.name)}"
+            else -> if (w.mode == WatchMode.WATCHING) "Watching ${w.currentChannelName?.let(ChannelLabelPolicy::clean) ?: "a channel"}" else "Found on your channels"
         }
-        WatchStatus.ALREADY_ON_IT -> "Watching this game on ${w.currentChannelName ?: "this channel"}"
+        WatchStatus.ALREADY_ON_IT -> "Watching this game on ${w.currentChannelName?.let(ChannelLabelPolicy::clean) ?: "this channel"}"
         WatchStatus.NO_CHANNELS -> "None of your channels list this game yet. Find channels searches your playlists."
         WatchStatus.HIDDEN -> ""
         WatchStatus.FAILED -> "Couldn't check your channels"

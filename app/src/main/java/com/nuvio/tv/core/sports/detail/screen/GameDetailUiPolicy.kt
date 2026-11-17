@@ -8,7 +8,7 @@ object GameDetailUiPolicy {
 
     /** The DRAWN series: time-ordered and down-sampled to at most 120 points (spec 05) (null when < 2 points). Markers sit on exactly these points. */
     fun chartSeries(history: List<com.nuvio.tv.core.sports.detail.WinPoint>): List<com.nuvio.tv.core.sports.detail.WinPoint>? {
-        if (history.size < 2) return null
+        if (!WinChanceSeries.isVisible(history)) return null
         val sorted = history.sortedBy { it.t }
         return if (sorted.size <= CHART_MAX_POINTS) sorted else (0 until CHART_MAX_POINTS).map { sorted[(it.toLong() * (sorted.size - 1) / (CHART_MAX_POINTS - 1)).toInt()] }
     }

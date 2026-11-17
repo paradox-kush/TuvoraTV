@@ -41,7 +41,7 @@ class GameDetailLayoutTest {
     @Test fun `too little room drops the card rather than clipping it - the scoreboard already has the score`() =
         assertNull("dropped", ByPeriodFit.layout(availableDp = 40, rows = 2))
 
-    private val chan = WatchCandidate("c1", "NHL | 01 - 1pm Panthers @ Bruins", 0, 10)
+    private val chan = WatchCandidate("c1", "UK || SKY SPORTS MAIN EVENT", 0, 10)
 
     @Test fun `Play is a short verb - the provider's long channel title never sits in the button`() {
         assertEquals("play", "▶  Play", WatchCopy.primaryLabel(PrimaryAction.Play(chan)))
@@ -55,11 +55,11 @@ class GameDetailLayoutTest {
 
     @Test fun `the line under the buttons names the channel Play or Switch will open`() {
         val browse = WatchUi(WatchMode.BROWSING, null, PrimaryAction.Play(chan), WatchStatus.READY, 39)
-        assertEquals("browse", "On NHL | 01 - 1pm Panthers @ Bruins", WatchCopy.statusLine(browse))
-        val watching = WatchUi(WatchMode.WATCHING, "Sky Sports 1", PrimaryAction.Switch(chan), WatchStatus.READY, 0)
-        assertEquals("switch", "Watching Sky Sports 1 · switch to NHL | 01 - 1pm Panthers @ Bruins", WatchCopy.statusLine(watching))
+        assertEquals("browse", "On Sky Sports Main Event", WatchCopy.statusLine(browse))
+        val watching = WatchUi(WatchMode.WATCHING, "US | ESPN 2 HD", PrimaryAction.Switch(chan), WatchStatus.READY, 0)
+        assertEquals("switch", "Watching ESPN 2 · switch to Sky Sports Main Event", WatchCopy.statusLine(watching))
         val replay = browse.copy(primary = PrimaryAction.Replay(chan))
-        assertEquals("replay", "Replay from kick-off on NHL | 01 - 1pm Panthers @ Bruins", WatchCopy.statusLine(replay))
+        assertEquals("replay", "Replay from kick-off on Sky Sports Main Event", WatchCopy.statusLine(replay))
     }
 
     @Test fun `the other status lines are unchanged`() {
