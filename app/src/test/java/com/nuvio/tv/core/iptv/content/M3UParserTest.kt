@@ -66,6 +66,17 @@ class M3UParserTest {
     }
 
     @Test
+    fun `a comma in the display name keeps the whole name and every attribute`() {
+        // Device pass: "BP Comma, Name" showed as "Name" (the name was cut at the LAST unquoted comma).
+        val line = """#EXTINF:-1 tvg-id="bp.comma" user-agent="Comma, Agent/2.0" group-title="Branch Pass",BP Comma, Name"""
+        val e = M3UParser.parseExtInf(line, "http://h/live/u/p/9.ts")!!
+        assertEquals("BP Comma, Name", e.name)
+        assertEquals("bp.comma", e.tvgId)
+        assertEquals("Branch Pass", e.group)
+        assertEquals("Comma, Agent/2.0", e.headers?.userAgent)
+    }
+
+    @Test
     fun `parseExtInf handles commas inside attribute values`() {
         // a comma inside group-title must NOT be treated as the display-name separator
         val line = """#EXTINF:-1 tvg-logo="x" group-title="Movies, Action",Die Hard (1988)"""

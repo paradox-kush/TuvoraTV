@@ -94,8 +94,9 @@ object M3UParser {
         directiveHeaders: Map<String, String> = emptyMap(),
     ): M3UEntry? {
         if (!extInfLine.startsWith("#EXTINF")) return null
-        // Display name = everything after the LAST comma that isn't inside a quoted attribute.
-        val comma = lastUnquotedComma(extInfLine)
+        // Display name = everything after the FIRST comma outside a quoted attribute: the name itself may
+        // hold commas ("BP Comma, Name"), an attribute value's commas are inside quotes.
+        val comma = firstUnquotedComma(extInfLine)
         val displayName = if (comma >= 0) extInfLine.substring(comma + 1).trim() else ""
         val attrsPart = if (comma >= 0) extInfLine.substring(0, comma) else extInfLine
         val attrs = HashMap<String, String>()
@@ -212,16 +213,15 @@ object M3UParser {
         return M3uCatchUpInfo(type, source, rawDays?.takeIf { it > 0 } ?: 1)
     }
 
-    /** Index of the comma that starts the display name, ignoring commas inside `attr="..."`. */
-    private fun lastUnquotedComma(line: String): Int {
+    /** Index of the comma that starts the display name, ignoring commas inside `attr="..."`; -1 if none. */
+    private fun firstUnquotedComma(line: String): Int {
         var inQuote = false
-        var last = -1
         for (i in line.indices) {
             val c = line[i]
             if (c == '"') inQuote = !inQuote
-            else if (c == ',' && !inQuote) last = i
+            else if (c == ',' && !inQuote) return i
         }
-        return last
+        return -1
     }
 
     /**
