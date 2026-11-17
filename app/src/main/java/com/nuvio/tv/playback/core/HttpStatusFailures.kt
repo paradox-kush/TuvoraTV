@@ -49,12 +49,18 @@ object HttpStatusFailures {
             FailureDomain.NETWORK,
             phase,
             Retryability.RETRYABLE_IN_PLACE,
+            httpStatus = status,
+            statusProvenance = provenance,
         )
+        // Any other status (a provider firewall's 456, a 400, a 458…) is still a network failure,
+        // but the number is kept: without it the fleet's NETWORK_UNREACHABLE could not be told apart.
         else -> PlaybackFailure(
             FailureCode.NETWORK_UNREACHABLE,
             FailureDomain.NETWORK,
             phase,
             Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+            httpStatus = status,
+            statusProvenance = provenance,
         )
     }
 }

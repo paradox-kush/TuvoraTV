@@ -1399,7 +1399,10 @@ class PlaybackSession(
                     liveReconnectAttempts.removeFirst()
                 }
                 if (!policy.liveReconnectAllowed(attempt, liveReconnectAttempts, now)) {
-                    liveReconnectEscalated(action.generation, policy.liveReconnectExhaustedFailure(lastAttemptFailure))
+                    liveReconnectEscalated(
+                        action.generation,
+                        policy.liveReconnectExhaustedFailure(lastAttemptFailure, failedEngine = graph.engine),
+                    )
                     return@launch
                 }
                 liveReconnectAttempts.addLast(now)

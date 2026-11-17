@@ -638,6 +638,44 @@ class PlaybackStateMachineTest {
         assertAction<PlaybackAction.ReleaseActiveWork>(escalated)
     }
 
+    @Test
+    fun `media3 live reconnects exhausted on a network failure hand off once, then stop`() {
+        val reconnecting = PlaybackStateMachine.reduce(
+            playingState(ContentType.LIVE),
+            PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF),
+        ).state
+        val networkRejected = PlaybackFailure(
+            FailureCode.NETWORK_UNREACHABLE, FailureDomain.NETWORK, FailurePhase.PLAYBACK,
+            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+        )
+        val exhausted = PlaybackPolicy().liveReconnectExhaustedFailure(networkRejected, failedEngine = EngineType.MEDIA3)
+
+        val escalated = PlaybackStateMachine.reduce(
+            reconnecting,
+            PlaybackReducerInput.LiveReconnectEscalated(1, exhausted),
+        )
+
+        assertEquals(
+            "the exhausted media3 network failure hands off instead of failing",
+            PlaybackState.HANDING_OFF_ONCE,
+            escalated.state.snapshot.state,
+        )
+        assertEquals(AfterRelease.HANDOFF, escalated.state.afterRelease)
+        assertTrue("the one handoff is spent", escalated.state.incident!!.handoffIssued)
+
+        // The same incident cannot hand off a second time (no engine ping-pong).
+        val again = PlaybackStateMachine.reduce(
+            escalated.state.copy(
+                snapshot = escalated.state.snapshot.copy(state = PlaybackState.LIVE_RECONNECTING),
+            ),
+            PlaybackReducerInput.LiveReconnectEscalated(1, exhausted),
+        )
+        assertTrue(
+            "a second exhaustion is terminal, not another handoff",
+            again.state.snapshot.state == PlaybackState.FAILED || again.state.afterRelease == AfterRelease.FAIL,
+        )
+    }
+
     private fun reconnectedState(): PlaybackMachineState {
         val reconnecting = PlaybackStateMachine.reduce(
             playingState(ContentType.LIVE),
