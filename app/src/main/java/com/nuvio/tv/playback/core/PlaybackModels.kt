@@ -1218,6 +1218,19 @@ data class PlaybackSnapshot(
     /** Live time-shift window the engine reports (mpv); null when it has none. */
     val seekableStartMs: Long? = null,
     val seekableEndMs: Long? = null,
+    /** The live reconnect attempt in flight; null outside a reconnect (cleared with [isReconnecting]). */
+    val liveReconnect: LiveReconnectProgress? = null,
+)
+
+/**
+ * Which live reconnect attempt is running, out of the incident's budget, and the failure that made it
+ * necessary (null for an end-file). Counts and engine-neutral enums only: never a URL, host or message.
+ */
+data class LiveReconnectProgress(
+    /** 1-based. */
+    val attempt: Int,
+    val maxAttempts: Int,
+    val cause: PlaybackFailure?,
 )
 
 enum class PlaybackStatusCode { RESOLVING, STARTING, BUFFERING, RECONNECTING, HANDING_OFF, STOPPED }

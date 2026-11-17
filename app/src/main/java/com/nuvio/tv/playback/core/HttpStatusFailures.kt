@@ -38,23 +38,31 @@ object HttpStatusFailures {
             httpStatus = status,
             statusProvenance = provenance,
         )
-        429 -> PlaybackFailure(
+        // 429, and the IPTV panels' 458 / 509 ("max connections reached"): the account's slots are
+        // full. Reconnecting only hammers the provider, so stop and say why.
+        429, 458, 509 -> PlaybackFailure(
             FailureCode.PROVIDER_CONNECTION_LIMIT,
             FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
             phase,
             Retryability.FATAL,
+            httpStatus = status,
+            statusProvenance = provenance,
         )
         in 500..599 -> PlaybackFailure(
             FailureCode.NETWORK_UNREACHABLE,
             FailureDomain.NETWORK,
             phase,
             Retryability.RETRYABLE_IN_PLACE,
+            httpStatus = status,
+            statusProvenance = provenance,
         )
         else -> PlaybackFailure(
             FailureCode.NETWORK_UNREACHABLE,
             FailureDomain.NETWORK,
             phase,
             Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+            httpStatus = status,
+            statusProvenance = provenance,
         )
     }
 }

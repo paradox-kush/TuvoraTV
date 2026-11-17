@@ -638,6 +638,60 @@ class PlaybackStateMachineTest {
         assertAction<PlaybackAction.ReleaseActiveWork>(escalated)
     }
 
+    @Test
+    fun `a live reconnect attempt is published on the snapshot and cleared when the picture returns`() {
+        val reconnecting = PlaybackStateMachine.reduce(
+            playingState(ContentType.LIVE),
+            PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF),
+        ).state
+        val cause = failure(Retryability.RETRYABLE_WITH_FRESH_REQUEST).copy(httpStatus = 503)
+
+        val attempt = PlaybackStateMachine.reduce(
+            reconnecting,
+            PlaybackReducerInput.LiveReconnectAttemptStarted(1, attempt = 2, maxAttempts = 3, cause = cause),
+        )
+
+        assertEquals(LiveReconnectProgress(attempt = 2, maxAttempts = 3, cause = cause), attempt.state.snapshot.liveReconnect)
+        assertTrue("publishing progress issues no work", attempt.actions.isEmpty())
+
+        val playing = PlaybackStateMachine.reduce(attempt.state, PlaybackEvent.FirstVideoFrame(1))
+        assertEquals("the attempt line is gone once the picture is back", null, playing.state.snapshot.liveReconnect)
+    }
+
+    @Test
+    fun `a reconnect attempt for another generation or outside a reconnect is ignored`() {
+        val playing = playingState(ContentType.LIVE)
+        val outside = PlaybackStateMachine.reduce(
+            playing,
+            PlaybackReducerInput.LiveReconnectAttemptStarted(1, attempt = 1, maxAttempts = 3, cause = null),
+        )
+        assertSame(playing, outside.state)
+
+        val reconnecting = PlaybackStateMachine.reduce(playing, PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF)).state
+        val stale = PlaybackStateMachine.reduce(
+            reconnecting,
+            PlaybackReducerInput.LiveReconnectAttemptStarted(7, attempt = 1, maxAttempts = 3, cause = null),
+        )
+        assertSame(reconnecting, stale.state)
+    }
+
+    @Test
+    fun `an exhausted reconnect drops the attempt line`() {
+        val reconnecting = PlaybackStateMachine.reduce(
+            playingState(ContentType.LIVE),
+            PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF),
+        ).state
+        val attempt = PlaybackStateMachine.reduce(
+            reconnecting,
+            PlaybackReducerInput.LiveReconnectAttemptStarted(1, attempt = 3, maxAttempts = 3, cause = null),
+        ).state
+        val escalated = PlaybackStateMachine.reduce(
+            attempt,
+            PlaybackReducerInput.LiveReconnectEscalated(1, PlaybackPolicy().liveReconnectExhaustedFailure()),
+        )
+        assertEquals(null, escalated.state.snapshot.liveReconnect)
+    }
+
     private fun reconnectedState(): PlaybackMachineState {
         val reconnecting = PlaybackStateMachine.reduce(
             playingState(ContentType.LIVE),

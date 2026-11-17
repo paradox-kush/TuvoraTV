@@ -1403,6 +1403,16 @@ class PlaybackSession(
                     return@launch
                 }
                 liveReconnectAttempts.addLast(now)
+                lane.send(
+                    LaneMessage.Reducer(
+                        PlaybackReducerInput.LiveReconnectAttemptStarted(
+                            generation = action.generation,
+                            attempt = attempt + 1,
+                            maxAttempts = policy.liveReconnectMaxAttemptsPerIncident,
+                            cause = lastAttemptFailure,
+                        ),
+                    ),
+                )
                 diagnostics.record(
                     PlaybackDiagnosticEvent(
                         generation = action.generation,

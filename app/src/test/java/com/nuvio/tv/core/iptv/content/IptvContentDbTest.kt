@@ -457,6 +457,18 @@ class IptvContentDbTest {
     }
 
     @Test
+    fun `per-channel request headers round-trip through the channel table`() = runTest {
+        val headers = M3uChannelHeaders(userAgent = "Agent/1", referer = "https://r.example/", origin = null)
+        db.ingest(pid) { w ->
+            w.addChannel(ContentChannel(1, "With", null, null, "A", "http://h/1.ts", headers = headers))
+            w.addChannel(ContentChannel(2, "Without", null, null, "A", "http://h/2.ts"))
+        }
+        assertEquals("channelRow", headers, db.channelRow(pid, 1)?.headers)
+        assertEquals("channelsFor", headers, db.channelsFor(pid, null).first { it.sid == 1 }.headers)
+        assertNull("a channel without headers reads none", db.channelRow(pid, 2)?.headers)
+    }
+
+    @Test
     fun `catch-up settings round-trip through the channel table`() = runTest {
         val info = com.nuvio.tv.core.iptv.M3uCatchUpInfo(com.nuvio.tv.core.iptv.M3uCatchUpType.APPEND, "?start={utc}&end={utcend}", 5)
         db.ingest(pid) { w ->

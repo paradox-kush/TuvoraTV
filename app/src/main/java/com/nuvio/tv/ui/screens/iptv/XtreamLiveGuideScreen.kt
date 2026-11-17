@@ -22,6 +22,7 @@ import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsOverlay
 import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayActions
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayInfo
+import com.nuvio.tv.ui.screens.player.clean.live.liveReconnectStatusText
 import com.nuvio.tv.ui.screens.player.clean.live.LivePanel
 import com.nuvio.tv.ui.screens.player.clean.live.LiveStreamInfoDialog
 import com.nuvio.tv.ui.screens.player.clean.live.LiveTrackChoices
@@ -1373,9 +1374,15 @@ fun LiveGuide(
                 val statusRes = playbackUi?.bottomStatusCode?.let(GuidePreviewStatusPolicy::statusRes)
                 val tuningNow = playbackUi?.spinnerVisible == true || statusRes == R.string.iptv_guide_tuning
                 val pillRes = if (tuningNow) R.string.iptv_guide_tuning else statusRes
+                // The reconnect pill names the attempt and why, like the fullscreen status line.
+                val reconnectText = liveReconnectStatusText(playbackUi?.reconnect)
                 pillRes?.let { res ->
                     LiveRetryStatus(
-                        message = stringResource(res),
+                        message = if (res == R.string.iptv_guide_preview_reconnecting && reconnectText != null) {
+                            reconnectText
+                        } else {
+                            stringResource(res)
+                        },
                         modifier = Modifier.align(Alignment.BottomCenter)
                             .padding(bottom = NuvioTheme.spacing.lg),
                     )

@@ -180,6 +180,69 @@ class IptvProviderPlaybackResolverTest {
         assertEquals(DeliveryType.UDP, resolved.evidence.delivery?.value)
     }
 
+    @Test
+    fun `an M3U channel's own user agent beats the playlist's and its referer and origin are sent`() = runTest {
+        val account = account(id = "m3u:https://playlist.invalid/list.m3u", sourceType = XtreamAccount.SOURCE_URL, username = "Playlist UA/1.0")
+        val channel = com.nuvio.tv.core.iptv.content.M3uChannelHeaders(
+            userAgent = "Channel UA/2.0", referer = "https://ref.invalid/", origin = "https://origin.invalid",
+        )
+        val resolver = resolver(account, channelHeaders = channel) { _, _, _, _ -> ProviderLinkResult.Resolved("http://media.invalid/7.ts") }
+
+        val request = resolver.resolve(
+            selection(account, ProviderSourceType.M3U, ContentType.LIVE, streamId = 7),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success().request
+
+        assertEquals("channel UA over playlist UA", "Channel UA/2.0", request.userAgent)
+        assertEquals("referer", "https://ref.invalid/", request.referer)
+        assertEquals("origin", "https://origin.invalid", request.origin)
+        assertFalse("values never print", request.toString().contains("ref.invalid") || request.toString().contains("Channel UA"))
+    }
+
+    @Test
+    fun `an M3U channel with only a referer keeps the playlist user agent`() = runTest {
+        val account = account(id = "m3u:https://playlist.invalid/list.m3u", sourceType = XtreamAccount.SOURCE_URL, username = "Playlist UA/1.0")
+        val channel = com.nuvio.tv.core.iptv.content.M3uChannelHeaders(referer = "https://ref.invalid/")
+        val resolver = resolver(account, channelHeaders = channel) { _, _, _, _ -> ProviderLinkResult.Resolved("http://media.invalid/7.ts") }
+
+        val request = resolver.resolve(
+            selection(account, ProviderSourceType.M3U, ContentType.LIVE, streamId = 7),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success().request
+
+        assertEquals("Playlist UA/1.0", request.userAgent)
+        assertEquals("https://ref.invalid/", request.referer)
+    }
+
+    @Test
+    fun `with no channel or playlist user agent the engine default applies`() = runTest {
+        val account = account(id = "m3u:https://playlist.invalid/list.m3u", sourceType = XtreamAccount.SOURCE_URL, username = "")
+        val resolver = resolver(account) { _, _, _, _ -> ProviderLinkResult.Resolved("http://media.invalid/7.ts") }
+
+        val request = resolver.resolve(
+            selection(account, ProviderSourceType.M3U, ContentType.LIVE, streamId = 7),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success().request
+
+        assertNull("null = DEFAULT_STREAM_USER_AGENT in the engine plan", request.userAgent)
+        assertNull(request.referer)
+    }
+
+    @Test
+    fun `channel headers never reach an Xtream or Stalker request`() = runTest {
+        val account = account(sourceType = XtreamAccount.SOURCE_XTREAM)
+        val channel = com.nuvio.tv.core.iptv.content.M3uChannelHeaders(userAgent = "Channel UA/2.0", referer = "https://ref.invalid/")
+        val resolver = resolver(account, channelHeaders = channel) { _, _, _, _ -> ProviderLinkResult.Resolved("http://media.invalid/7.ts") }
+
+        val request = resolver.resolve(
+            selection(account, ProviderSourceType.XTREAM, ContentType.LIVE),
+            ProviderResolutionContext(ProviderResolutionTrigger.INITIAL),
+        ).success().request
+
+        assertNull(request.userAgent)
+        assertNull(request.referer)
+    }
+
     /**
      * Regression (UX340, 2026-11-12): the portal went away mid-play; the reconnect's create_link threw
      * ConnectException and the resolver reported it as UNKNOWN, so the viewer read the generic "Live TV
@@ -698,6 +761,7 @@ class IptvProviderPlaybackResolverTest {
         m3uChannel: M3uChannelCatchUp? = null,
         identities: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy =
             com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy(),
+        channelHeaders: com.nuvio.tv.core.iptv.content.M3uChannelHeaders? = null,
         link: suspend (XtreamAccount, String, Int, Boolean) -> ProviderLinkResult,
     ) = IptvProviderPlaybackResolver(
         accounts = ProviderAccountLookup { id -> account.takeIf { it.id == id } },
@@ -706,6 +770,7 @@ class IptvProviderPlaybackResolverTest {
         panelClock = PanelClockSource { panelOffsetMs },
         m3uChannels = ProviderM3uCatchUpLookup { _, _ -> m3uChannel },
         streamIdentities = identities,
+        m3uChannelHeaders = ProviderM3uChannelHeadersLookup { _, _ -> channelHeaders },
     )
 
     private fun selection(

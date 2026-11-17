@@ -298,6 +298,10 @@ class PlaybackPolicy(
             liveReconnectConfiguration.maxAttemptsPerRollingWindow
     }
 
+    /** The per-incident attempt budget, shown to the viewer as "attempt N of M". */
+    val liveReconnectMaxAttemptsPerIncident: Int
+        get() = liveReconnectConfiguration.maxAttemptsPerIncident
+
     fun liveReconnectWindowStart(nowEpochMs: Long): Long =
         nowEpochMs - liveReconnectConfiguration.rollingWindowMs
 

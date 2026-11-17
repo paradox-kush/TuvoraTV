@@ -15,6 +15,16 @@
     <string name="clean_live_status_recovering">Recovering playback…</string>
     <string name="clean_live_status_handing_off">Trying another playback path…</string>
     <string name="clean_live_status_reconnecting">Reconnecting…</string>
+    <!-- The live reconnect line: attempt N of the incident's budget, then a fixed reason. Never a host or URL. -->
+    <string name="live_reconnect_status_attempt">Reconnecting… (attempt %1$d of %2$d) · %3$s</string>
+    <string name="live_reconnect_status">Reconnecting… · %1$s</string>
+    <string name="live_reconnect_reason_firewall">Provider firewall blocked the stream</string>
+    <string name="live_reconnect_reason_connection_limit">Too many connections on this account</string>
+    <string name="live_reconnect_reason_not_found">Stream not found</string>
+    <string name="live_reconnect_reason_server_error">Provider server error</string>
+    <string name="live_reconnect_reason_refused">Provider refused the stream</string>
+    <string name="live_reconnect_reason_unreachable">Can\'t reach the provider</string>
+    <string name="live_reconnect_reason_stopped">Stream stopped</string>
     <string name="clean_live_status_paused">Paused</string>
     <string name="live_pause_status_preparing">Preparing</string>
     <string name="live_pause_chip_behind">%1$s · Live</string>

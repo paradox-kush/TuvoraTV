@@ -27,6 +27,7 @@ import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsOverlay
 import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayActions
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayInfo
+import com.nuvio.tv.ui.screens.player.clean.live.liveReconnectStatusText
 import com.nuvio.tv.ui.screens.player.clean.live.LivePanel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -293,6 +294,7 @@ private fun BoxScope.GuideFullscreenOverlayContent(
                 paused = effectivePaused,
             ),
             errorText = errorText.takeIf { livePause.phase == LivePausePhase.OFF },
+            reconnectText = liveReconnectStatusText(playbackUi?.reconnect),
             pauseErrorText = livePause.problem?.let { stringResource(livePauseProblemRes(it)) },
         ),
         nowMs = nowMs,

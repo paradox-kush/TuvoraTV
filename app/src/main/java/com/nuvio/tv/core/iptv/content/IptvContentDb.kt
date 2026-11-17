@@ -17,7 +17,9 @@ import javax.inject.Singleton
  *  playlist's per-channel catch-up (null = none; Xtream/Stalker use [hasArchive] alone). */
 data class ContentChannel(val sid: Int, val name: String, val logo: String?, val tvgId: String?, val categoryId: String?, val url: String, val cmd: String? = null, val hasArchive: Boolean = false, val useHttpTmpLink: Boolean = false, val useLoadBalancing: Boolean = false, val catchUp: M3uCatchUpInfo? = null,
     /** A Stalker portal's archive depth in days (0 = not stated); stored in `catchup_days` with no catch-up type. */
-    val archiveDays: Int = 0)
+    val archiveDays: Int = 0,
+    /** An M3U channel's own User-Agent / Referer / Origin (null = none). Never logged. */
+    val headers: M3uChannelHeaders? = null)
 data class ContentVod(val sid: Int, val name: String, val logo: String?, val categoryId: String?, val url: String, val ext: String?, val cmd: String? = null)
 /** A series HEADER (grouped M3U episodes). [sid] is a synthetic id derived from the series name. */
 data class ContentSeries(val sid: Int, val name: String, val logo: String?, val categoryId: String?)
@@ -157,7 +159,8 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
             val channelColumns = d.rawQuery("PRAGMA table_info(channels)", null).use { c ->
                 buildSet { while (c.moveToNext()) add(c.getString(1)) }
             }
-            for ((column, type) in CATCHUP_COLUMNS) {
+            // Per-channel M3U request headers: added in place the same way; NULL = none until the next refresh.
+            for ((column, type) in CATCHUP_COLUMNS + HEADER_COLUMNS) {
                 if (column !in channelColumns) d.execSQL("ALTER TABLE channels ADD COLUMN $column $type")
             }
             // Stalker catch-up: the portal's EPG row id per programme. Added in place, nullable and
@@ -306,7 +309,7 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
         // --- batched writers (each its own transaction) ---
         private fun flushChannels() {
             inTx {
-                val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, generation, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing, ord, catchup_type, catchup_source, catchup_days) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                val s = db.compileStatement("INSERT OR REPLACE INTO channels(playlist_id, generation, category_id, sid, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing, ord, catchup_type, catchup_source, catchup_days, http_user_agent, http_referer, http_origin) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
                 for ((i, r) in channelBatch.withIndex()) {
                     s.clearBindings()
                     s.bindString(1, playlistId); s.bindLong(2, generation); bindNullable(s, 3, r.categoryId); s.bindLong(4, r.sid.toLong())
@@ -315,6 +318,7 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
                     s.bindLong(11, if (r.useHttpTmpLink) 1L else 0L); s.bindLong(12, if (r.useLoadBalancing) 1L else 0L)
                     s.bindLong(13, channelOrd[i])
                     bindCatchUp(s, 14, r.catchUp, r.archiveDays)
+                    bindHeaders(s, 17, r.headers)
                     s.executeInsert()
                 }
                 s.close()
@@ -1183,9 +1187,10 @@ class IptvContentDb internal constructor(context: Context, dbName: String) {
         /** Catalog tables whose rows carry their source position (`ord`, B64 follow-up). */
         private val ORDERED_TABLES = listOf("channels", "vod", "series")
         private val CATCHUP_COLUMNS = listOf("catchup_type" to "TEXT", "catchup_source" to "TEXT", "catchup_days" to "INTEGER")
+        private val HEADER_COLUMNS = listOf("http_user_agent" to "TEXT", "http_referer" to "TEXT", "http_origin" to "TEXT")
 
         /** Column list every channel read selects (order matches [channelOf]). */
-        private const val CHANNEL_COLS = "sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing, catchup_type, catchup_source, catchup_days"
+        private const val CHANNEL_COLS = "sid, name, logo, tvg_id, category_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing, catchup_type, catchup_source, catchup_days, http_user_agent, http_referer, http_origin"
 
         const val TYPE_LIVE = "live"
         const val TYPE_VOD = "vod"
@@ -1235,7 +1240,15 @@ private fun channelOf(c: android.database.Cursor) = ContentChannel(
     c.getStringOrNull(6), c.getInt(7) > 0, c.getInt(8) > 0, c.getInt(9) > 0,
     catchUp = storedCatchUp(c.getStringOrNull(10), c.getStringOrNull(11), if (c.isNull(12)) 0 else c.getInt(12)),
     archiveDays = if (c.isNull(10) && !c.isNull(12)) c.getInt(12).coerceAtLeast(0) else 0,
+    headers = M3uChannelHeaders(c.getStringOrNull(13), c.getStringOrNull(14), c.getStringOrNull(15))
+        .takeIf { it.userAgent != null || it.referer != null || it.origin != null },
 )
+
+private fun bindHeaders(stmt: android.database.sqlite.SQLiteStatement, index: Int, headers: M3uChannelHeaders?) {
+    listOf(headers?.userAgent, headers?.referer, headers?.origin).forEachIndexed { i, value ->
+        if (value == null) stmt.bindNull(index + i) else stmt.bindString(index + i, value)
+    }
+}
 
 /** A stored triple back to its settings; an unknown type (a future dialect) or a missing one reads as none. */
 internal fun storedCatchUp(type: String?, source: String?, days: Int): M3uCatchUpInfo? {

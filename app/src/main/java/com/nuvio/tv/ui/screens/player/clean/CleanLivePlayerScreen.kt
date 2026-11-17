@@ -60,6 +60,7 @@ import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsOverlay
 import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayActions
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayInfo
+import com.nuvio.tv.ui.screens.player.clean.live.liveReconnectStatusText
 import com.nuvio.tv.ui.screens.player.clean.live.LivePanel
 import com.nuvio.tv.ui.screens.player.clean.live.LiveReportPolicy
 import com.nuvio.tv.ui.screens.player.clean.live.LiveReportState
@@ -290,6 +291,7 @@ internal fun CleanLivePlayerScreen(
                         paused = paused,
                     ),
                     errorText = if (chrome.messageIsError && !pauseOn) messageText else null,
+                    reconnectText = liveReconnectStatusText(uiState.reconnect),
                     pauseErrorText = livePause.problem?.let { stringResource(livePauseProblemRes(it)) },
                     reportText = reportStateText(reportState),
                     reportSending = reportState == LiveReportState.Sending,

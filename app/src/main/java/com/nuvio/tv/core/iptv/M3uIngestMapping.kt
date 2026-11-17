@@ -48,7 +48,7 @@ object M3uIngestMapping {
             M3UKind.LIVE -> M3uIngestRow.Channel(
                 ContentChannel(
                     M3uIdentity.itemSid(entry.url, login), entry.name, entry.logo, entry.tvgId, cat, entry.url,
-                    hasArchive = entry.catchUp != null, catchUp = entry.catchUp,
+                    hasArchive = entry.catchUp != null, catchUp = entry.catchUp, headers = entry.headers,
                 ),
             )
             M3UKind.VOD -> {

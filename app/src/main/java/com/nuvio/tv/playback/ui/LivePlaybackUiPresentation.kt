@@ -51,6 +51,8 @@ data class LivePlaybackUiState(
     val isPaused: Boolean,
     val previewAvailability: PreviewAvailability,
     val streamAvailability: StreamAvailability,
+    /** Set only while [bottomStatusCode] is RECONNECTING: "attempt N of M" and why. */
+    val reconnect: LiveReconnectStatus? = null,
 )
 
 /** Pure projection only. Recovery, retry, engine selection, and provider resolution stay upstream. */
@@ -84,6 +86,16 @@ object LivePlaybackUiPresenter {
             isPaused = active && !snapshot.playWhenReady,
             previewAvailability = snapshot.previewAvailability,
             streamAvailability = snapshot.streamAvailability,
+            reconnect = if (status == LivePlaybackUiStatusCode.RECONNECTING) snapshot.reconnectStatus() else null,
+        )
+    }
+
+    private fun PlaybackSnapshot.reconnectStatus(): LiveReconnectStatus {
+        val progress = liveReconnect
+        return LiveReconnectStatus(
+            attempt = progress?.attempt,
+            maxAttempts = progress?.maxAttempts,
+            reason = LiveReconnectReasonPolicy.reason(progress?.cause ?: failure),
         )
     }
 

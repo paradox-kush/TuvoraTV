@@ -18,6 +18,7 @@ data class M3UEntry(
     val kind: M3UKind,
     val ext: String?,          // container extension from the URL tail (mp4/mkv/ts/...), null if none
     val catchUp: M3uCatchUpInfo? = null, // catch-up attributes (entry over #EXTM3U header default), null = none
+    val headers: M3uChannelHeaders? = null, // per-channel User-Agent / Referer / Origin, null = none
 )
 
 /**
@@ -90,6 +91,7 @@ object M3UParser {
         url: String,
         headerCatchUp: Map<String, String> = emptyMap(),
         extGrp: String? = null,
+        directiveHeaders: Map<String, String> = emptyMap(),
     ): M3UEntry? {
         if (!extInfLine.startsWith("#EXTINF")) return null
         // Display name = everything after the LAST comma that isn't inside a quoted attribute.
@@ -116,7 +118,68 @@ object M3UParser {
             catchUp = if (kind == M3UKind.LIVE) {
                 catchUpOf(headerCatchUp + attrs.filterKeys { it in CATCHUP_KEYS && !attrs[it].isNullOrBlank() })
             } else null,
+            // #EXTVLCOPT / #EXTHTTP lines are more specific than the attribute shorthand, so they win.
+            headers = channelHeadersOf(attributeHeadersOf(attrs) + directiveHeaders),
         )
+    }
+
+    /** Canonical header keys this parser keeps (lower case). Cookie is deliberately absent. */
+    private const val UA = "user-agent"
+    private const val REFERER = "referer"
+    private const val ORIGIN = "origin"
+    private const val MAX_HEADER_VALUE = 512
+
+    /** `http-user-agent="..."` / `http-referrer="..."` (and their spellings) on the #EXTINF line. */
+    private fun attributeHeadersOf(attrs: Map<String, String>): Map<String, String> = buildMap {
+        (attrs["http-user-agent"] ?: attrs["user-agent"])?.let { put(UA, it) }
+        (attrs["http-referrer"] ?: attrs["http-referer"] ?: attrs["referer"] ?: attrs["referrer"])?.let { put(REFERER, it) }
+        attrs["http-origin"]?.let { put(ORIGIN, it) }
+    }
+
+    /** One `#EXTVLCOPT:http-user-agent=...` line → (canonical key, value), or null for any other option. */
+    internal fun vlcOptHeaderOf(line: String): Pair<String, String>? {
+        val body = line.substring(line.indexOf(':') + 1).trim()
+        val eq = body.indexOf('=')
+        if (eq <= 0) return null
+        val key = when (body.substring(0, eq).trim().lowercase()) {
+            "http-user-agent" -> UA
+            "http-referrer", "http-referer" -> REFERER
+            "http-origin" -> ORIGIN
+            else -> return null
+        }
+        return key to body.substring(eq + 1)
+    }
+
+    /** `#EXTHTTP:{json}` → the allow-listed headers in it; anything malformed yields nothing. */
+    internal fun extHttpHeadersOf(line: String): Map<String, String> {
+        val json = line.substring(line.indexOf(':') + 1).trim()
+        val obj = try {
+            kotlinx.serialization.json.Json.parseToJsonElement(json) as? kotlinx.serialization.json.JsonObject
+        } catch (_: Exception) {
+            null
+        } ?: return emptyMap()
+        val out = HashMap<String, String>()
+        for ((name, value) in obj) {
+            val text = (value as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content ?: continue
+            when (name.trim().lowercase()) {
+                UA -> out[UA] = text
+                "referer", "referrer" -> out[REFERER] = text
+                ORIGIN -> out[ORIGIN] = text
+            }
+        }
+        return out
+    }
+
+    /**
+     * The channel's headers from canonical keys, or null when none is usable. A value is dropped if blank,
+     * over [MAX_HEADER_VALUE] chars, or carrying a line break (header injection).
+     */
+    internal fun channelHeadersOf(raw: Map<String, String>): M3uChannelHeaders? {
+        fun clean(key: String): String? = raw[key]?.trim()?.takeIf {
+            it.isNotEmpty() && it.length <= MAX_HEADER_VALUE && it.none { ch -> ch == '\r' || ch == '\n' || ch == '\u0000' }
+        }
+        val headers = M3uChannelHeaders(userAgent = clean(UA), referer = clean(REFERER), origin = clean(ORIGIN))
+        return headers.takeIf { it.userAgent != null || it.referer != null || it.origin != null }
     }
 
     /** Attribute keys that carry catch-up settings, on an entry or as `#EXTM3U` header defaults. */
@@ -178,6 +241,8 @@ object M3UParser {
         var pendingExtGrp: String? = null // B135: `#EXTGRP:` folder for the next entry only; group-title wins
         var headerSeen = false
         var headerCatchUp: Map<String, String> = emptyMap()
+        // #EXTVLCOPT / #EXTHTTP between one URL and the next belong to the next entry, before or after its #EXTINF.
+        val pendingHeaders = HashMap<String, String>()
         var line = reader.readLine()
         while (line != null) {
             val trimmed = line.trim()
@@ -190,14 +255,18 @@ object M3UParser {
                 }
                 trimmed.startsWith("#EXTGRP:", ignoreCase = true) ->
                     pendingExtGrp = trimmed.substring("#EXTGRP:".length).trim().ifBlank { null }
+                trimmed.startsWith("#EXTVLCOPT:", ignoreCase = true) ->
+                    vlcOptHeaderOf(trimmed)?.let { (k, v) -> pendingHeaders[k] = v }
+                trimmed.startsWith("#EXTHTTP:", ignoreCase = true) -> pendingHeaders.putAll(extHttpHeadersOf(trimmed))
                 trimmed.startsWith("#") || trimmed.isEmpty() -> { /* directive / blank */ }
                 pendingExtInf != null -> {
-                    val entry = parseExtInf(pendingExtInf, trimmed, headerCatchUp, pendingExtGrp)
+                    val entry = parseExtInf(pendingExtInf, trimmed, headerCatchUp, pendingExtGrp, pendingHeaders.toMap())
                     pendingExtInf = null
                     pendingExtGrp = null
+                    pendingHeaders.clear()
                     if (entry != null && entry.name.isNotBlank()) onEntry(entry)
                 }
-                else -> { /* stray URL with no #EXTINF */ }
+                else -> pendingHeaders.clear() // stray URL with no #EXTINF: its options die with it
             }
             line = reader.readLine()
         }
