@@ -764,10 +764,10 @@ fun LiveGuide(
     LaunchedEffect(fullscreen) { if (!fullscreen) { controls.reset(); livePanel = null } }
     // F28 BACK: the channel list and the pickers answer it themselves; then hide the controls; then
     // back to the guide. B239/B227: in trouble (failed, reconnecting, tuning) one BACK leaves.
-    BackHandler(enabled = fullscreen) {
+    fun fullscreenBack() {
         if (LiveZapModePolicy.backCancelsSurf(surfAim, playingContentId)) {
             cancelSurf()
-            return@BackHandler
+            return
         }
         when (
             LiveControlsPolicy.backAction(
@@ -785,6 +785,7 @@ fun LiveGuide(
             }
         }
     }
+    BackHandler(enabled = fullscreen) { fullscreenBack() }
 
     Box(
         Modifier
@@ -797,6 +798,12 @@ fun LiveGuide(
                 if (!fullscreen && event.type == KeyEventType.KeyDown) pendingGroupRow = null
                 if (remoteShortcut(event)) return@onPreviewKeyEvent true
                 if (!fullscreen) return@onPreviewKeyEvent false
+                // BACK as a key, answered here so nothing below can swallow it (LiveControlsPolicy.backKey).
+                when (LiveControlsPolicy.backKey(event.key, event.type == KeyEventType.KeyDown, livePanelOpen)) {
+                    LiveControlsPolicy.BackKey.PASS -> Unit
+                    LiveControlsPolicy.BackKey.CONSUME -> return@onPreviewKeyEvent true
+                    LiveControlsPolicy.BackKey.PERFORM -> { fullscreenBack(); return@onPreviewKeyEvent true }
+                }
                 // F28: the remote map lives in LiveControlsPolicy (shared with the clean live player).
                 // An open panel (the channel list, a picker, a hide notice's Undo) keeps its own keys.
                 val action = LiveControlsPolicy.keyAction(

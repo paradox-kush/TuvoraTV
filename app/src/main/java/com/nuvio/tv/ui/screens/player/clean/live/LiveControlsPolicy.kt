@@ -129,6 +129,22 @@ internal object LiveControlsPolicy {
         else -> BackAction.EXIT
     }
 
+    enum class BackKey { PASS, CONSUME, PERFORM }
+
+    /**
+     * BACK as a KEY, decided before anything below the overlay can swallow it. Device pass 2026-11-18: after
+     * the platform paused the session, a BACK pressed with the controls up reached the Activity as a key-down
+     * that something in the view tree consumed, so Activity never tracked the press, the BackHandler never ran
+     * and the viewer sat on a paused first frame with BACK doing nothing. The press is now answered here: the
+     * key-down is consumed, the key-up performs [backAction] — so BACK makes progress (close panel, hide
+     * controls, exit) in every state, paused included. An open panel keeps its own BACK.
+     */
+    fun backKey(key: Key, isKeyDown: Boolean, panelOpen: Boolean): BackKey = when {
+        key != Key.Back || panelOpen -> BackKey.PASS
+        isKeyDown -> BackKey.CONSUME
+        else -> BackKey.PERFORM
+    }
+
     /** Never while a channel is still tuning: its name and "Tuning" are what the viewer is waiting on. */
     fun mayAutoHide(
         controlsVisible: Boolean,

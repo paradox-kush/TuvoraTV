@@ -96,6 +96,45 @@ class PlaybackEnvironmentSnapshotMapperTest {
     }
 
     @Test
+    fun `no forced surface of any quirk can remove libmpv as the live handoff target`() = runBlocking {
+        // General invariant: a quirk pins one engine family's surface; whatever it pins, in either profile,
+        // a failed Media3 start must still find a libmpv graph (and a failed libmpv start a Media3 one).
+        for (profile in SessionProfile.entries) {
+            for (forced in SurfaceMode.entries) {
+                val quirk = com.nuvio.tv.playback.android.AppliedAndroidPlaybackQuirk(
+                    quirk = com.nuvio.tv.playback.android.AndroidPlaybackQuirk(
+                        id = "invariant", registryVersion = 1,
+                        match = com.nuvio.tv.playback.android.AndroidPlaybackQuirkMatch(manufacturer = "X", model = "Y"),
+                        domain = com.nuvio.tv.playback.android.AndroidPlaybackQuirkDomain.VIDEO_RENDERER_SURFACE,
+                        override = com.nuvio.tv.playback.android.AndroidPlaybackQuirkOverride.ForceEmbeddedSurface(profile, forced),
+                        evidenceReference = "test", introducedInAppVersion = "test",
+                        revalidateAfterEpochMs = 1L, expiresAtEpochMs = 2L,
+                    ),
+                    revalidationDue = false,
+                )
+                val android = snapshot(surfaces = allSurfaceCapabilities(), lowMemory = true).copy(appliedQuirks = listOf(quirk))
+                val preferences = resolvedPreferences()
+                val environment = map(preferences = preferences, android = android, profile = profile)
+                val requirements = (DefaultPlaybackRequirementsResolver().resolve(
+                    PlaybackRequirementsInput(requestSummary(), StreamEvidence(), profile, preferences.effective.playback, environment),
+                ) as? PlaybackResult.Success)?.value
+                val where = "profile=$profile forced=$forced"
+                if (requirements == null) {
+                    // Forcing a surface the device does not offer may empty the set; that is the quirk's own doing, not engine loss.
+                    continue
+                }
+                val candidates = (ProductionPlaybackGraphProvider.candidates(
+                    PlaybackGraphInput(requirements, StreamEvidence()),
+                ) as PlaybackResult.Success).value
+                val media3Forced = forced == SurfaceMode.SURFACE_VIEW || forced == SurfaceMode.TEXTURE_VIEW
+                val mpvForced = forced == SurfaceMode.NATIVE_EMBED || forced == SurfaceMode.GPU_RENDER
+                if (media3Forced) assertTrue("libmpv graph survives: $where", candidates.any { it.engine == EngineType.LIBMPV })
+                if (mpvForced) assertTrue("media3 graph survives: $where", candidates.any { it.engine == EngineType.MEDIA3 })
+            }
+        }
+    }
+
+    @Test
     fun `applied AFTKM guide quirk leaves fullscreen surfaces unaffected`() {
         val surfaces = allSurfaceCapabilities()
         val mapped = map(

@@ -43,7 +43,7 @@ class CleanLiveGuideCutoverArchitectureTest {
             return a..b
         }
         val eventScopes = listOf(
-            span("BackHandler(enabled = fullscreen) {", "\n    }\n"),
+            span("fun fullscreenBack() {", "\n    }\n"),
             span(".onPreviewKeyEvent { event ->", "                true\n            }"),
             span("onOpenChannelList = {", "},\n"),
         )
