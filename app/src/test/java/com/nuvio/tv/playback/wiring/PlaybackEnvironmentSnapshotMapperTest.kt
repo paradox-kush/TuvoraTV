@@ -41,10 +41,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
+import com.nuvio.tv.playback.core.DefaultPlaybackRequirementsResolver
+import com.nuvio.tv.playback.core.PlaybackGraphInput
+import com.nuvio.tv.playback.core.PlaybackPolicy
+import com.nuvio.tv.playback.core.PlaybackRequirementsInput
+import com.nuvio.tv.playback.core.PlaybackResult
 
 class PlaybackEnvironmentSnapshotMapperTest {
     @Test
-    fun `applied AFTKM quirk restricts guide to TextureView`() {
+    fun `applied AFTKM quirk restricts only Media3 in the guide to TextureView`() {
         val android = snapshot(
             appliedAftkmQuirk = true,
             surfaces = allSurfaceCapabilities(),
@@ -52,7 +58,41 @@ class PlaybackEnvironmentSnapshotMapperTest {
 
         val mapped = map(android = android, profile = SessionProfile.GUIDE)
 
-        assertEquals(setOf(SurfaceMode.TEXTURE_VIEW), mapped.allowedSurfaceModes)
+        assertEquals(
+            "the quirk pins Media3's surface (black SurfaceView on AFTKM); libmpv keeps its own surfaces",
+            setOf(SurfaceMode.TEXTURE_VIEW, SurfaceMode.NATIVE_EMBED, SurfaceMode.GPU_RENDER),
+            mapped.allowedSurfaceModes,
+        )
+    }
+
+    @Test
+    fun `AFTKM guide still hands a failed Media3 live channel to libmpv on a low RAM box`() = runBlocking {
+        // Fire TV Stick (AFTKM, 1.6 GB): low memory means no software-decode graphs, so the guide
+        // handoff has exactly one libmpv candidate: the hardware direct embed. The quirk used to
+        // strip libmpv's surfaces, leaving Media3 as the only graph and HANDOFF_EXCLUDED the reason.
+        val android = snapshot(appliedAftkmQuirk = true, surfaces = allSurfaceCapabilities(), lowMemory = true)
+        val preferences = resolvedPreferences()
+        val environment = map(preferences = preferences, android = android, profile = SessionProfile.GUIDE)
+        val requirements = (DefaultPlaybackRequirementsResolver().resolve(
+            PlaybackRequirementsInput(
+                requestSummary = requestSummary(),
+                evidence = StreamEvidence(),
+                profile = SessionProfile.GUIDE,
+                effectivePreferences = preferences.effective.playback,
+                environment = environment,
+            ),
+        ) as PlaybackResult.Success).value
+        val candidates = (ProductionPlaybackGraphProvider.candidates(
+            PlaybackGraphInput(requirements, StreamEvidence()),
+        ) as PlaybackResult.Success).value
+        val media3 = candidates.first { it.engine == EngineType.MEDIA3 }
+
+        val selection = PlaybackPolicy().selectHandoff(
+            requirements, candidates, media3, StreamEvidence(), excludedEngines = setOf(EngineType.MEDIA3),
+        )
+
+        assertTrue("handoff must find libmpv, got $selection", selection is PlaybackPolicy.Selection.Selected)
+        assertEquals(EngineType.LIBMPV, (selection as PlaybackPolicy.Selection.Selected).graph.engine)
     }
 
     @Test
@@ -231,6 +271,7 @@ class PlaybackEnvironmentSnapshotMapperTest {
     private fun snapshot(
         appliedAftkmQuirk: Boolean = false,
         surfaces: SurfaceCapabilities,
+        lowMemory: Boolean = false,
     ): AndroidRuntimeCapabilitySnapshot {
         val device = AndroidDeviceFacts(
             manufacturer = if (appliedAftkmQuirk) "Amazon" else "Generic",
@@ -262,7 +303,7 @@ class PlaybackEnvironmentSnapshotMapperTest {
             secureGpuRenderingProof = AndroidCapabilityProof.UNPROBED,
         )
         return AndroidRuntimeCapabilitySnapshot(
-            capabilities = runtimeCapabilities(surfaces),
+            capabilities = runtimeCapabilities(surfaces, lowMemory),
             observationSequence = 1,
             stableFingerprint = AndroidStableCapabilityFingerprint(1, "fingerprint"),
             compatibilityRuntime = CompatibilityRuntimeFingerprint("device", "firmware", "fingerprint"),
@@ -274,7 +315,7 @@ class PlaybackEnvironmentSnapshotMapperTest {
         )
     }
 
-    private fun runtimeCapabilities(surfaces: SurfaceCapabilities) = RuntimeCapabilities(
+    private fun runtimeCapabilities(surfaces: SurfaceCapabilities, lowMemory: Boolean = false) = RuntimeCapabilities(
         snapshotVersion = 1,
         capturedAtEpochMs = 1,
         apiLevel = 35,
@@ -282,7 +323,7 @@ class PlaybackEnvironmentSnapshotMapperTest {
         audioRoute = AudioRouteCapabilities(AudioRoute.HDMI),
         resources = ResourceCapabilities(
             availableMemoryBytes = 2_000_000_000,
-            lowMemory = false,
+            lowMemory = lowMemory,
             thermalState = ThermalState.NOMINAL,
         ),
         surfaces = surfaces,

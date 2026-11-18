@@ -57,8 +57,15 @@ internal object PlaybackEnvironmentSnapshotMapper {
             media3Surfaces + libmpvSurfaces
         }
 
+        // A forced surface pins the engine family that owns it (the AFTKM guide quirk is about Media3's
+        // black SurfaceView). It must never strip the OTHER family's surfaces: on a 1.6 GB box that left
+        // Media3 as the only guide graph, so a failed Media3 start (HTTP 456) had nowhere to hand off
+        // to and read "this device cannot play this stream" (rejected_by=HANDOFF_EXCLUDED).
         input.android.forcedSurface(input.profile)?.let { forced ->
-            allowedSurfaces = allowedSurfaces.intersect(setOf(forced))
+            allowedSurfaces = when (forced) {
+                in MEDIA3_SURFACES -> allowedSurfaces.filter { it !in MEDIA3_SURFACES || it == forced }.toSet()
+                else -> allowedSurfaces.filter { it !in LIBMPV_SURFACES || it == forced }.toSet()
+            }
         }
 
         return PlaybackEnvironmentSnapshot(
