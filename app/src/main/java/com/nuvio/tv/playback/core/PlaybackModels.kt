@@ -1185,7 +1185,26 @@ data class PlaybackOutputRequest(
     val requirements: PlaybackRequirements,
     val facts: VideoOutputFacts,
     val committed: Boolean,
+    /** Lets the output controller keep playback still while the display re-syncs; see [PlaybackOutputHold]. */
+    val hold: PlaybackOutputHold = PlaybackOutputHold.None,
 )
+
+/**
+ * Playback held still across a display-mode switch. Android's frame-rate guide asks for the mode request, the
+ * display-changed callback and a settle period BEFORE playback runs (developer.android.com/media/optimize/
+ * performance/frame-rate); Plezy does pause, switch, onDisplayChanged + 2 s, resume. Playback that runs through the
+ * HDMI re-sync stutters, and Fire OS pauses the media session when the HDMI audio sink drops (it requires apps to
+ * pause on HDMI disconnect: developer.amazon.com/docs/fire-tv/handling-hdmi-events.html). [end] is always called.
+ */
+interface PlaybackOutputHold {
+    suspend fun begin()
+    suspend fun end()
+
+    object None : PlaybackOutputHold {
+        override suspend fun begin() = Unit
+        override suspend fun end() = Unit
+    }
+}
 
 data class PlaybackSnapshot(
     val generation: Long = 0,

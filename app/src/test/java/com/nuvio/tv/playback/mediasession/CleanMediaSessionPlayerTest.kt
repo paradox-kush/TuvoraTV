@@ -44,14 +44,14 @@ class CleanMediaSessionPlayerTest {
         dispatchCommand = commands::add,
         releaseSession = {},
     )
-    private var modeRequestAtMs: Long? = null
+    private var switchState = ExternalPausePolicy.SwitchState()
     private var nowMs = 0L
     private val playerDelegate = lazy {
         CleanMediaSessionPlayer(
             applicationLooper = Looper.getMainLooper(),
             parentScope = scope,
             controller = controller,
-            lastDisplayModeRequestAtMs = { modeRequestAtMs },
+            displaySwitchState = { switchState },
             nowMs = { nowMs },
             metadata = CleanMediaSessionMetadata.fromIngress(
                 redactedContentFingerprint = "ab12ab12ab12ab12",
@@ -131,7 +131,7 @@ class CleanMediaSessionPlayerTest {
 
     @Test
     fun `an external pause inside the display switch window does not pause the session`() {
-        modeRequestAtMs = 1_000L
+        switchState = ExternalPausePolicy.SwitchState(completedAtMs = 1_000L)
         nowMs = 2_250L
 
         player.pause()
@@ -141,7 +141,7 @@ class CleanMediaSessionPlayerTest {
 
     @Test
     fun `an external pause outside the display switch window pauses the session`() {
-        modeRequestAtMs = 1_000L
+        switchState = ExternalPausePolicy.SwitchState(completedAtMs = 1_000L)
         nowMs = 61_000L
 
         player.pause()
@@ -150,8 +150,20 @@ class CleanMediaSessionPlayerTest {
     }
 
     @Test
+    fun `a pause with a headphone just removed is honoured inside the window`() {
+        switchState = ExternalPausePolicy.SwitchState(
+            completedAtMs = 1_000L, nonHdmiOutputRemovedAtMs = 2_200L,
+        )
+        nowMs = 2_250L
+
+        player.pause()
+
+        assertEquals(listOf<PlaybackCommand>(PlaybackCommand.Pause), commands)
+    }
+
+    @Test
     fun `an external play is never swallowed by the display switch window`() {
-        modeRequestAtMs = 1_000L
+        switchState = ExternalPausePolicy.SwitchState(inProgress = true)
         nowMs = 2_250L
 
         player.play()

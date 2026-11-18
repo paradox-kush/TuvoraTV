@@ -278,9 +278,78 @@ class AndroidPlaybackOutputControllerTest {
         assertEquals(listOf(2), host.requests)
     }
 
+    private class RecordingHold(private val events: MutableList<String>, private val host: FakeHost? = null) :
+        com.nuvio.tv.playback.core.PlaybackOutputHold {
+        override suspend fun begin() { events += "begin(requests=${host?.requests?.size})" }
+        override suspend fun end() { events += "end" }
+    }
+
+    @Test
+    fun `playback is held before the mode request and released only after the display settled`() = runTest {
+        val host = FakeHost()
+        val events = mutableListOf<String>()
+        val controller = controller(host)
+        val startedAt = testScheduler.currentTime
+
+        val status = controller.apply(request(1).copy(hold = RecordingHold(events, host))).status()
+
+        assertEquals(PlaybackOutputStatus.APPLIED, status)
+        assertEquals("held before the request, released once", listOf("begin(requests=0)", "end"), events)
+        assertEquals(
+            "the ~2 s settle (frame-rate guide / Plezy DISPLAY_SETTLE_MS) elapsed before release",
+            true,
+            testScheduler.currentTime - startedAt >= DisplaySwitchHoldPolicy().settleMs,
+        )
+    }
+
+    @Test
+    fun `a switch that never confirms still releases the hold within the ceiling`() = runTest {
+        val host = FakeHost(applyRequests = false)
+        val events = mutableListOf<String>()
+        val controller = controller(host)
+        val startedAt = testScheduler.currentTime
+
+        val status = controller.apply(request(1).copy(hold = RecordingHold(events))).status()
+
+        assertEquals(PlaybackOutputStatus.APPLY_NOT_CONFIRMED, status)
+        assertEquals(listOf("begin(requests=null)", "end"), events)
+        assertEquals(
+            "bounded: never longer than the hold ceiling",
+            true,
+            testScheduler.currentTime - startedAt <= DisplaySwitchHoldPolicy().maxHoldMs,
+        )
+    }
+
+    @Test
+    fun `a failed mode request still releases the hold`() = runTest {
+        val events = mutableListOf<String>()
+        val status = controller(FakeHost(failRequests = true)).apply(request(1).copy(hold = RecordingHold(events))).status()
+
+        assertEquals(PlaybackOutputStatus.APPLY_FAILED, status)
+        assertEquals(listOf("begin(requests=null)", "end"), events)
+    }
+
+    @Test
+    fun `no switch needed means no hold`() = runTest {
+        val events = mutableListOf<String>()
+        val host = FakeHost(modes = listOf(AndroidDisplayMode(1, 1920, 1080, 60f)))
+        controller(host).apply(request(1, frameRate = 60f).copy(hold = RecordingHold(events)))
+
+        assertEquals(emptyList<String>(), events)
+    }
+
+    @Test
+    fun `settle policy never waits past its ceiling`() {
+        val policy = DisplaySwitchHoldPolicy(settleMs = 2_000, maxHoldMs = 6_000)
+        assertEquals(2_000L, policy.settleAfterConfirmationMs(1_000))
+        assertEquals(1_000L, policy.settleAfterConfirmationMs(5_000))
+        assertEquals(0L, policy.settleAfterConfirmationMs(9_000))
+    }
+
     private fun TestScope.controller(host: FakeHost) = AndroidPlaybackOutputController(
         host = host,
         mainDispatcher = StandardTestDispatcher(testScheduler),
+        clockMs = { testScheduler.currentTime },
         verification = DisplayModeVerificationPolicy(
             pollIntervalMs = 1,
             maximumPolls = 2,

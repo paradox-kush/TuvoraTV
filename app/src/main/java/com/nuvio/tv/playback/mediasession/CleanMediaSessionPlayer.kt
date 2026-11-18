@@ -35,8 +35,8 @@ internal class CleanMediaSessionPlayer(
     parentScope: CoroutineScope,
     private val controller: PlaybackSessionController,
     metadata: CleanMediaSessionMetadata,
-    /** When the app last asked the display for another mode (see [ExternalPausePolicy]). */
-    private val lastDisplayModeRequestAtMs: () -> Long? = DisplaySwitchLedger::lastRequestAtMs,
+    /** Where our own display switch stands (see [ExternalPausePolicy]). */
+    private val displaySwitchState: () -> ExternalPausePolicy.SwitchState = DisplaySwitchLedger::state,
     private val nowMs: () -> Long = android.os.SystemClock::elapsedRealtime,
 ) : SimpleBasePlayer(applicationLooper) {
     private val handler = Handler(applicationLooper)
@@ -62,7 +62,7 @@ internal class CleanMediaSessionPlayer(
         // controller directly); another controller's pause that lands inside our display switch is the
         // platform's HDMI re-sync echo, and honouring it left the channel paused on its first frame.
         if (!playWhenReady &&
-            ExternalPausePolicy.isDisplaySwitchPause(lastDisplayModeRequestAtMs(), nowMs())
+            ExternalPausePolicy.isDisplaySwitchPause(displaySwitchState(), nowMs())
         ) {
             return completedFuture()
         }

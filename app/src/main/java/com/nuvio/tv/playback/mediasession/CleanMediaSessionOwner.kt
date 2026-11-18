@@ -105,12 +105,24 @@ class CleanMediaSessionOwner private constructor(
                 player.release()
                 throw error
             }
+            // A removed headphone / Bluetooth output is a real "becoming noisy": it must still pause, so the
+            // display-switch backstop (ExternalPausePolicy) is told about it. HDMI removals are the switch's own.
+            val audioManager = context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            val deviceCallback = object : android.media.AudioDeviceCallback() {
+                override fun onAudioDevicesRemoved(removedDevices: Array<out android.media.AudioDeviceInfo>) {
+                    if (removedDevices.any { it.isSink && !ExternalPausePolicy.isHdmiOutput(it.type) }) {
+                        DisplaySwitchLedger.nonHdmiOutputRemoved(android.os.SystemClock.elapsedRealtime())
+                    }
+                }
+            }
+            runCatching { audioManager?.registerAudioDeviceCallback(deviceCallback, Handler(applicationLooper)) }
             return CleanMediaSessionOwner(
                 applicationLooper = applicationLooper,
                 controller = controller,
                 metadataUpdater = player::updateMetadata,
                 platformReleaser = {
                     try {
+                        runCatching { audioManager?.unregisterAudioDeviceCallback(deviceCallback) }
                         mediaSession.release()
                     } finally {
                         player.release()

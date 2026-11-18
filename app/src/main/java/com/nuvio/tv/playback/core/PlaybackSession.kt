@@ -1108,7 +1108,7 @@ class PlaybackSession(
         committed: Boolean,
         phase: FailurePhase,
     ): PlaybackResult<PlaybackOutputApplication> {
-        val request = PlaybackOutputRequest(generation, effective, facts, committed)
+        val request = PlaybackOutputRequest(generation, effective, facts, committed, hold = outputHold(generation))
         val result = outputMutex.withLock {
             safeResult(phase) { outputController.apply(request) }
         }
@@ -1129,6 +1129,23 @@ class PlaybackSession(
             )
         }
         return result
+    }
+
+    /** Keeps the engine still while the display switches; the viewer's own pause is respected on release. */
+    private fun outputHold(generation: Long) = object : PlaybackOutputHold {
+        private fun engineOrNull() =
+            if (activeGraphGeneration == generation) activeGraph?.let { engineRegistry.engine(it.engine) } else null
+
+        override suspend fun begin() {
+            val engine = engineOrNull() ?: return
+            safeResult(FailurePhase.PLAYBACK) { engine.setPaused(generation, true) }
+        }
+
+        override suspend fun end() {
+            val engine = engineOrNull() ?: return
+            if (machine.paused || pausedByAudioFocus) return
+            safeResult(FailurePhase.PLAYBACK) { engine.setPaused(generation, false) }
+        }
     }
 
     private fun releaseActiveWork(action: PlaybackAction.ReleaseActiveWork) {

@@ -9,6 +9,7 @@ import com.nuvio.tv.playback.core.PlaybackOutputRequest
 import com.nuvio.tv.playback.core.PlaybackOutputStatus
 import com.nuvio.tv.playback.core.PlaybackResult
 import com.nuvio.tv.playback.mediasession.DisplaySwitchLedger
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -40,8 +41,6 @@ internal class ActivityDisplayModeHost(
     }
 
     override fun requestMode(modeId: Int) {
-        // The HDMI re-sync that follows makes Fire OS pause the media session; see ExternalPausePolicy.
-        DisplaySwitchLedger.noteModeRequest(android.os.SystemClock.elapsedRealtime())
         val attributes = activity.window.attributes
         attributes.preferredDisplayModeId = modeId
         activity.window.attributes = attributes
@@ -68,6 +67,8 @@ class AndroidPlaybackOutputController internal constructor(
     private val host: AndroidDisplayModeHost,
     private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
     private val verification: DisplayModeVerificationPolicy = DisplayModeVerificationPolicy(),
+    private val hold: DisplaySwitchHoldPolicy = DisplaySwitchHoldPolicy(),
+    private val clockMs: () -> Long = android.os.SystemClock::elapsedRealtime,
 ) : PlaybackOutputController {
     constructor(activity: Activity) : this(ActivityDisplayModeHost(activity))
 
@@ -168,21 +169,35 @@ class AndroidPlaybackOutputController internal constructor(
                     }
                     ownerGeneration = request.generation
                     val targetModeId = selection.mode.modeId
-                    val requested = requestModeIfNeeded(
-                        modeId = targetModeId,
-                        generation = request.generation,
-                        factsRevision = request.facts.revision,
-                    )
-                    if (!requested) return@withLock success(PlaybackOutputStatus.APPLY_FAILED)
+                    // Playback is held still from the request until the display has settled, then released
+                    // whatever happened (bounded by DisplaySwitchHoldPolicy.maxHoldMs).
+                    val startedAt = clockMs()
+                    DisplaySwitchLedger.switchStarted()
+                    request.hold.begin()
+                    try {
+                        val requested = requestModeIfNeeded(
+                            modeId = targetModeId,
+                            generation = request.generation,
+                            factsRevision = request.facts.revision,
+                        )
+                        if (!requested) return@withLock success(PlaybackOutputStatus.APPLY_FAILED)
 
-                    when (verifyMode(targetModeId)) {
-                        VerificationResult.Confirmed -> {
-                            markEffective(request.generation)
-                            success(PlaybackOutputStatus.APPLIED)
+                        val verified = verifyMode(targetModeId)
+                        delay(hold.settleAfterConfirmationMs(clockMs() - startedAt))
+                        when (verified) {
+                            VerificationResult.Confirmed -> {
+                                markEffective(request.generation)
+                                success(PlaybackOutputStatus.APPLIED)
+                            }
+                            VerificationResult.NotConfirmed ->
+                                success(PlaybackOutputStatus.APPLY_NOT_CONFIRMED)
+                            VerificationResult.Failed -> success(PlaybackOutputStatus.APPLY_FAILED)
                         }
-                        VerificationResult.NotConfirmed ->
-                            success(PlaybackOutputStatus.APPLY_NOT_CONFIRMED)
-                        VerificationResult.Failed -> success(PlaybackOutputStatus.APPLY_FAILED)
+                    } finally {
+                        withContext(NonCancellable) {
+                            DisplaySwitchLedger.switchCompleted(clockMs())
+                            request.hold.end()
+                        }
                     }
                 }
             }
