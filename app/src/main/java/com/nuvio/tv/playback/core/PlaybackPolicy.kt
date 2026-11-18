@@ -309,7 +309,20 @@ class PlaybackPolicy(
      * by the provider (401/403), that is what the viewer is told — "the provider refused", not "the
      * network" — since every re-mint reached the provider and was turned away.
      */
-    fun liveReconnectExhaustedFailure(lastAttemptFailure: PlaybackFailure? = null): PlaybackFailure =
+    /**
+     * What a spent live reconnect budget becomes.
+     *
+     * A provider refusal stays the refusal (terminal). A Media3 budget spent on a network failure
+     * (an HTTP rejection Media3 maps to NETWORK_UNREACHABLE, or a timeout) becomes HANDOFF_ELIGIBLE:
+     * the reducer then spends the incident's one handoff on libmpv before showing the error. Fleet
+     * 11-17: TVs that played hours on libmpv started nothing once Media3 led live, because these
+     * failures only ever retried Media3. libmpv exhausting is terminal (it already is the fallback),
+     * and the reducer's handoffIssued flag stops any ping-pong.
+     */
+    fun liveReconnectExhaustedFailure(
+        lastAttemptFailure: PlaybackFailure? = null,
+        failedEngine: EngineType? = null,
+    ): PlaybackFailure =
         if (lastAttemptFailure?.code == FailureCode.AUTHORIZATION_REJECTED) {
             lastAttemptFailure.copy(phase = FailurePhase.RECOVERY, retryability = Retryability.FATAL)
         } else {
@@ -317,9 +330,22 @@ class PlaybackPolicy(
                 code = FailureCode.LIVE_RECONNECT_EXHAUSTED,
                 domain = FailureDomain.NETWORK,
                 phase = FailurePhase.RECOVERY,
-                retryability = Retryability.FATAL,
+                retryability = if (exhaustionHandsOff(lastAttemptFailure, failedEngine)) {
+                    Retryability.HANDOFF_ELIGIBLE
+                } else {
+                    Retryability.FATAL
+                },
+                // Keep the status the provider answered so the report says what refused us.
+                httpStatus = lastAttemptFailure?.httpStatus,
+                statusProvenance = lastAttemptFailure?.statusProvenance,
             )
         }
+
+    private fun exhaustionHandsOff(lastAttemptFailure: PlaybackFailure?, failedEngine: EngineType?): Boolean =
+        failedEngine == EngineType.MEDIA3 &&
+            lastAttemptFailure != null &&
+            lastAttemptFailure.domain == FailureDomain.NETWORK &&
+            lastAttemptFailure.code in setOf(FailureCode.NETWORK_UNREACHABLE, FailureCode.NETWORK_TIMEOUT)
 
     /** Adapters report authorization evidence; provider-link freshness is a core concern. */
     fun normalizeAuthorizationRecovery(

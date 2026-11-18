@@ -76,6 +76,53 @@ class PlaybackPolicyTest {
         assertEquals("no attempt seen", FailureCode.LIVE_RECONNECT_EXHAUSTED, policy.liveReconnectExhaustedFailure(null).code)
     }
 
+    /**
+     * Fleet 11-17: TVs that played hours of live TV on libmpv (1.14-1.16) started nothing on
+     * 1.21.5/1.22.0. Media3 got an HTTP rejection (NETWORK_UNREACHABLE, fresh request), the
+     * reconnect loop retried Media3 three times and gave up: zero handoffs, so libmpv was never
+     * tried. Reconnects spent on a Media3 network failure must end in the one handoff instead.
+     */
+    @Test
+    fun `media3 reconnects spent on a network failure end in the one handoff, not a dead end`() {
+        val policy = PlaybackPolicy()
+        val rejected = PlaybackFailure(
+            FailureCode.NETWORK_UNREACHABLE, FailureDomain.NETWORK, FailurePhase.PLAYBACK,
+            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+        )
+        val timedOut = rejected.copy(code = FailureCode.NETWORK_TIMEOUT, retryability = Retryability.RETRYABLE_IN_PLACE)
+
+        val afterMedia3 = policy.liveReconnectExhaustedFailure(rejected, failedEngine = EngineType.MEDIA3)
+        assertEquals("keeps the exhausted code", FailureCode.LIVE_RECONNECT_EXHAUSTED, afterMedia3.code)
+        assertEquals("media3 network failure hands off", Retryability.HANDOFF_ELIGIBLE, afterMedia3.retryability)
+        assertEquals(
+            "a media3 timeout hands off too",
+            Retryability.HANDOFF_ELIGIBLE,
+            policy.liveReconnectExhaustedFailure(timedOut, failedEngine = EngineType.MEDIA3).retryability,
+        )
+
+        assertEquals(
+            "libmpv already is the fallback: its exhaustion is terminal",
+            Retryability.FATAL,
+            policy.liveReconnectExhaustedFailure(rejected, failedEngine = EngineType.LIBMPV).retryability,
+        )
+        assertEquals(
+            "unknown engine stays terminal",
+            Retryability.FATAL,
+            policy.liveReconnectExhaustedFailure(rejected).retryability,
+        )
+        assertEquals(
+            "a media3 exhaustion with no network evidence stays terminal",
+            Retryability.FATAL,
+            policy.liveReconnectExhaustedFailure(null, failedEngine = EngineType.MEDIA3).retryability,
+        )
+        val refused = HttpStatusFailures.forStatus(401, FailurePhase.PLAYBACK)
+        assertEquals(
+            "a provider refusal is not an engine problem: still terminal on media3",
+            Retryability.FATAL,
+            policy.liveReconnectExhaustedFailure(refused, failedEngine = EngineType.MEDIA3).retryability,
+        )
+    }
+
     @Test
     fun `audio decoder failure enters audio ladder while video decoder never does`() {
         val current = requirements(

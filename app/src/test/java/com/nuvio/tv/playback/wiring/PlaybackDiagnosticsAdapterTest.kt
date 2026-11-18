@@ -53,6 +53,24 @@ class PlaybackDiagnosticsAdapterTest {
         assertTrue(formatted.properties.values.all { it is String || it is Number || it is Boolean })
     }
 
+    /** Fleet 11-17: 1,885 NETWORK_UNREACHABLE reports in 3 days and not one said which status refused us. */
+    @Test
+    fun `an http rejection reports the status number and its provenance, nothing more`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 7,
+                code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+                engine = EngineType.MEDIA3,
+                failure = com.nuvio.tv.playback.core.HttpStatusFailures.forStatus(456, FailurePhase.PLAYBACK),
+            ),
+        )
+
+        assertEquals("the rejection is still a network failure", "NETWORK_UNREACHABLE", formatted.properties["failure_code"])
+        assertEquals("the status number is reported", 456, formatted.properties["http_status"])
+        assertEquals("CONFIRMED", formatted.properties["status_provenance"])
+        assertTrue(formatted.properties.values.all { it is String || it is Number || it is Boolean })
+    }
+
     @Test
     fun `a live freeze reports kind rung decoder firmware and session instance as identifiers`() {
         val formatted = PlaybackDiagnosticFormatter.format(

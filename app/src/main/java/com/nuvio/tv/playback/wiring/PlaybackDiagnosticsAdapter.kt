@@ -51,6 +51,9 @@ object PlaybackDiagnosticFormatter {
             properties["failure_phase"] = failure.phase.name
             properties["retryability"] = failure.retryability.name
             properties["deterministic"] = failure.deterministic
+            // The status number only (never the response line, URL or host).
+            failure.httpStatus?.let { properties["http_status"] = it }
+            failure.statusProvenance?.let { properties["status_provenance"] = it.name }
             failure.graphRejection?.let { rejection ->
                 // Closed enums, wire codes and counts only (never a mime type, URL or host).
                 properties["rejected_by"] = rejection.rejectedBy.name
