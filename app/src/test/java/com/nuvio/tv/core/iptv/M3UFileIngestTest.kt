@@ -93,6 +93,36 @@ class M3UFileIngestTest {
     }
 
     /**
+     * Branch device pass (mock_branch_pass.py): "BP Comma, Name" listed as "Name" in Live TV even after a
+     * re-ingest. Runs the real path — file → M3UClient.ensureIngested → IptvContentDb → liveChannels (what
+     * the Live TV list reads) — and a re-ingest must replace a name stored by an older build.
+     */
+    @Test
+    fun `a display name with a comma survives the real ingest and a re-ingest corrects an old name`() = runTest {
+        val acc = fileAccount()
+        val line = "#EXTINF:-1 tvg-id=\"bp.comma\" user-agent=\"Comma, Agent/2.0\" group-title=\"Branch Pass\",BP Comma, Name"
+        val playlist = listOf(
+            "#EXTM3U",
+            "#EXTINF:-1 tvg-id=\"bp.plain\" group-title=\"Branch Pass\",BP Plain",
+            "http://10.0.2.2:8920/live/ok.ts",
+            line,
+            "http://10.0.2.2:8920/live/ok.ts?c=1",
+        ).joinToString("\n")
+        // What an older build stored: the name cut at the last comma, under the same id.
+        val oldName = playlist.replace(",BP Comma, Name", ",Name")
+        importSource(acc, oldName.toByteArray(Charsets.UTF_8))
+        client.ensureIngested(acc, force = true)
+        assertEquals("precondition", "Name", client.liveChannels(acc, null).getOrThrow().first { it.epgChannelId == "bp.comma" }.name)
+
+        importSource(acc, playlist.toByteArray(Charsets.UTF_8))
+        client.ensureIngested(acc, force = true)
+
+        val listed = client.liveChannels(acc, null).getOrThrow()
+        assertEquals(listOf("BP Plain", "BP Comma, Name"), listed.map { it.name })
+        assertEquals("Branch Pass", db.categoriesFor(acc.id, IptvContentDb.TYPE_LIVE).single().name)
+    }
+
+    /**
      * B179: a provider's divider row is STORED (a favourite saved against its id must still resolve) but the
      * lineup the app lists, and the live count it stores, leave it out. Event slots (a prefix + decoration)
      * are real channels and stay listed.
