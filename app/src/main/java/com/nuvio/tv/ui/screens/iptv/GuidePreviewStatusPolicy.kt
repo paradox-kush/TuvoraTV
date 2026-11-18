@@ -20,6 +20,17 @@ internal object GuidePreviewStatusPolicy {
         LivePlaybackUiStatusCode.PAUSED, LivePlaybackUiStatusCode.RELEASING, LivePlaybackUiStatusCode.STOPPED -> null
     }
 
+    /**
+     * The docked pill: "Tuning…" while a spinner is up, except during a reconnect, which keeps its own words
+     * (the attempt line). The reconnect's spinner used to win and the pill read "Tuning…" the whole time.
+     */
+    @StringRes
+    fun pillRes(code: LivePlaybackUiStatusCode?, spinnerVisible: Boolean): Int? {
+        val statusRes = code?.let(::statusRes)
+        if (statusRes == R.string.iptv_guide_preview_reconnecting) return statusRes
+        return if (spinnerVisible || statusRes == R.string.iptv_guide_tuning) R.string.iptv_guide_tuning else statusRes
+    }
+
     sealed interface Label {
         data object None : Label
         data object Tuning : Label

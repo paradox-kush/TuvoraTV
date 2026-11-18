@@ -27,6 +27,7 @@ import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsOverlay
 import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayActions
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayInfo
+import com.nuvio.tv.ui.screens.player.clean.live.liveReconnectStatusText
 import com.nuvio.tv.ui.screens.player.clean.live.LivePanel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -98,8 +99,9 @@ internal object GuideBodyProjection {
  * counts when it names a channel that is in the list.
  */
 internal object GuideZapTuningPolicy {
-    fun tuning(spinnerVisible: Boolean, aimedContentId: String?, playingContentId: String?): Boolean =
-        spinnerVisible || (aimedContentId != null && aimedContentId != playingContentId)
+    /** [reconnecting]: the spinner belongs to a live reconnect, which is not a tune (its own status shows). */
+    fun tuning(spinnerVisible: Boolean, aimedContentId: String?, playingContentId: String?, reconnecting: Boolean = false): Boolean =
+        (spinnerVisible && !reconnecting) || (aimedContentId != null && aimedContentId != playingContentId)
 }
 
 /** The aimed channel's content id, as a State that changes only when the aim does. */
@@ -259,6 +261,7 @@ private fun BoxScope.GuideFullscreenOverlayContent(
         spinnerVisible = playbackUi?.spinnerVisible == true,
         aimedContentId = ui.focusedChannel?.contentId,
         playingContentId = playingContentId,
+        reconnecting = status == LivePlaybackUiStatusCode.RECONNECTING || status == LivePlaybackUiStatusCode.RECOVERING,
     )
     val playbackFailed = liveChrome?.retryEnabled == true || stalled
     val currentButtons = LiveControlsPolicy.buttons(
@@ -293,6 +296,7 @@ private fun BoxScope.GuideFullscreenOverlayContent(
                 paused = effectivePaused,
             ),
             errorText = errorText.takeIf { livePause.phase == LivePausePhase.OFF },
+            reconnectText = liveReconnectStatusText(playbackUi?.reconnect),
             pauseErrorText = livePause.problem?.let { stringResource(livePauseProblemRes(it)) },
         ),
         nowMs = nowMs,

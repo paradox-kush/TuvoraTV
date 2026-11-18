@@ -151,6 +151,8 @@ internal fun httpStatusExplanation(context: android.content.Context, code: Int):
     return when (StreamHttpStatusPolicy.hint(code)) {
         StreamHttpStatusHint.PROVIDER_FIREWALL ->
             context.getString(com.nuvio.tv.R.string.player_error_stream_provider_firewall)
+        StreamHttpStatusHint.CONNECTION_LIMIT ->
+            context.getString(com.nuvio.tv.R.string.player_error_stream_connection_limit)
         StreamHttpStatusHint.EXPIRED -> context.getString(com.nuvio.tv.R.string.player_error_stream_expired)
         StreamHttpStatusHint.REMOVED -> context.getString(com.nuvio.tv.R.string.player_error_stream_removed)
         StreamHttpStatusHint.RATE_LIMITED -> context.getString(com.nuvio.tv.R.string.player_error_stream_rate_limited)

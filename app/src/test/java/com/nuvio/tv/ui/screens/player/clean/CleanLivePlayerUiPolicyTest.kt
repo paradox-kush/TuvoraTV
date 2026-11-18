@@ -144,6 +144,62 @@ class CleanLivePlayerUiPolicyTest {
         }
     }
 
+    @Test
+    fun `a 458 or 509 failure names the account connection limit while 429 keeps the generic copy`() {
+        listOf(458, 509).forEach { status ->
+            val ui = com.nuvio.tv.playback.ui.LivePlaybackUiPresenter.present(failedSnapshot(status))
+            assertEquals(
+                "HTTP $status",
+                com.nuvio.tv.R.string.clean_live_error_connection_limit,
+                CleanLivePlayerUiPolicy.errorMessageRes(ui.bottomErrorCode!!),
+            )
+        }
+        val rateLimited = com.nuvio.tv.playback.ui.LivePlaybackUiPresenter.present(failedSnapshot(429))
+        assertEquals(
+            "HTTP 429 keeps its copy",
+            com.nuvio.tv.R.string.clean_live_error_access,
+            CleanLivePlayerUiPolicy.errorMessageRes(rateLimited.bottomErrorCode!!),
+        )
+    }
+
+    /** Device pass: a 503 ended as "Couldn't reach the provider. Check your connection…" — the viewer's network was fine. */
+    @Test
+    fun `a provider 5xx says the provider's server had a problem while a silent network stays unreachable`() {
+        listOf(500, 503).forEach { status ->
+            val direct = com.nuvio.tv.playback.ui.LivePlaybackUiPresenter.present(failedSnapshot(status))
+            assertEquals("HTTP $status", com.nuvio.tv.R.string.clean_live_error_provider_server, CleanLivePlayerUiPolicy.errorMessageRes(direct.bottomErrorCode!!))
+            val exhausted = com.nuvio.tv.playback.ui.LivePlaybackUiPresenter.present(
+                com.nuvio.tv.playback.core.PlaybackSnapshot(
+                    state = com.nuvio.tv.playback.core.PlaybackState.FAILED,
+                    failure = com.nuvio.tv.playback.core.PlaybackPolicy().liveReconnectExhaustedFailure(
+                        com.nuvio.tv.playback.core.HttpStatusFailures.forStatus(status, com.nuvio.tv.playback.core.FailurePhase.PLAYBACK),
+                    ),
+                ),
+            )
+            assertEquals("HTTP $status after reconnects", com.nuvio.tv.R.string.clean_live_error_provider_server, CleanLivePlayerUiPolicy.errorMessageRes(exhausted.bottomErrorCode!!))
+        }
+        val silent = com.nuvio.tv.playback.ui.LivePlaybackUiPresenter.present(
+            com.nuvio.tv.playback.core.PlaybackSnapshot(
+                state = com.nuvio.tv.playback.core.PlaybackState.FAILED,
+                failure = com.nuvio.tv.playback.core.PlaybackFailure(
+                    FailureCode.NETWORK_UNREACHABLE,
+                    com.nuvio.tv.playback.core.FailureDomain.NETWORK,
+                    com.nuvio.tv.playback.core.FailurePhase.PLAYBACK,
+                    com.nuvio.tv.playback.core.Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+                ),
+            ),
+        )
+        assertEquals("no status: unreachable", com.nuvio.tv.R.string.clean_live_error_provider_unreachable, CleanLivePlayerUiPolicy.errorMessageRes(silent.bottomErrorCode!!))
+    }
+
+    private fun failedSnapshot(status: Int) = com.nuvio.tv.playback.core.PlaybackSnapshot(
+        state = com.nuvio.tv.playback.core.PlaybackState.FAILED,
+        failure = com.nuvio.tv.playback.core.HttpStatusFailures.forStatus(
+            status,
+            com.nuvio.tv.playback.core.FailurePhase.PLAYBACK,
+        ),
+    )
+
     // F28: the key map and auto-hide rules moved to LiveControlsPolicy (shared with the guide's
     // fullscreen) and are tested in LiveControlsPolicyTest, including the media-key repeat guard.
 

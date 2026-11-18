@@ -30,6 +30,10 @@ sealed interface LivePlaybackUiErrorCode {
         val reasonCode: FailureCode,
         /** B259: a minted link whose stream server sent nothing ([ProviderNoVideoPolicy]). */
         val providerSentNoVideo: Boolean = false,
+        /** The panel's own "max connections" answer (HTTP 458 / 509); 429 keeps the generic copy. */
+        val accountConnectionLimit: Boolean = false,
+        /** The provider's server answered 5xx: its problem, not the viewer's connection. */
+        val providerServerError: Boolean = false,
     ) : LivePlaybackUiErrorCode
 }
 
@@ -51,6 +55,8 @@ data class LivePlaybackUiState(
     val isPaused: Boolean,
     val previewAvailability: PreviewAvailability,
     val streamAvailability: StreamAvailability,
+    /** Set only while [bottomStatusCode] is RECONNECTING: "attempt N of M" and why. */
+    val reconnect: LiveReconnectStatus? = null,
 )
 
 /** Pure projection only. Recovery, retry, engine selection, and provider resolution stay upstream. */
@@ -68,6 +74,10 @@ object LivePlaybackUiPresenter {
                 LivePlaybackUiErrorCode.PlaybackFailed(
                     snapshot.failure?.code ?: FailureCode.UNKNOWN,
                     providerSentNoVideo = ProviderNoVideoPolicy.applies(snapshot),
+                    accountConnectionLimit = snapshot.failure?.code == FailureCode.PROVIDER_CONNECTION_LIMIT &&
+                        snapshot.failure.httpStatus in ACCOUNT_CONNECTION_LIMIT_STATUSES,
+                    providerServerError = snapshot.failure?.code in SERVER_ERROR_CODES &&
+                        snapshot.failure?.httpStatus in 500..599,
                 )
             else -> null
         }
@@ -84,6 +94,16 @@ object LivePlaybackUiPresenter {
             isPaused = active && !snapshot.playWhenReady,
             previewAvailability = snapshot.previewAvailability,
             streamAvailability = snapshot.streamAvailability,
+            reconnect = if (status == LivePlaybackUiStatusCode.RECONNECTING) snapshot.reconnectStatus() else null,
+        )
+    }
+
+    private fun PlaybackSnapshot.reconnectStatus(): LiveReconnectStatus {
+        val progress = liveReconnect
+        return LiveReconnectStatus(
+            attempt = progress?.attempt,
+            maxAttempts = progress?.maxAttempts,
+            reason = LiveReconnectReasonPolicy.reason(progress?.cause ?: failure),
         )
     }
 
@@ -138,6 +158,13 @@ object LivePlaybackUiPresenter {
         PlaybackState.FAILED,
         -> null
     }
+
+    private val ACCOUNT_CONNECTION_LIMIT_STATUSES = setOf(458, 509)
+    private val SERVER_ERROR_CODES = setOf(
+        FailureCode.NETWORK_UNREACHABLE,
+        FailureCode.NETWORK_TIMEOUT,
+        FailureCode.LIVE_RECONNECT_EXHAUSTED,
+    )
 
     private val RECOVERY_STATES = setOf(
         PlaybackState.RESOLVING,

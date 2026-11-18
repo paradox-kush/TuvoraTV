@@ -69,6 +69,32 @@ internal fun interface ProviderM3uCatchUpLookup {
     suspend fun find(account: XtreamAccount, streamId: Int): M3uChannelCatchUp?
 }
 
+/** An M3U channel's own request headers by stream id; null when it has none (or is gone). Never logged. */
+internal fun interface ProviderM3uChannelHeadersLookup {
+    suspend fun find(account: XtreamAccount, streamId: Int): com.nuvio.tv.core.iptv.content.M3uChannelHeaders?
+}
+
+/**
+ * Which User-Agent / Referer / Origin an M3U stream request carries: the channel's own header (from
+ * its `#EXTINF` / `#EXTVLCOPT` / `#EXTHTTP` lines) over the playlist's User-Agent override
+ * ([com.nuvio.tv.core.iptv.StreamUserAgentPolicy]) over the engine default (null here). Pure.
+ */
+internal object M3uChannelRequestHeadersPolicy {
+    data class Decision(val userAgent: String?, val referer: String?, val origin: String?) {
+        override fun toString(): String =
+            "Decision(userAgent=${userAgent != null}, referer=${referer != null}, origin=${origin != null})"
+    }
+
+    fun decide(
+        channel: com.nuvio.tv.core.iptv.content.M3uChannelHeaders?,
+        playlistUserAgent: String?,
+    ): Decision = Decision(
+        userAgent = channel?.userAgent ?: playlistUserAgent,
+        referer = channel?.referer,
+        origin = channel?.origin,
+    )
+}
+
 internal sealed interface ProviderLinkResult {
     class Resolved(
         val url: String,
@@ -97,6 +123,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
     private val activeServer: (XtreamAccount) -> XtreamAccount = { it },
     private val panelClock: com.nuvio.tv.core.iptv.PanelClockSource = com.nuvio.tv.core.iptv.PanelClockSource.NONE,
     private val m3uChannels: ProviderM3uCatchUpLookup = ProviderM3uCatchUpLookup { _, _ -> null },
+    private val m3uChannelHeaders: ProviderM3uChannelHeadersLookup = ProviderM3uChannelHeadersLookup { _, _ -> null },
     /** UX345: clears the panel breaker for every server of the playlist (the guard's Retry contract). */
     private val breakerReset: (XtreamAccount) -> Unit = com.nuvio.tv.core.iptv.IptvPanelGuard::resetForAccount,
     /** Which Stalker stream identity each playlist's provider accepts; outlives each session's resolver. */
@@ -150,6 +177,9 @@ class IptvProviderPlaybackResolverFactory internal constructor(
                 row.catchUp?.let { M3uChannelCatchUp(row.url, it) }
             }
         },
+        m3uChannelHeaders = ProviderM3uChannelHeadersLookup { account, streamId ->
+            contentDb.channelRow(account.id, streamId)?.headers
+        },
     )
 
     /**
@@ -176,6 +206,7 @@ class IptvProviderPlaybackResolverFactory internal constructor(
             panelClock = panelClock,
             m3uChannels = m3uChannels,
             streamIdentities = streamIdentities,
+            m3uChannelHeaders = m3uChannelHeaders,
         )
 }
 
@@ -197,6 +228,7 @@ class IptvProviderPlaybackResolver internal constructor(
     /** Per-playlist Stalker stream identity (IDENTITY, or NEUTRAL once the provider refused the MAG box). */
     private val streamIdentities: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy =
         com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentityPolicy.processWide,
+    private val m3uChannelHeaders: ProviderM3uChannelHeadersLookup = ProviderM3uChannelHeadersLookup { _, _ -> null },
 ) : ProviderPlaybackResolver {
 
     private val mapper = PlaybackRequestMapper()
@@ -294,6 +326,7 @@ class IptvProviderPlaybackResolver internal constructor(
         ) {
             is ProviderLinkResult.Resolved -> mapped(
                 account, selection, link.url, dialect = null, link.stalkerIdentity, context,
+                channelHeaders = channelHeadersFor(account, selection, streamId),
             )
             is ProviderLinkResult.Unavailable -> unavailable(link.reason)
         }
@@ -379,9 +412,11 @@ class IptvProviderPlaybackResolver internal constructor(
                 return unavailable(deterministic = false)
             }
             previous.index++
-            return mapped(account, selection, previous.urls[previous.index], dialect = null)
+            return mapped(account, selection, previous.urls[previous.index], dialect = null, channelHeaders = channelHeadersFor(account, selection, streamId))
         }
-        if (previous != null) return mapped(account, selection, previous.urls[previous.index], dialect = null)
+        if (previous != null) {
+            return mapped(account, selection, previous.urls[previous.index], dialect = null, channelHeaders = channelHeadersFor(account, selection, streamId))
+        }
 
         val channel = m3uChannels.find(account, streamId) ?: return unavailable(deterministic = true)
         val nowMs = System.currentTimeMillis()
@@ -399,7 +434,25 @@ class IptvProviderPlaybackResolver internal constructor(
             airedMinutes = if (window.endEpochMs > nowMs) (nowMs - window.startEpochMs) / 60_000L else null,
         )
         activeM3uCatchUpByAccount[account.id] = ActiveM3uCatchUp(key, urls)
-        return mapped(account, selection, primary, dialect = null)
+        return mapped(account, selection, primary, dialect = null, channelHeaders = channelHeadersFor(account, selection, streamId))
+    }
+
+    /** An M3U live / replay channel's own headers; nothing for VOD rows or the panel source types. */
+    private suspend fun channelHeadersFor(
+        account: XtreamAccount,
+        selection: ProviderPlaybackSelection,
+        streamId: Int,
+    ): com.nuvio.tv.core.iptv.content.M3uChannelHeaders? {
+        if (selection.sourceType != ProviderSourceType.M3U || !account.isM3UBacked()) return null
+        if (selection.contentType != ContentType.LIVE && selection.contentType != ContentType.CATCH_UP) return null
+        return try {
+            m3uChannelHeaders.find(account, streamId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // A lookup that fails plays with the playlist-level request, as before per-channel headers.
+            null
+        }
     }
 
     private fun mapped(
@@ -409,10 +462,15 @@ class IptvProviderPlaybackResolver internal constructor(
         dialect: CatchUpDialectWalk.Dialect?,
         stalkerIdentity: com.nuvio.tv.core.iptv.stalker.StalkerStreamIdentity? = null,
         context: ProviderResolutionContext? = null,
+        channelHeaders: com.nuvio.tv.core.iptv.content.M3uChannelHeaders? = null,
     ): PlaybackResult<ResolvedPlaybackRequest> {
         if (url.isBlank()) return unavailable(deterministic = true)
         val declared = declaredTransport(selection, dialect)
-        val userAgentOverride = com.nuvio.tv.core.iptv.StreamUserAgentPolicy.resolve(account)
+        val channelRequest = M3uChannelRequestHeadersPolicy.decide(
+            channel = channelHeaders,
+            playlistUserAgent = com.nuvio.tv.core.iptv.StreamUserAgentPolicy.resolve(account),
+        )
+        val userAgentOverride = channelRequest.userAgent
         // B259: the portal identity only ever goes to the portal host (credentials origin-bound, enforced
         // per hop); everywhere else, and by default, the plain pre-1.21.3 request.
         val stalkerHeaders = if (account.sourceType == XtreamAccount.SOURCE_STALKER) {
@@ -446,6 +504,9 @@ class IptvProviderPlaybackResolver internal constructor(
                 url = url,
                 headers = stalkerHeaders?.headers.orEmpty(),
                 userAgent = stalkerHeaders?.userAgent ?: userAgentOverride,
+                // Only an M3U channel sets these (Stalker's Referer/Origin stay origin-bound).
+                referer = channelRequest.referer,
+                origin = channelRequest.origin,
                 originBoundHeaders = stalkerHeaders?.originBound,
                 redirectPolicy = RedirectPolicy.FOLLOW,
                 crossHostAuthorization = CrossHostAuthorization.STRIP,

@@ -99,4 +99,20 @@ class GuideFullscreenOverlayIsolationTest {
         assertEquals(false, GuideZapTuningPolicy.tuning(false, "c1", "c1"))
         assertEquals(false, GuideZapTuningPolicy.tuning(false, null, "c1"))
     }
+
+    /**
+     * Device pass: the reconnect line never showed during a 503 reconnect in the guide — the reconnect's
+     * spinner made the status TUNING, which outranks RECONNECTING. A reconnect's spinner is not a tune;
+     * an aim on another channel still is.
+     */
+    @Test
+    fun `a reconnect's spinner is not tuning but a zap during a reconnect is`() {
+        assertEquals(false, GuideZapTuningPolicy.tuning(true, "c1", "c1", reconnecting = true))
+        assertTrue(GuideZapTuningPolicy.tuning(true, "c2", "c1", reconnecting = true))
+        val status = com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy.status(
+            tuning = GuideZapTuningPolicy.tuning(true, "c1", "c1", reconnecting = true),
+            reconnecting = true, paused = false, failed = false,
+        )
+        assertEquals(com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy.Status.RECONNECTING, status)
+    }
 }

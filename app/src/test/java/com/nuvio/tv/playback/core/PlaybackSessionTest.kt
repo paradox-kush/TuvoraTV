@@ -1326,6 +1326,41 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    @Test
+    fun `each live reconnect attempt publishes its number budget and cause`() = runTest {
+        lateinit var session: PlaybackSession
+        val seen = mutableListOf<LiveReconnectProgress?>()
+        val timeout = PlaybackFailure(
+            FailureCode.NETWORK_TIMEOUT,
+            FailureDomain.NETWORK,
+            FailurePhase.RECOVERY,
+            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+        )
+        val engine = FakeEngine { start, input, events ->
+            if (start >= 2) seen += session.snapshot.value.liveReconnect
+            when (start) {
+                2, 3 -> events.emit(PlaybackEvent.Failed(input.generation, timeout))
+                4 -> events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+            }
+        }
+        session = session(engine)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        advanceUntilIdle()
+
+        assertEquals("attempts seen by each reconnect start", listOf(1, 2, 3), seen.map { it?.attempt })
+        assertEquals("budget", listOf(3, 3, 3), seen.map { it?.maxAttempts })
+        assertEquals("an end-file has no failure; later attempts name the timeout", listOf(null, timeout.code, timeout.code), seen.map { it?.cause?.code })
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        assertEquals("cleared once playing", null, session.snapshot.value.liveReconnect)
+        close(session)
+    }
+
     // Review follow-up: a preferences change resolved while primary graph selection was still in
     // flight was a reducer no-op (no graph existed yet), and the in-flight SelectionFinished then
     // stored requirements from the OLD preferences snapshot — the user's change was silently lost

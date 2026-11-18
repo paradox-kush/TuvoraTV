@@ -12,5 +12,6 @@ class HttpStatusHintWiringTest {
         val body = functionBody(source("PlayerRuntimeControllerErrorRecovery.kt"), "fun httpStatusExplanation(")
         assertTrue(body.contains("StreamHttpStatusPolicy.hint(code)"))
         assertTrue(body.contains("player_error_stream_provider_firewall"))
+        assertTrue(body.contains("player_error_stream_connection_limit"))
     }
 }

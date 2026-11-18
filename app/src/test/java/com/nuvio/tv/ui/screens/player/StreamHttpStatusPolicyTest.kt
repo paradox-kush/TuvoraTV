@@ -34,6 +34,13 @@ class StreamHttpStatusPolicyTest {
     }
 
     @Test
+    fun `458 and 509 are a connection limit with their own advice`() {
+        assertEquals("458 connection limit", StreamHttpStatusHint.CONNECTION_LIMIT, StreamHttpStatusPolicy.hint(458))
+        assertEquals("509 connection limit", StreamHttpStatusHint.CONNECTION_LIMIT, StreamHttpStatusPolicy.hint(509))
+        assertEquals("456 stays the firewall hint", StreamHttpStatusHint.PROVIDER_FIREWALL, StreamHttpStatusPolicy.hint(456))
+    }
+
+    @Test
     fun `an unmapped code carries no hint`() {
         assertEquals("418 has no specific advice", StreamHttpStatusHint.NONE, StreamHttpStatusPolicy.hint(418))
         assertEquals("200 is not an error path", StreamHttpStatusHint.NONE, StreamHttpStatusPolicy.hint(200))

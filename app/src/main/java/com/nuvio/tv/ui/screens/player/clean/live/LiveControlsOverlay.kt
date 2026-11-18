@@ -99,6 +99,8 @@ internal data class LiveOverlayInfo(
     val nextLine: String? = null,
     val status: LiveControlsPolicy.Status = LiveControlsPolicy.Status.LIVE,
     val errorText: String? = null,
+    /** While reconnecting: "Reconnecting… (attempt 2 of 3) · reason" (see liveReconnectStatusText). */
+    val reconnectText: String? = null,
     /** Live pause / rewind: why the saved part could not start or ended (shown with Retry + Live). */
     val pauseErrorText: String? = null,
     /** Telemetry v2: the report's outcome ("Sending…", the support code, why it wasn't sent). */
@@ -217,6 +219,9 @@ internal fun BoxScope.LiveControlsOverlay(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (info.status == LiveControlsPolicy.Status.RECONNECTING && info.reconnectText != null) {
+                Text(text = info.reconnectText, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.9f), maxLines = 2)
+            }
             if (info.status == LiveControlsPolicy.Status.FAILED && info.errorText != null) {
                 Text(text = info.errorText, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.Error, maxLines = 2)
             }

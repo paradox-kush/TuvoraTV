@@ -298,6 +298,10 @@ class PlaybackPolicy(
             liveReconnectConfiguration.maxAttemptsPerRollingWindow
     }
 
+    /** The per-incident attempt budget, shown to the viewer as "attempt N of M". */
+    val liveReconnectMaxAttemptsPerIncident: Int
+        get() = liveReconnectConfiguration.maxAttemptsPerIncident
+
     fun liveReconnectWindowStart(nowEpochMs: Long): Long =
         nowEpochMs - liveReconnectConfiguration.rollingWindowMs
 
@@ -335,9 +339,11 @@ class PlaybackPolicy(
                 } else {
                     Retryability.FATAL
                 },
-                // Keep the status the provider answered so the report says what refused us.
-                httpStatus = lastAttemptFailure?.httpStatus,
-                statusProvenance = lastAttemptFailure?.statusProvenance,
+                // A provider that kept answering 5xx is a server problem, not the viewer's network:
+                // the status survives so the final message can say so. (Every attempt's own diagnostic
+                // already reports its http_status, 456 included.)
+                httpStatus = lastAttemptFailure?.httpStatus?.takeIf { it in 500..599 },
+                statusProvenance = lastAttemptFailure?.statusProvenance?.takeIf { lastAttemptFailure.httpStatus in 500..599 },
             )
         }
 

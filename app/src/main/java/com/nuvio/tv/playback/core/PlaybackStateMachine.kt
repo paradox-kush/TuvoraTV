@@ -239,6 +239,14 @@ sealed interface PlaybackReducerInput {
         val failure: PlaybackFailure,
     ) : PlaybackReducerInput
 
+    /** The session's reconnect loop began an attempt; published for the status line only. */
+    data class LiveReconnectAttemptStarted(
+        val generation: Long,
+        val attempt: Int,
+        val maxAttempts: Int,
+        val cause: PlaybackFailure?,
+    ) : PlaybackReducerInput
+
     /** The picture stayed healthy for the whole probation: the live incident is over. */
     data class LiveProbationPassed(
         val generation: Long,
@@ -303,6 +311,18 @@ object PlaybackStateMachine {
     fun reduce(
         state: PlaybackMachineState,
         input: PlaybackReducerInput,
+    ): PlaybackTransition = reduceInput(state, input).dropStaleReconnectProgress()
+
+    /** Attempt progress lives exactly as long as [PlaybackSnapshot.isReconnecting], whichever path ends it. */
+    private fun PlaybackTransition.dropStaleReconnectProgress(): PlaybackTransition {
+        val snapshot = state.snapshot
+        if (snapshot.liveReconnect == null || snapshot.isReconnecting) return this
+        return copy(state = state.copy(snapshot = snapshot.copy(liveReconnect = null)))
+    }
+
+    private fun reduceInput(
+        state: PlaybackMachineState,
+        input: PlaybackReducerInput,
     ): PlaybackTransition = when (input) {
         is PlaybackReducerInput.Command -> reduceCommand(state, input.value)
         is PlaybackReducerInput.Event -> reduceEvent(state, input.value)
@@ -341,6 +361,19 @@ object PlaybackStateMachine {
                         ),
                     ),
                     input.failure,
+                )
+            }
+        }
+        is PlaybackReducerInput.LiveReconnectAttemptStarted -> {
+            if (input.generation != state.snapshot.generation || !state.snapshot.isReconnecting) {
+                unchanged(state)
+            } else {
+                transition(
+                    state.copy(
+                        snapshot = state.snapshot.copy(
+                            liveReconnect = LiveReconnectProgress(input.attempt, input.maxAttempts, input.cause),
+                        ),
+                    ),
                 )
             }
         }

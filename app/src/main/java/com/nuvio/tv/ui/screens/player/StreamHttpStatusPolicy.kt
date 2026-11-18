@@ -27,6 +27,12 @@ enum class StreamHttpStatusHint {
      * playlist (see StreamUserAgentPolicy) rather than "try a different source".
      */
     PROVIDER_FIREWALL,
+
+    /**
+     * 458 / 509: the IPTV panel's "max connections" answer — the account's slots are in use. The remedy
+     * is to close the stream elsewhere or wait, not to try a different source.
+     */
+    CONNECTION_LIMIT,
 }
 
 /**
@@ -44,6 +50,7 @@ object StreamHttpStatusPolicy {
         404 -> StreamHttpStatusHint.REMOVED
         429 -> StreamHttpStatusHint.RATE_LIMITED
         456 -> StreamHttpStatusHint.PROVIDER_FIREWALL
+        458, 509 -> StreamHttpStatusHint.CONNECTION_LIMIT
         500, 502, 503, 504 -> StreamHttpStatusHint.UNAVAILABLE
         else -> StreamHttpStatusHint.NONE
     }

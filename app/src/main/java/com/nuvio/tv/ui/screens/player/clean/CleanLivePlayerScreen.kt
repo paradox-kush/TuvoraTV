@@ -60,6 +60,7 @@ import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsOverlay
 import com.nuvio.tv.ui.screens.player.clean.live.LiveControlsPolicy
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayActions
 import com.nuvio.tv.ui.screens.player.clean.live.LiveOverlayInfo
+import com.nuvio.tv.ui.screens.player.clean.live.liveReconnectStatusText
 import com.nuvio.tv.ui.screens.player.clean.live.LivePanel
 import com.nuvio.tv.ui.screens.player.clean.live.LiveReportPolicy
 import com.nuvio.tv.ui.screens.player.clean.live.LiveReportState
@@ -290,6 +291,7 @@ internal fun CleanLivePlayerScreen(
                         paused = paused,
                     ),
                     errorText = if (chrome.messageIsError && !pauseOn) messageText else null,
+                    reconnectText = liveReconnectStatusText(uiState.reconnect),
                     pauseErrorText = livePause.problem?.let { stringResource(livePauseProblemRes(it)) },
                     reportText = reportStateText(reportState),
                     reportSending = reportState == LiveReportState.Sending,
@@ -434,6 +436,10 @@ internal object CleanLivePlayerUiPolicy {
         // B259: a minted link whose server sent nothing says so; a named cause never gets here.
         is LivePlaybackUiErrorCode.PlaybackFailed -> if (code.providerSentNoVideo) {
             R.string.clean_live_error_provider_no_video
+        } else if (code.accountConnectionLimit) {
+            R.string.clean_live_error_connection_limit
+        } else if (code.providerServerError) {
+            R.string.clean_live_error_provider_server
         } else {
             playbackErrorMessageRes(code.reasonCode)
         }
