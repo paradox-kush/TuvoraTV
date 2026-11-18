@@ -8,6 +8,7 @@ import com.nuvio.tv.playback.core.PlaybackOutputController
 import com.nuvio.tv.playback.core.PlaybackOutputRequest
 import com.nuvio.tv.playback.core.PlaybackOutputStatus
 import com.nuvio.tv.playback.core.PlaybackResult
+import com.nuvio.tv.playback.mediasession.DisplaySwitchLedger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -39,6 +40,8 @@ internal class ActivityDisplayModeHost(
     }
 
     override fun requestMode(modeId: Int) {
+        // The HDMI re-sync that follows makes Fire OS pause the media session; see ExternalPausePolicy.
+        DisplaySwitchLedger.noteModeRequest(android.os.SystemClock.elapsedRealtime())
         val attributes = activity.window.attributes
         attributes.preferredDisplayModeId = modeId
         activity.window.attributes = attributes

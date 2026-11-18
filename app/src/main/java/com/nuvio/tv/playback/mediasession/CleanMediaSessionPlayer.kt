@@ -35,6 +35,9 @@ internal class CleanMediaSessionPlayer(
     parentScope: CoroutineScope,
     private val controller: PlaybackSessionController,
     metadata: CleanMediaSessionMetadata,
+    /** When the app last asked the display for another mode (see [ExternalPausePolicy]). */
+    private val lastDisplayModeRequestAtMs: () -> Long? = DisplaySwitchLedger::lastRequestAtMs,
+    private val nowMs: () -> Long = android.os.SystemClock::elapsedRealtime,
 ) : SimpleBasePlayer(applicationLooper) {
     private val handler = Handler(applicationLooper)
     private val playerJob = SupervisorJob(parentScope.coroutineContext[Job])
@@ -54,10 +57,19 @@ internal class CleanMediaSessionPlayer(
 
     override fun getState(): State = stateFor(latestSnapshot, latestMetadata)
 
-    override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> =
-        dispatch {
+    override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
+        // The viewer's own pause never comes through here (the overlay and the remote's key talk to the
+        // controller directly); another controller's pause that lands inside our display switch is the
+        // platform's HDMI re-sync echo, and honouring it left the channel paused on its first frame.
+        if (!playWhenReady &&
+            ExternalPausePolicy.isDisplaySwitchPause(lastDisplayModeRequestAtMs(), nowMs())
+        ) {
+            return completedFuture()
+        }
+        return dispatch {
             if (playWhenReady) controller.resume() else controller.pause()
         }
+    }
 
     override fun handleStop(): ListenableFuture<*> = dispatch(controller::stop)
 

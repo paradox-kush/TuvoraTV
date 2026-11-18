@@ -44,11 +44,15 @@ class CleanMediaSessionPlayerTest {
         dispatchCommand = commands::add,
         releaseSession = {},
     )
+    private var modeRequestAtMs: Long? = null
+    private var nowMs = 0L
     private val playerDelegate = lazy {
         CleanMediaSessionPlayer(
             applicationLooper = Looper.getMainLooper(),
             parentScope = scope,
             controller = controller,
+            lastDisplayModeRequestAtMs = { modeRequestAtMs },
+            nowMs = { nowMs },
             metadata = CleanMediaSessionMetadata.fromIngress(
                 redactedContentFingerprint = "ab12ab12ab12ab12",
                 title = "News",
@@ -123,6 +127,36 @@ class CleanMediaSessionPlayerTest {
             listOf(PlaybackCommand.Resume, PlaybackCommand.Pause, PlaybackCommand.Stop),
             commands,
         )
+    }
+
+    @Test
+    fun `an external pause inside the display switch window does not pause the session`() {
+        modeRequestAtMs = 1_000L
+        nowMs = 2_250L
+
+        player.pause()
+
+        assertEquals("the HDMI re-sync echo is not a command", emptyList<PlaybackCommand>(), commands)
+    }
+
+    @Test
+    fun `an external pause outside the display switch window pauses the session`() {
+        modeRequestAtMs = 1_000L
+        nowMs = 61_000L
+
+        player.pause()
+
+        assertEquals(listOf<PlaybackCommand>(PlaybackCommand.Pause), commands)
+    }
+
+    @Test
+    fun `an external play is never swallowed by the display switch window`() {
+        modeRequestAtMs = 1_000L
+        nowMs = 2_250L
+
+        player.play()
+
+        assertEquals(listOf<PlaybackCommand>(PlaybackCommand.Resume), commands)
     }
 
     @Test
