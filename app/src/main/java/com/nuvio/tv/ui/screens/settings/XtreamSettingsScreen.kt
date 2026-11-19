@@ -118,6 +118,8 @@ fun XtreamSettingsContent(
     val indexProgress by viewModel.indexProgress.collectAsStateWithLifecycle()
     val epgRegions by viewModel.epgRegions.collectAsStateWithLifecycle()
     val selectedEpgRegions by viewModel.selectedEpgRegions.collectAsStateWithLifecycle()
+    val suggestPins by viewModel.suggestPins.collectAsStateWithLifecycle()
+    var playCountsCleared by remember { mutableStateOf(false) }
     // Step 0.3: playlists currently served by a backup server ("Using backup server N").
     val activeServers by viewModel.activeServers.collectAsStateWithLifecycle()
     // Step 2: provider-managed playlists, by key.
@@ -288,6 +290,32 @@ fun XtreamSettingsContent(
                 modifier = Modifier.focusRequester(accountRowFocus.getOrPut(account.id) { FocusRequester() })
             )
         }
+
+        // Suggestions: the "Pin all N" line in Live TV. Its switch, and the on-device play counts behind it.
+        Text(
+            text = stringResource(R.string.iptv_pin_settings_section),
+            style = MaterialTheme.typography.titleMedium,
+            color = NuvioTheme.colors.TextPrimary,
+            modifier = Modifier.padding(top = NuvioTheme.spacing.md, bottom = NuvioTheme.spacing.xs)
+        )
+        SettingsToggleRow(
+            title = stringResource(R.string.iptv_pin_settings_switch),
+            subtitle = stringResource(R.string.iptv_pin_settings_switch_sub),
+            checked = suggestPins,
+            onToggle = { viewModel.setSuggestPins(!suggestPins) },
+        )
+        SettingsActionRow(
+            title = stringResource(R.string.iptv_pin_settings_clear),
+            subtitle = stringResource(R.string.iptv_pin_settings_clear_sub),
+            value = stringResource(if (playCountsCleared) R.string.iptv_pin_settings_cleared else R.string.iptv_pin_settings_clear_value),
+            onClick = { viewModel.clearPlayCounts(); playCountsCleared = true },
+        )
+        Text(
+            text = stringResource(R.string.iptv_pin_settings_privacy),
+            style = MaterialTheme.typography.bodySmall,
+            color = NuvioTheme.colors.TextTertiary,
+            modifier = Modifier.padding(top = NuvioTheme.spacing.xs, bottom = NuvioTheme.spacing.md)
+        )
     }
 
     if (showRegionPicker) {

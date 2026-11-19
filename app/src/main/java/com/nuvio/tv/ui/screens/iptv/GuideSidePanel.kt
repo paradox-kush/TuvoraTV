@@ -211,6 +211,7 @@ internal fun BoxScope.GuideChannelPanel(
                     GuideChannelPanelPolicy.Row.ADD_TO_MULTIVIEW -> com.nuvio.tv.R.string.iptv_guide_add_to_multiview
                     GuideChannelPanelPolicy.Row.MOVE_UP -> com.nuvio.tv.R.string.iptv_guide_move_up
                     GuideChannelPanelPolicy.Row.MOVE_DOWN -> com.nuvio.tv.R.string.iptv_guide_move_down
+                    GuideChannelPanelPolicy.Row.UNPIN -> com.nuvio.tv.R.string.iptv_guide_unpin
                     GuideChannelPanelPolicy.Row.FIX_GUIDE -> com.nuvio.tv.R.string.iptv_guide_fix_guide
                     GuideChannelPanelPolicy.Row.GUIDE_SIZE -> com.nuvio.tv.R.string.iptv_guide_size
                     GuideChannelPanelPolicy.Row.HIDE -> com.nuvio.tv.R.string.iptv_guide_hide_channel
@@ -219,6 +220,7 @@ internal fun BoxScope.GuideChannelPanel(
             ),
             sub = when (row) {
                 GuideChannelPanelPolicy.Row.OPEN_GUIDE -> androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.iptv_panel_open_guide_sub)
+                GuideChannelPanelPolicy.Row.UNPIN -> androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.iptv_panel_unpin_sub)
                 GuideChannelPanelPolicy.Row.HIDE -> androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.iptv_panel_hide_sub)
                 GuideChannelPanelPolicy.Row.FIX_GUIDE -> androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.iptv_panel_fix_guide_sub)
                 GuideChannelPanelPolicy.Row.GUIDE_SIZE -> androidx.compose.ui.res.stringResource(guideSizeLabel(guideSize))

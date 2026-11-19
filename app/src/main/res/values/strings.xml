@@ -3660,6 +3660,32 @@
     <string name="iptv_guide_search_row">Search channels</string>
     <string name="iptv_guide_no_guide_group">This playlist sent no guide.</string>
     <string name="iptv_guide_fix_guide">Fix guide</string>
+    <!-- Pin suggestion line (Live TV guide): the channels you keep coming back to are listed first. -->
+    <plurals name="iptv_pin_suggestion_line">
+        <item quantity="one">You keep coming back to this channel. It is listed first.</item>
+        <item quantity="other">You keep coming back to these %1$d. They are listed first.</item>
+    </plurals>
+    <plurals name="iptv_pin_suggestion_pin_all">
+        <item quantity="one">Pin %1$d</item>
+        <item quantity="other">Pin all %1$d</item>
+    </plurals>
+    <string name="iptv_guide_unpin">Unpin</string>
+    <string name="iptv_panel_unpin_sub">Stop listing this channel first.</string>
+    <string name="iptv_pin_suggestion_menu_hint">MENU on this line: Not now · Stop suggesting</string>
+    <string name="iptv_pin_suggestion_menu_title">Pin suggestion</string>
+    <string name="iptv_pin_suggestion_not_now">Not now</string>
+    <string name="iptv_pin_suggestion_not_now_sub">Ask again in 2 weeks.</string>
+    <string name="iptv_pin_suggestion_stop">Stop suggesting</string>
+    <string name="iptv_pin_suggestion_stop_sub">Turn it back on in IPTV playlists settings.</string>
+    <!-- IPTV playlists settings: the suggestion's switch and the play counts behind it. -->
+    <string name="iptv_pin_settings_section">Suggestions</string>
+    <string name="iptv_pin_settings_switch">Suggest channels to pin</string>
+    <string name="iptv_pin_settings_switch_sub">When you keep returning to the same channels, offer to pin them.</string>
+    <string name="iptv_pin_settings_clear">Clear play counts</string>
+    <string name="iptv_pin_settings_clear_sub">Forget which channels you play most. Pins and favourites stay.</string>
+    <string name="iptv_pin_settings_clear_value">Clear</string>
+    <string name="iptv_pin_settings_cleared">Cleared</string>
+    <string name="iptv_pin_settings_privacy">Play counts stay on this device. They are not synced or sent anywhere.</string>
     <!-- B11 (IPTV redesign 2026-11-15): every empty view names its cause and holds one action. -->
     <string name="iptv_guide_empty_favorites_title">No favourites yet</string>
     <string name="iptv_guide_empty_recent_title">Nothing watched yet</string>

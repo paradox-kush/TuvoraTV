@@ -36,6 +36,7 @@ class XtreamLiveStoreTest {
     private val dataStoreJob: Job = SupervisorJob()
     private val dataStoreScope = CoroutineScope(dataStoreJob + Dispatchers.IO)
     private lateinit var subject: XtreamLiveStore
+    private lateinit var playCounts: com.nuvio.tv.core.iptv.PinSuggestionStore
 
     @Before
     fun setUp() {
@@ -53,7 +54,8 @@ class XtreamLiveStoreTest {
         }
         val profileManager = mockk<ProfileManager>()
         every { profileManager.activeProfileId } returns activeProfileId
-        subject = XtreamLiveStore(factory, profileManager)
+        playCounts = com.nuvio.tv.core.iptv.PinSuggestionStore(factory, profileManager)
+        subject = XtreamLiveStore(factory, profileManager, playCounts)
     }
 
     @After
@@ -73,6 +75,16 @@ class XtreamLiveStoreTest {
 
         activeProfileId.value = 1
         assertEquals("profile-one", subject.recents.first { it.isNotEmpty() }.single().id)
+    }
+
+    @Test
+    fun `every recorded live play is counted for the profile that played it`() = runTest {
+        subject.recordPlayedIdentityForProfile(2, "ch-a", "A", null)
+        subject.recordPlayedIdentityForProfile(2, "ch-nameless", null, null)
+        subject.recordPlayedIdentity("ch-b", "B", null)
+
+        assertEquals("a play for profile 2 is counted there, even when no row was saved", setOf("ch-a", "ch-nameless"), playCounts.snapshot(2).plays.keys)
+        assertEquals("the active profile's plays are its own", setOf("ch-b"), playCounts.snapshot(1).plays.keys)
     }
 
     @Test

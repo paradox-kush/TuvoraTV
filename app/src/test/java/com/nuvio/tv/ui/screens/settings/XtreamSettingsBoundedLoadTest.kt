@@ -80,6 +80,7 @@ class XtreamSettingsBoundedLoadTest {
             mockk(relaxed = true), overlay, auth, failover, refresher, profiles, mockk(relaxed = true),
             com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests(),
             mockk(relaxed = true),
+            mockk(relaxed = true),
         )
     }
 

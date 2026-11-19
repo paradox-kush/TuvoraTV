@@ -88,6 +88,21 @@ class IptvOverlayRepository @Inject constructor(
         }
     }
 
+    /** "Pin all": [targets] as (entity id, playlist id), one local write pass and ONE sync push for the whole batch. */
+    fun setChannelsPinned(targets: List<Pair<String, String?>>, pinned: Boolean) {
+        if (targets.isEmpty()) return
+        val p = profile()
+        val current = _uiState.value.channels
+        launchSafely("setChannelsPinned") {
+            val t = now()
+            targets.forEach { (entityId, playlistId) ->
+                db.setChannel(p, entityId, playlistId, (current[entityId] ?: ChannelOverlay()).copy(pinned = pinned), t)
+            }
+            _uiState.value = db.snapshot(p)
+            push(p)
+        }
+    }
+
     // ---- F14: manual guide-channel picks --------------------------------------------------------
 
     private val _epgOverrideChanges = kotlinx.coroutines.flow.MutableSharedFlow<Set<String>>(extraBufferCapacity = 8)

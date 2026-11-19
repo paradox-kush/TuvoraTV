@@ -128,6 +128,7 @@ class XtreamSettingsViewModel @Inject constructor(
     private val detailsRequests: com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests,
     /** B10/F14/F10 (lane G): the playlist's guide census, channel-name clean-up and manual picks. */
     private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
+    private val pinSuggestions: com.nuvio.tv.core.iptv.PinSuggestionStore,
 ) : ViewModel() {
 
     /** Step 2: a setup code just added a playlist; the screen opens its details page once it has arrived. */
@@ -194,6 +195,19 @@ class XtreamSettingsViewModel @Inject constructor(
      * household uses a fraction (2,035 of 15,397 channels on a measured panel), and unselected
      * regions are never stored — so this trims the on-device index, not just the display.
      */
+    /** "Suggest channels to pin": the active profile's switch (default on). On this device only. */
+    val suggestPins: StateFlow<Boolean> = pinSuggestions.enabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    fun setSuggestPins(enabled: Boolean) {
+        viewModelScope.launch { pinSuggestions.setEnabled(enabled) }
+    }
+
+    /** "Clear play counts": forgets the on-device play log of the active profile. */
+    fun clearPlayCounts() {
+        viewModelScope.launch { pinSuggestions.clearPlayCounts() }
+    }
+
     private val _epgRegions = MutableStateFlow<List<com.nuvio.tv.core.epg.EpgRegion>>(emptyList())
     val epgRegions: StateFlow<List<com.nuvio.tv.core.epg.EpgRegion>> = _epgRegions.asStateFlow()
 

@@ -50,7 +50,9 @@ internal data class StoredLiveChannelIdentity(
 @Singleton
 class XtreamLiveStore @Inject constructor(
     private val factory: ProfileDataStoreFactory,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    /** On-device play counts behind "Pin all N" (never synced). Fed from every recorded live play. */
+    private val playCounts: com.nuvio.tv.core.contracts.LivePlayRecorder,
 ) {
     private val gson = Gson()
     private val key = stringPreferencesKey("xtream_live_channels")
@@ -109,7 +111,10 @@ class XtreamLiveStore @Inject constructor(
     suspend fun remember(ref: LiveChannelRef) = upsert(ref, markPlayed = false)
 
     /** Record a channel as just-watched (recents + replayable). */
-    suspend fun recordPlayed(ref: LiveChannelRef) = upsert(ref, markPlayed = true)
+    suspend fun recordPlayed(ref: LiveChannelRef) {
+        upsert(ref, markPlayed = true)
+        playCounts.recordPlay(ref.id)
+    }
 
     /**
      * Clean URL-free history entrance. Existing legacy transport is retained for that exact row;
@@ -126,6 +131,7 @@ class XtreamLiveStore @Inject constructor(
             markPlayed = true,
             preserveExistingTransport = true,
         )
+        playCounts.recordPlay(contentId)
     }
 
     /**
@@ -147,6 +153,8 @@ class XtreamLiveStore @Inject constructor(
             preserveExistingTransport = true,
             keepExistingNameWhenBlank = true,
         )
+        // A play is a play even when no row was worth saving (a nameless one); counted for THIS profile.
+        playCounts.recordPlay(profileId, contentId)
     }
 
     /**

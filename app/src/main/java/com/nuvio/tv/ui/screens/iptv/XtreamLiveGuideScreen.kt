@@ -189,6 +189,11 @@ fun LiveGuide(
     var layoutPickerOpen by remember { mutableStateOf(false) }
     // Change 15: the Guide options panel (size + resume-on-open), opened from the hub header.
     var guideOptionsOpen by remember { mutableStateOf(false) }
+    // "Pin all N" line: MENU on it opens Not now / Stop suggesting. It never takes focus by itself (UP reaches it).
+    var pinMenuOpen by remember { mutableStateOf(false) }
+    val pinLineFocus = remember { FocusRequester() }
+    // After an action removes the line, the cursor goes to the first row (of the category the action was taken in).
+    var focusFirstRowAfterPinLine by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(guideOptionsRequest) { if (guideOptionsRequest > 0) guideOptionsOpen = true }
     val resumeOnOpen by displayPreferences.resumeOnOpen.collectAsStateWithLifecycle(initialValue = GuideOptionsPolicy.RESUME_ON_OPEN_DEFAULT)
     // A4: the last-watched channel the first entry may resume (set only with the opt-in on).
@@ -367,6 +372,14 @@ fun LiveGuide(
         GuideNoGuidePolicy.groupHasNoGuide(displayChannels.size, answered)
     }
     val fixGuideFocus = remember { FocusRequester() }
+    val pinLineShown = displayChannels.count { it.suggested } >= com.nuvio.tv.core.iptv.PinSuggestionPolicy.MIN_QUALIFYING &&
+        uiState.channelsLoad !is com.nuvio.tv.core.iptv.LoadStatus.Loading && uiState.error == null
+    LaunchedEffect(pinLineShown, focusFirstRowAfterPinLine, uiState.selectedCategoryId) {
+        val askedIn = focusFirstRowAfterPinLine ?: return@LaunchedEffect
+        if (pinLineShown) return@LaunchedEffect
+        focusFirstRowAfterPinLine = null
+        if (askedIn == uiState.selectedCategoryId) pendingFirstRowFocus = true
+    }
     // UX275: the past-window history load, read by the timeline row only (the body projection leaves it out).
     val historyFlow = remember(viewModel) { viewModel.uiState.map { it.historyChannelId to it.historyLoad }.distinctUntilChanged() }
     val historyState = historyFlow.collectAsStateWithLifecycle(initialValue = viewModel.uiState.value.historyChannelId to viewModel.uiState.value.historyLoad)
@@ -699,7 +712,7 @@ fun LiveGuide(
     }
     /** True when the key was one of the remote's shortcuts (and is consumed). */
     fun remoteShortcut(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
-        val overlayUp = channelMenuAsk != null || layoutPickerOpen || guideOptionsOpen || searchDialogOpen || sheetProgramme != null ||
+        val overlayUp = channelMenuAsk != null || pinMenuOpen || layoutPickerOpen || guideOptionsOpen || searchDialogOpen || sheetProgramme != null ||
             (fullscreen && livePanelOpen)
         if (overlayUp) return false
         val down = event.type == KeyEventType.KeyDown
@@ -1018,10 +1031,23 @@ fun LiveGuide(
                         Button(onClick = { leaveTimelineToNow() }, modifier = Modifier
                             .focusRequester(returnToNowFocus)
                             .focusProperties {
-                                down = firstChannelFocus
+                                down = if (pinLineShown) pinLineFocus else firstChannelFocus
                                 up = selectedTabRequester ?: FocusRequester.Default
                             }) { Text(stringResource(R.string.iptv_guide_return_now)) }
                     }
+                }
+                if (pinLineShown) {
+                    PinSuggestionLine(
+                        count = displayChannels.count { it.suggested },
+                        focusRequester = pinLineFocus,
+                        up = if (awayFromNow) returnToNowFocus else selectedTabRequester,
+                        down = if (noGuide) fixGuideFocus else firstChannelFocus,
+                        onPinAll = {
+                            focusFirstRowAfterPinLine = uiState.selectedCategoryId
+                            viewModel.pinSuggested()
+                        },
+                        onMenu = { pinMenuOpen = true },
+                    )
                 }
                 GuideTimeHeaderWithDay(
                     windowStartMs = windowStartMs,
@@ -1042,7 +1068,7 @@ fun LiveGuide(
                         onFixGuide = { onFixGuide(account.id) },
                         focusRequester = fixGuideFocus,
                         down = firstChannelFocus,
-                        up = selectedTabRequester,
+                        up = if (pinLineShown) pinLineFocus else selectedTabRequester,
                     )
                 }
 
@@ -1138,6 +1164,7 @@ fun LiveGuide(
                                     awayFromNow && index == 0 -> returnToNowFocus
                                     // UX331: UP from row 1 reaches the group's "Fix guide" action.
                                     noGuide && index == 0 -> fixGuideFocus
+                                    pinLineShown && index == 0 -> pinLineFocus
                                     else -> null
                                 },
                                 noGuide = noGuide,
@@ -1551,6 +1578,7 @@ fun LiveGuide(
                         GuideChannelPanelPolicy.Row.ADD_TO_MULTIVIEW -> { returnFromMenu(); viewModel.addToMultiview(channel) }
                         GuideChannelPanelPolicy.Row.MOVE_UP -> { panelFocusRow = row; viewModel.moveChannel(channel, -1) }
                         GuideChannelPanelPolicy.Row.MOVE_DOWN -> { panelFocusRow = row; viewModel.moveChannel(channel, +1) }
+                        GuideChannelPanelPolicy.Row.UNPIN -> { returnFromMenu(); viewModel.unpinChannel(channel) }
                         GuideChannelPanelPolicy.Row.FIX_GUIDE -> { returnFromMenu(); onFixGuide(account.id) }
                         GuideChannelPanelPolicy.Row.GUIDE_SIZE -> { channelMenuAsk = null; panelFocusRow = null; layoutPickerOpen = true }
                         GuideChannelPanelPolicy.Row.HIDE -> {
@@ -1601,6 +1629,30 @@ fun LiveGuide(
                     }
                 },
                 onClose = ::closeOptions,
+            )
+        }
+        if (pinMenuOpen) {
+            val rows = PinSuggestionMenuRow.entries
+            GuideSidePanel(
+                title = stringResource(R.string.iptv_pin_suggestion_menu_title),
+                subtitle = null,
+                items = rows.map { row ->
+                    GuidePanelItem(
+                        key = row,
+                        label = stringResource(if (row == PinSuggestionMenuRow.NOT_NOW) R.string.iptv_pin_suggestion_not_now else R.string.iptv_pin_suggestion_stop),
+                        sub = stringResource(if (row == PinSuggestionMenuRow.NOT_NOW) R.string.iptv_pin_suggestion_not_now_sub else R.string.iptv_pin_suggestion_stop_sub),
+                    )
+                },
+                focusKey = PinSuggestionMenuRow.NOT_NOW,
+                onItem = { row ->
+                    pinMenuOpen = false
+                    focusFirstRowAfterPinLine = uiState.selectedCategoryId
+                    when (row) {
+                        PinSuggestionMenuRow.NOT_NOW -> viewModel.snoozePinSuggestion()
+                        PinSuggestionMenuRow.STOP -> viewModel.stopPinSuggestions()
+                    }
+                },
+                onClose = { pinMenuOpen = false; pinLineFocus.requestFocusOrFalse() },
             )
         }
         if (layoutPickerOpen) {
@@ -2474,6 +2526,63 @@ private fun PreviewPlayingCaption(
                 .background(Color.Black.copy(alpha = 0.72f))
                 .padding(horizontal = NuvioTheme.spacing.sm, vertical = 2.dp),
         )
+    }
+}
+
+private enum class PinSuggestionMenuRow { NOT_NOW, STOP }
+
+/**
+ * "Pin all N": one unboxed line in the guide's message slot, one action. It never takes focus when the tab opens
+ * (UP from the first row, or DOWN from the tabs, reaches it); MENU on it offers "Not now" and "Stop suggesting". The
+ * caption is read-only text, so only the button is a focus target (the app's own [Button]: FocusRing outline).
+ */
+@Composable
+private fun PinSuggestionLine(
+    count: Int,
+    focusRequester: FocusRequester,
+    up: FocusRequester?,
+    down: FocusRequester,
+    onPinAll: () -> Unit,
+    onMenu: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.xs),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.iptv_pin_suggestion_menu_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = NuvioTheme.colors.TextTertiary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(NuvioTheme.spacing.md))
+        Text(
+            text = androidx.compose.ui.res.pluralStringResource(R.plurals.iptv_pin_suggestion_line, count, count),
+            style = MaterialTheme.typography.labelMedium,
+            color = NuvioTheme.colors.TextSecondary,
+        )
+        Spacer(Modifier.width(NuvioTheme.spacing.md))
+        Button(
+            onClick = onPinAll,
+            modifier = Modifier
+                .focusRequester(focusRequester)
+                .focusProperties {
+                    this.down = down
+                    this.up = up ?: FocusRequester.Default
+                }
+                .onPreviewKeyEvent { event ->
+                    if (event.key != Key.Menu) return@onPreviewKeyEvent false
+                    if (event.type == KeyEventType.KeyDown) onMenu()
+                    true
+                },
+        ) {
+            Icon(Icons.Filled.PushPin, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(NuvioTheme.spacing.xs))
+            Text(androidx.compose.ui.res.pluralStringResource(R.plurals.iptv_pin_suggestion_pin_all, count, count))
+        }
     }
 }
 
