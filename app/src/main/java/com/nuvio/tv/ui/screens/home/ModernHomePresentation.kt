@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.Immutable
 import com.nuvio.tv.LocaleCache
 import com.nuvio.tv.R
-import com.nuvio.tv.core.home.HomeLiveRecent
+import com.nuvio.tv.core.contracts.HomeLiveRecent
 import com.nuvio.tv.core.home.HomeSectionOrderPolicy
 import com.nuvio.tv.core.util.withAppLocale
 import com.nuvio.tv.domain.model.CatalogRow

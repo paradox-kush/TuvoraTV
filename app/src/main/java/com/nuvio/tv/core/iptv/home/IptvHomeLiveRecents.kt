@@ -1,5 +1,7 @@
-package com.nuvio.tv.core.home
+package com.nuvio.tv.core.iptv.home
 
+import com.nuvio.tv.core.contracts.HomeLiveRecent
+import com.nuvio.tv.core.contracts.HomeLiveRecentsProvider
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.epg.XmltvClient
 import com.nuvio.tv.data.local.XtreamAccountStore
@@ -19,16 +21,16 @@ import kotlinx.coroutines.flow.map
  * network and no provider request (see the recurring-network-work rule).
  */
 @Singleton
-class HomeLiveRecentsSource @Inject constructor(
+class IptvHomeLiveRecents @Inject constructor(
     private val liveStore: XtreamLiveStore,
     private val accountStore: XtreamAccountStore,
     private val xmltv: XmltvClient,
-) {
+) : HomeLiveRecentsProvider {
     /** Emits whenever the recents change; each emission re-reads the stored guide for "on now". */
-    val recents: Flow<List<HomeLiveRecent>> = liveStore.recents.map { refs -> build(refs) }
+    override val recents: Flow<List<HomeLiveRecent>> = liveStore.recents.map { refs -> build(refs) }
 
     /** The same list, re-read now (what is on changes while the recents do not). */
-    suspend fun snapshot(): List<HomeLiveRecent> = build(liveStore.recents.first())
+    override suspend fun snapshot(): List<HomeLiveRecent> = build(liveStore.recents.first())
 
     private suspend fun build(refs: List<com.nuvio.tv.data.local.LiveChannelRef>): List<HomeLiveRecent> {
         val chosen = HomeLiveRecentsPolicy.select(refs.map { HomeLiveRecentsPolicy.Candidate(it.id, it.name, it.logo) })

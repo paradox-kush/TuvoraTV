@@ -464,7 +464,7 @@ internal fun buildContinueWatchingItem(
 
 /** One card of the Recent Channels row. The hero shows the channel and what is on now; there is no backdrop to show. */
 internal fun buildLiveChannelItem(
-    recent: com.nuvio.tv.core.home.HomeLiveRecent,
+    recent: com.nuvio.tv.core.contracts.HomeLiveRecent,
     liveLabel: String
 ): ModernCarouselItem = ModernCarouselItem(
     key = "live:${recent.contentId}",

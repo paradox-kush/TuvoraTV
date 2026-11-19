@@ -1,14 +1,6 @@
-package com.nuvio.tv.core.home
+package com.nuvio.tv.core.iptv.home
 
 import com.nuvio.tv.core.iptv.content.EpgProgramme
-
-/** What the Home "Recent Channels" row shows for one channel. [nowTitle] is only set when the guide already knows it. */
-data class HomeLiveRecent(
-    val contentId: String,
-    val name: String,
-    val logo: String?,
-    val nowTitle: String?,
-)
 
 /**
  * Pure decisions for the Home Recent Channels row: which recent channels make the row, and which programme counts

@@ -89,7 +89,7 @@ class HomeViewModel @Inject constructor(
     internal val profileManager: com.nuvio.tv.core.profile.ProfileManager,
     internal val tvRecommendationManager: TvRecommendationManager,
     internal val serverCatalog: ServerCatalog,
-    internal val liveRecentsSource: com.nuvio.tv.core.home.HomeLiveRecentsSource,
+    internal val liveRecentsSource: com.nuvio.tv.core.contracts.HomeLiveRecentsProvider,
     internal val trailerPlayerPool: com.nuvio.tv.core.player.TrailerPlayerPool,
     internal val backgroundTrailerController: com.nuvio.tv.core.player.BackgroundTrailerController,
     internal val metaPreviewEnricher: MetaPreviewEnricher = MetaPreviewEnricher(

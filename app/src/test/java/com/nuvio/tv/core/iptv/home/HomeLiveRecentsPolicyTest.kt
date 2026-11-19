@@ -1,4 +1,4 @@
-package com.nuvio.tv.core.home
+package com.nuvio.tv.core.iptv.home
 
 import com.nuvio.tv.core.iptv.content.EpgProgramme
 import org.junit.Assert.assertEquals

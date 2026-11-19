@@ -1,7 +1,7 @@
 package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.runtime.Immutable
-import com.nuvio.tv.core.home.HomeLiveRecent
+import com.nuvio.tv.core.contracts.HomeLiveRecent
 import com.nuvio.tv.core.home.HomeSectionsConfig
 import com.nuvio.tv.core.tracking.TrackingMembershipRemovalConfirmation
 import com.nuvio.tv.data.local.StartupAuthNotice
