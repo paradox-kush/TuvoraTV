@@ -203,6 +203,7 @@ private fun ServerFailure.signInMessage(provider: ServerProvider): String = when
     ServerFailure.FORBIDDEN -> stringResource(R.string.servers_error_forbidden)
     ServerFailure.CERTIFICATE_UNTRUSTED -> stringResource(R.string.servers_failure_cert_untrusted)
     ServerFailure.CERTIFICATE_CHANGED -> stringResource(R.string.servers_failure_cert_changed)
+    ServerFailure.REMOTE_PLAYBACK_BLOCKED -> stringResource(R.string.servers_failure_remote_playback)
     ServerFailure.INCOMPLETE,
     ServerFailure.FAILED -> stringResource(R.string.servers_error_failed)
 }

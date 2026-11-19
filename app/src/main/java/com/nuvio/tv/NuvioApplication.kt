@@ -35,6 +35,10 @@ import com.nuvio.tv.core.network.imageNetworkFetcherFactory
 import com.nuvio.tv.data.local.ImagePerformancePreferences
 import com.nuvio.tv.data.local.SentrySettingsDataStore
 import com.nuvio.tv.data.mediaserver.ServerUserStateProjection
+import com.nuvio.tv.data.mediaserver.plex.PlexArtworkInterceptor
+import com.nuvio.tv.data.mediaserver.plex.PlexArtworkSigner
+import com.nuvio.tv.data.mediaserver.silo.SiloArtworkInterceptor
+import com.nuvio.tv.data.mediaserver.silo.SiloArtworkRefresher
 import com.nuvio.tv.data.simkl.SimklAnimeIdPreferenceHolder
 import com.posthog.android.PostHogAndroid
 import com.posthog.android.PostHogAndroidConfig
@@ -89,6 +93,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var deviceClaimCoordinator: com.nuvio.tv.core.iptv.DeviceClaimCoordinator
     @Inject lateinit var recordingsPort: com.nuvio.tv.core.recordings.api.RecordingsPort
     @Inject lateinit var calendarComingUpContributor: com.nuvio.tv.core.calendar.CalendarComingUpContributor
+
+    @Inject lateinit var plexArtworkSigner: PlexArtworkSigner
+    @Inject lateinit var siloArtworkRefresher: SiloArtworkRefresher
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -335,6 +342,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 .connectTimeout(4, TimeUnit.SECONDS)
                 .readTimeout(5, TimeUnit.SECONDS)
                 .callTimeout(8, TimeUnit.SECONDS)
+                .addInterceptor(PlexArtworkInterceptor { if (::plexArtworkSigner.isInitialized) plexArtworkSigner else null })
+                .addNetworkInterceptor(PlexArtworkInterceptor.Token { if (::plexArtworkSigner.isInitialized) plexArtworkSigner else null })
+                .addInterceptor(SiloArtworkInterceptor({ if (::siloArtworkRefresher.isInitialized) siloArtworkRefresher else null }))
                 .addInterceptor { chain ->
                     try {
                         chain.proceed(chain.request())

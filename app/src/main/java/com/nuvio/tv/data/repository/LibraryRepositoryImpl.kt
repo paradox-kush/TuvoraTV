@@ -62,6 +62,7 @@ class LibraryRepositoryImpl @Inject constructor(
     private val metaRepository: MetaRepository,
     private val trackingProviders: TrackingLibraryProviderRegistry,
     private val profileManager: ProfileManager,
+    private val addonEventDispatcher: AddonEventDispatcher,
 ) : LibraryRepository {
 
     private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -200,6 +201,13 @@ class LibraryRepositoryImpl @Inject constructor(
     override suspend fun toggleDefault(
         item: LibraryEntryInput,
         confirmedRemovalProviders: Set<TrackingProviderId>
+    ): TrackingMembershipApplyResult = withAddonLibraryEvent(item) {
+        toggleDefaultInternal(item, confirmedRemovalProviders)
+    }
+
+    private suspend fun toggleDefaultInternal(
+        item: LibraryEntryInput,
+        confirmedRemovalProviders: Set<TrackingProviderId>
     ): TrackingMembershipApplyResult {
         // B03/D5: a live-channel favourite stays in the local synced library under Trakt/Simkl too.
         val provider = sourceMode.first().providerId
@@ -255,6 +263,33 @@ class LibraryRepositoryImpl @Inject constructor(
     }
 
     override suspend fun applyMembershipChanges(
+        item: LibraryEntryInput,
+        changes: ListMembershipChanges,
+        confirmedRemovalProviders: Set<TrackingProviderId>
+    ): TrackingMembershipApplyResult = withAddonLibraryEvent(item) {
+        applyMembershipChangesInternal(item, changes, confirmedRemovalProviders)
+    }
+
+    private suspend inline fun withAddonLibraryEvent(
+        item: LibraryEntryInput,
+        mutation: () -> TrackingMembershipApplyResult
+    ): TrackingMembershipApplyResult {
+        if (!addonEventDispatcher.hasEnabledAddonFor(ADDON_LIBRARY_RESOURCE)) return mutation()
+        val wasInLibrary = isInLibrary(item.itemId, item.itemType).first()
+        val result = mutation()
+        if (result.requiresRemovalConfirmation) return result
+        val isInLibraryNow = isInLibrary(item.itemId, item.itemType).first()
+        if (wasInLibrary != isInLibraryNow) {
+            addonEventDispatcher.library(
+                type = item.itemType,
+                id = item.itemId,
+                action = if (isInLibraryNow) AddonLibraryAction.LIBRARY_ADD else AddonLibraryAction.LIBRARY_REMOVE
+            )
+        }
+        return result
+    }
+
+    private suspend fun applyMembershipChangesInternal(
         item: LibraryEntryInput,
         changes: ListMembershipChanges,
         confirmedRemovalProviders: Set<TrackingProviderId>

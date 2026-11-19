@@ -13,6 +13,7 @@ fun ServerFailure.messageRes(): Int = when (this) {
     ServerFailure.UNSUPPORTED -> R.string.servers_failure_unsupported
     ServerFailure.CERTIFICATE_UNTRUSTED -> R.string.servers_failure_cert_untrusted
     ServerFailure.CERTIFICATE_CHANGED -> R.string.servers_failure_cert_changed
+    ServerFailure.REMOTE_PLAYBACK_BLOCKED -> R.string.servers_failure_remote_playback
     ServerFailure.FAILED -> R.string.servers_error_failed
 }
 

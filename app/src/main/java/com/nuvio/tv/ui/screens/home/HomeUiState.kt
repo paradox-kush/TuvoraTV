@@ -5,6 +5,7 @@ import com.nuvio.tv.core.tracking.TrackingMembershipRemovalConfirmation
 import com.nuvio.tv.data.local.StartupAuthNotice
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.ContinueWatchingCardStyle
+import com.nuvio.tv.domain.model.ContinueWatchingClickAction
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeImdbRatingsVisibility
@@ -75,6 +76,7 @@ data class HomeUiState(
     val useEpisodeThumbnailsInCw: Boolean = true,
     val continueWatchingEnabled: Boolean = true,
     val continueWatchingCardStyle: ContinueWatchingCardStyle = ContinueWatchingCardStyle.CARD,
+    val continueWatchingClickAction: ContinueWatchingClickAction = ContinueWatchingClickAction.STREAM,
     val heroEnrichmentEnabled: Boolean = false,
     val startupAuthNotice: StartupAuthNotice? = null,
     val homeRows: List<HomeRow> = emptyList(),
@@ -117,6 +119,12 @@ val ContinueWatchingItem.shuffleFocusKey: String?
         is ContinueWatchingItem.InProgress -> "cw_shuffle_${progress.contentId}"
         is ContinueWatchingItem.NextUp -> "cw_shuffle_${info.contentId}"
     }
+
+fun ContinueWatchingClickAction.opensDetails(item: ContinueWatchingItem): Boolean = when (this) {
+    ContinueWatchingClickAction.STREAM -> false
+    ContinueWatchingClickAction.DETAILS -> true
+    ContinueWatchingClickAction.DETAILS_FOR_UPCOMING -> item is ContinueWatchingItem.NextUp && !item.info.hasAired
+}
 
 @Immutable
 data class NextUpInfo(

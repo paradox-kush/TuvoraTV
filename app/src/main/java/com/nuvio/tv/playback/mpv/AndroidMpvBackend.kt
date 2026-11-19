@@ -167,7 +167,7 @@ internal class AndroidMpvBackendFactory(
     context: Context,
     private val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
     private val dispatcher: CoroutineDispatcher? = null,
-    private val coreFactory: () -> MpvNativeCore = { AndroidMpvNativeCore(MPV()) },
+    private val coreFactory: () -> MpvNativeCore = { AndroidMpvNativeCore() },
 ) : MpvBackendFactory {
     private val appContext = context.applicationContext
 
@@ -493,7 +493,9 @@ internal class AndroidMpvBackend(
         if (lifecycle !in activeStates) return@onNativeLane stateFailure(FailurePhase.PLAYBACK)
         PlaybackResult.Success(
             MpvMetrics(
-                videoRendered = core.long(PRESENTED_VIDEO_FRAMES),
+                // No presented-frame counter on the stock lib: null makes the frame-stall freeze verdict abstain
+                // (LiveFreezePolicy / PlaybackPolicy return no verdict) instead of guessing.
+                videoRendered = null,
                 videoSkipped = core.long("decoder-frame-drop-count"),
                 videoDropped = core.long("frame-drop-count"),
                 audioProgress = audioProgress,
@@ -612,11 +614,6 @@ internal class AndroidMpvBackend(
                         lastStreamPosition = value
                     }
                 }
-                PRESENTED_VIDEO_FRAMES -> if (value > 0 && !firstVideoFrameSent) {
-                    firstVideoFrameSent = true
-                    lifecycle = MpvBackendLifecycle.PLAYING
-                    _events.tryEmit(MpvBackendEvent.FirstVideoFrame)
-                }
                 "video-params/w" -> {
                     videoWidth = value.toInt()
                     emitVideoSizeIfKnown()
@@ -632,6 +629,13 @@ internal class AndroidMpvBackend(
     override fun property(name: String, value: Boolean) {
         scope.launch {
             if (terminalEventsSuppressed) return@launch
+            if (name == VIDEO_OUTPUT_CONFIGURED && value && !firstVideoFrameSent &&
+                lifecycle != MpvBackendLifecycle.DEAD && lifecycle != MpvBackendLifecycle.RELEASING
+            ) {
+                firstVideoFrameSent = true
+                lifecycle = MpvBackendLifecycle.PLAYING
+                _events.tryEmit(MpvBackendEvent.FirstVideoFrame)
+            }
             if (name == "paused-for-cache") {
                 _events.tryEmit(if (value) MpvBackendEvent.BufferingStarted else MpvBackendEvent.BufferingEnded)
             }
@@ -783,7 +787,7 @@ internal class AndroidMpvBackend(
 
     private fun observeFacts() {
         core.observeLong("stream-pos")
-        core.observeLong(PRESENTED_VIDEO_FRAMES)
+        core.observeBoolean(VIDEO_OUTPUT_CONFIGURED)
         core.observeLong("decoder-frame-drop-count")
         core.observeLong("frame-drop-count")
         core.observeLong("video-params/w")
@@ -976,7 +980,12 @@ internal class AndroidMpvBackend(
     )
 
     private companion object {
-        const val PRESENTED_VIDEO_FRAMES = "presented-video-frame-count"
+        /**
+         * Stock mpv has no presented-frame counter (the fork's patched libmpv did; sync 16 dropped it for
+         * mpv-android-lib 0.2.1). `vo-configured` turns true when the video output has been configured for
+         * the first decoded frame, which is the closest stock signal to "a video frame is on screen".
+         */
+        const val VIDEO_OUTPUT_CONFIGURED = "vo-configured"
         const val BYTE_PROGRESS_STEP = 256L * 1_024L
 
         /** Same pace as the Media3 backend's timeline facts, which every snapshot consumer is built for. */
@@ -1006,13 +1015,34 @@ internal class AndroidMpvBackend(
     }
 }
 
-private class AndroidMpvNativeCore(private val mpv: MPV) : MpvNativeCore {
+/**
+ * The stock `mpv-android-lib` 0.2.1 core (sync 16; the fork's patched libmpv is gone).
+ *
+ * 0.2.1 creates AND initialises the native core inside the [MPV] constructor, so [create] is where
+ * the instance is built (always on the backend's native lane, never Main) and [initialize] is a
+ * no-op; every option the plan names is therefore set after init, exactly as upstream's own
+ * `NuvioBaseMpvView.initOptions` does. The stock lib's surface/teardown calls return nothing: a
+ * native failure surfaces as an exception, which maps to `false` here. Nothing in the stock lib is
+ * safe to call twice, so [destroyWithResult] / [forceTerminateWithResult] close at most once.
+ */
+private class AndroidMpvNativeCore : MpvNativeCore {
+    private var mpv: MPV? = null
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
     private var observerBridge: MPV.EventObserver? = null
     private var logObserverBridge: MPV.LogObserver? = null
 
-    override fun create(context: Context) = mpv.create(context)
-    override fun setOption(name: String, value: String): Boolean = mpv.setOptionString(name, value) >= 0
-    override fun initialize() = mpv.init()
+    private fun instance(): MPV = checkNotNull(mpv) { "mpv core not created" }
+
+    override fun create(context: Context) {
+        mpv = MPV(
+            context,
+            File(context.filesDir, MPV_CONFIG_DIR).apply { mkdirs() }.absolutePath,
+            context.cacheDir.absolutePath,
+        )
+    }
+    override fun setOption(name: String, value: String): Boolean = instance().setOptionString(name, value) >= 0
+    /** 0.2.1 initialises in the constructor. */
+    override fun initialize() = Unit
     override fun addObserver(observer: MpvNativeObserver) {
         val bridge = object : MPV.EventObserver {
             override fun eventProperty(property: String) = Unit
@@ -1028,29 +1058,42 @@ private class AndroidMpvNativeCore(private val mpv: MPV) : MpvNativeCore {
         }
         observerBridge = bridge
         logObserverBridge = logBridge
-        mpv.addObserver(bridge)
-        mpv.addLogObserver(logBridge)
+        instance().addObserver(bridge)
+        instance().addLogObserver(logBridge)
     }
     override fun removeObserver(observer: MpvNativeObserver) {
-        observerBridge?.let(mpv::removeObserver)
-        logObserverBridge?.let(mpv::removeLogObserver)
+        val core = mpv
+        if (core != null) {
+            observerBridge?.let(core::removeObserver)
+            logObserverBridge?.let(core::removeLogObserver)
+        }
         observerBridge = null
         logObserverBridge = null
     }
-    override fun observeLong(name: String) = mpv.observeProperty(name, MPV.mpvFormat.MPV_FORMAT_INT64)
-    override fun observeDouble(name: String) = mpv.observeProperty(name, MPV.mpvFormat.MPV_FORMAT_DOUBLE)
-    override fun observeBoolean(name: String) = mpv.observeProperty(name, MPV.mpvFormat.MPV_FORMAT_FLAG)
-    override fun observeString(name: String) = mpv.observeProperty(name, MPV.mpvFormat.MPV_FORMAT_STRING)
-    override fun observeNode(name: String) = mpv.observeProperty(name, MPV.mpvFormat.MPV_FORMAT_NODE)
-    override fun attachSurface(surface: Surface): Boolean = mpv.attachSurfaceWithResult(surface)
-    override fun detachSurfaceWithResult(): Boolean = mpv.detachSurfaceWithResult()
-    override fun command(vararg values: String) = mpv.command(*values)
-    override fun setString(name: String, value: String) = mpv.setPropertyString(name, value)
-    override fun setBoolean(name: String, value: Boolean) = mpv.setPropertyBoolean(name, value)
-    override fun long(name: String): Long? = mpv.getPropertyLong(name)
-    override fun node(name: String): MPVNode = mpv.getPropertyNode(name) ?: MPVNode.None
-    override fun destroyWithResult(): Boolean = mpv.destroyWithResult()
-    override fun forceTerminateWithResult(): Boolean = mpv.destroyWithResult()
+    override fun observeLong(name: String) { instance().observeProperty(name, MPV.mpvFormat.MPV_FORMAT_INT64) }
+    override fun observeDouble(name: String) { instance().observeProperty(name, MPV.mpvFormat.MPV_FORMAT_DOUBLE) }
+    override fun observeBoolean(name: String) { instance().observeProperty(name, MPV.mpvFormat.MPV_FORMAT_FLAG) }
+    override fun observeString(name: String) { instance().observeProperty(name, MPV.mpvFormat.MPV_FORMAT_STRING) }
+    override fun observeNode(name: String) { instance().observeProperty(name, MPV.mpvFormat.MPV_FORMAT_NODE) }
+    override fun attachSurface(surface: Surface): Boolean = runCatching { instance().attachSurface(surface) }.isSuccess
+    override fun detachSurfaceWithResult(): Boolean = runCatching { instance().detachSurface() }.isSuccess
+    override fun command(vararg values: String) { instance().command(*values) }
+    override fun setString(name: String, value: String) { instance().setPropertyString(name, value) }
+    override fun setBoolean(name: String, value: Boolean) { instance().setPropertyBoolean(name, value) }
+    override fun long(name: String): Long? = instance().getPropertyLong(name)
+    override fun node(name: String): MPVNode = instance().getPropertyNode(name) ?: MPVNode.None
+    override fun destroyWithResult(): Boolean = closeOnce()
+    override fun forceTerminateWithResult(): Boolean = closeOnce()
+
+    private fun closeOnce(): Boolean {
+        val core = mpv ?: return true // never created: nothing to destroy
+        if (!closed.compareAndSet(false, true)) return true
+        return runCatching { core.close() }.isSuccess
+    }
+
+    private companion object {
+        const val MPV_CONFIG_DIR = "mpv"
+    }
 }
 
 /** `demuxer-cache-state/seekable-ranges` as [MpvCacheRange]s (mpv input.rst); empty when absent. */

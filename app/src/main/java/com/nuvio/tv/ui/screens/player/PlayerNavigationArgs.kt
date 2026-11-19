@@ -46,7 +46,9 @@ internal data class PlayerNavigationArgs(
     val isCatchUp: Boolean = false,
     val catchUpStartMs: Long? = null,
     val catchUpEndMs: Long? = null,
-    val fromLinkCache: Boolean = false
+    val fromLinkCache: Boolean = false,
+    /** The source was picked by auto source selection (or reused from the link cache). */
+    val autoPlayNav: Boolean = false
 ) {
     val torrentTrackers: List<String>
         get() {
@@ -112,7 +114,8 @@ internal data class PlayerNavigationArgs(
                 isCatchUp = savedStateHandle.get<String>("isCatchUp")?.toBooleanStrictOrNull() == true,
                 catchUpStartMs = savedStateHandle.get<String>("catchUpStartMs")?.toLongOrNull(),
                 catchUpEndMs = savedStateHandle.get<String>("catchUpEndMs")?.toLongOrNull(),
-                fromLinkCache = savedStateHandle.get<String>("fromLinkCache")?.toBooleanStrictOrNull() == true
+                fromLinkCache = savedStateHandle.get<String>("fromLinkCache")?.toBooleanStrictOrNull() == true,
+                autoPlayNav = savedStateHandle.get<String>("autoPlayNav")?.toBooleanStrictOrNull() == true
             )
         }
     }

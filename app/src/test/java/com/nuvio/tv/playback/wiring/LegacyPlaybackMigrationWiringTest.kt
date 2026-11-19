@@ -29,8 +29,9 @@ class LegacyPlaybackMigrationWiringTest {
         // 73: liveBufferSeconds (F13). 75: nightMode + downmixLfeLevel (upstream sync 14).
         // 81: VOD player converged on upstream (2026-11-04): -addonSubtitleStartupMode (upstream
         // removed it), +7 upstream player fields (libass mode/scale, chapters, Hi10p, post-play x2,
-        // next-episode fallback). 82: chapterTitleEnabled (upstream sync 15).
-        assertEquals(82, productionFields.size)
+        // next-episode fallback). 82: chapterTitleEnabled (upstream sync 15). 85: source fallback on failure,
+        // max sources, startup timeout (upstream sync 16; default OFF).
+        assertEquals(85, productionFields.size)
         assertEquals(productionFields, LegacyPlayerSettingsSnapshotMapper.topLevelFieldNames)
         val mapped = LegacyPlayerSettingsSnapshotMapper.map(PlayerSettings(), "player-settings-v1")
         assertTrue(mapped.values.keys.containsAll(productionFields))

@@ -2,6 +2,7 @@ package com.nuvio.tv.data.mediaserver
 
 import android.util.Log
 import com.nuvio.tv.core.profile.ProfileScopedCredentialStore
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -61,6 +64,7 @@ class ServerRepository(
     private var libraryRefreshPending = false
     private var localVersion = 0L
     private val mutableLocalChanges = MutableSharedFlow<Int>(extraBufferCapacity = 8)
+    private val renewals = ConcurrentHashMap<String, Mutex>()
     val localChanges: SharedFlow<Int> = mutableLocalChanges.asSharedFlow()
 
     fun onDeviceSourcesChanged() {
@@ -80,6 +84,11 @@ class ServerRepository(
     fun selectProfile(profileId: Int) {
         activeProfileId = profileId
         ensureLoaded()
+    }
+
+    fun profileDeviceId(clientId: String): String {
+        val profileId = loadedProfileId ?: activeProfileId
+        return if (profileId == 1) clientId else "$clientId-p$profileId"
     }
 
     fun connection(connectionId: String): ServerConnection? {
@@ -120,7 +129,16 @@ class ServerRepository(
         fun isCurrent() = startedScope == libraryLoadEpoch &&
             mutableState.value.connections.firstOrNull { it.id == connectionId } == connection
         return try {
-            com.nuvio.tv.core.sources.DeviceSources.guarded("media_server","${connection.providerId}|${connection.remoteServerId}|${connection.remoteUserId}") { block(provider, session) }.also {
+            com.nuvio.tv.core.sources.DeviceSources.guarded("media_server","${connection.providerId}|${connection.remoteServerId}|${connection.remoteUserId}") {
+                val current = if (provider.renewalDue(session)) renewedAhead(provider, session) else session
+                try {
+                    block(provider, current)
+                } catch (error: ServerException) {
+                    if (error.failure != ServerFailure.AUTH_REQUIRED) throw error
+                    val renewed = renewed(provider, current, error) ?: throw error
+                    block(provider, renewed)
+                }
+            }.also {
                 if (!isCurrent()) throw CancellationException("Server scope changed")
                 setFailure(connectionId, null, startedScope, connection)
             }
@@ -135,11 +153,72 @@ class ServerRepository(
         }
     }
 
-    suspend fun connect(provider: ServerProvider, address: String, username: String, password: String): ServerConnection {
+    /**
+     * For a play already running: renews like [call], but carries on when the server list changes, uses [started]
+     * when its connection is gone, and leaves the connection's failure state alone.
+     */
+    suspend fun <T> callForPlayback(
+        started: ServerSession,
+        block: suspend (ServerProvider, ServerSession) -> T
+    ): T {
+        val session = session(started.connection.id) ?: started
+        val provider = provider(session.connection) ?: throw ServerException(ServerFailure.UNSUPPORTED)
+        val current = if (provider.renewalDue(session)) renewedAhead(provider, session) else session
+        return try {
+            block(provider, current)
+        } catch (error: ServerException) {
+            if (error.failure != ServerFailure.AUTH_REQUIRED) throw error
+            val renewed = renewed(provider, current, error) ?: throw error
+            block(provider, renewed)
+        }
+    }
+
+    /** Renews ahead of time; the current token is kept when the server can't be asked right now. */
+    private suspend fun renewedAhead(provider: ServerProvider, session: ServerSession): ServerSession = try {
+        renewed(provider, session, failure = null) ?: session
+    } catch (error: ServerException) {
+        if (error.failure == ServerFailure.AUTH_REQUIRED) throw error
+        session
+    }
+
+    /** One renewal at a time per connection: a call that waited gets the token the first one saved. */
+    private suspend fun renewed(provider: ServerProvider, session: ServerSession, failure: ServerException?): ServerSession? {
+        val connectionId = session.connection.id
+        return renewals.getOrPut(connectionId) { Mutex() }.withLock {
+            val latest = session(connectionId) ?: return@withLock null
+            if (latest.token != session.token) return@withLock latest
+            val profileId = loadedProfileId ?: return@withLock null
+            val token = provider.renewToken(latest, failure) ?: return@withLock null
+            if (!replaceToken(profileId, latest.connection, latest.token, token)) return@withLock null
+            ServerSession(latest.connection, token)
+        }
+    }
+
+    /** Saves [token] only while [profileId] is loaded and the connection still holds [previous]. */
+    private fun replaceToken(profileId: Int, connection: ServerConnection, previous: String, token: String): Boolean {
+        val updated = synchronized(lock) {
+            if (loadedProfileId != profileId || tokens[connection.credentialRef] != previous) return false
+            (tokens + (connection.credentialRef to token)).also { tokens = it }
+        }
+        val changesAccount = syncsSignIn(connection) && provider(connection)?.renewalChangesAccount(previous, token) != false
+        if (changesAccount) {
+            pendingPush = true
+            localVersion++
+        }
+        persist(mutableState.value.connections, updated)
+        if (changesAccount) mutableLocalChanges.tryEmit(profileId)
+        return true
+    }
+
+    suspend fun connect(provider: ServerProvider, address: String, username: String, password: String): ServerConnection =
+        connect(provider) { provider.signIn(address, username, password) }
+
+    /** Saves the connection [signIn] returns, for servers that sign in some other way than with a password. */
+    suspend fun connect(provider: ServerProvider, signIn: suspend () -> ServerSignIn): ServerConnection {
         ensureLoaded()
         val startedGeneration = generation
         val profileId = loadedProfileId ?: activeProfileId
-        return storeSignIn(provider, provider.signIn(address, username, password), startedGeneration, profileId)
+        return storeSignIn(provider, signIn(), startedGeneration, profileId)
     }
 
     /** Stores a sign-in made elsewhere (Quick Connect): the token it carries is this device's own. */
@@ -272,9 +351,18 @@ class ServerRepository(
             profileId = profileId,
             version = localVersion,
             // Tokenless servers (arrived from another device, not yet signed in here) stay in the set, or the
-            // next push would delete them for every device.
-            servers = mutableState.value.connections.filter { it.managedBridgeId == null }.map { connection ->
-                connection.toSynced(currentTokens[connection.credentialRef].orEmpty())
+            // next push would delete them for every device. A token never leaves the device (toSyncPayload
+            // blanks it), so the account copy below only decides which servers are offered at all: one whose
+            // copy is too long for the backend stays on this device.
+            servers = mutableState.value.connections.filter { it.managedBridgeId == null && syncsSignIn(it) }.mapNotNull { connection ->
+                val token = currentTokens[connection.credentialRef]
+                if (token.isNullOrBlank()) {
+                    connection.toSynced("")
+                } else {
+                    (provider(connection)?.tokenForAccount(token) ?: token)
+                        .takeIf { it.length <= MAX_ACCOUNT_TOKEN_LENGTH }
+                        ?.let(connection::toSynced)
+                }
             },
             pendingPush = pendingPush,
             syncedKeys = syncedKeys
@@ -293,7 +381,9 @@ class ServerRepository(
             val credentialRef = local?.credentialRef ?: newId("k")
             val id = local?.id ?: server.id.takeUnless { id -> current.any { it.id == id } || id in usedIds } ?: newId("c")
             usedIds += id
-            val token = server.token.ifBlank { currentTokens[credentialRef].orEmpty() }
+            val localToken = local?.let { currentTokens[credentialRef] }
+            val token = localToken?.takeIf { provider(local)?.keepsLocalToken(it, server.token) == true }
+                ?: server.token.ifBlank { localToken.orEmpty() }
             if (token.isNotBlank()) {
                 updatedTokens[credentialRef] = token
                 if (local != null && currentTokens[credentialRef] != token) setFailure(local.id, null)
@@ -303,18 +393,31 @@ class ServerRepository(
             }
             server.toConnection(id, credentialRef)
         }
-        val managed = current.filter { it.managedBridgeId != null }
-        managed.forEach { currentTokens[it.credentialRef]?.let { token -> updatedTokens[it.credentialRef] = token } }
-        (current.filter { it.managedBridgeId == null }.map { it.id } - usedIds).forEach { setFailure(it, null) }
+        val offered = snapshot.servers.mapTo(mutableSetOf()) { it.key }
+        // Kept as they are: managed bridge connections, sign-ins that never sync (Plex, Silo), and anything
+        // added on this device after the snapshot was taken.
+        val deviceOnly = current.filter {
+            it.id !in usedIds &&
+                (it.managedBridgeId != null || !syncsSignIn(it) ||
+                    serverKey(it.providerId, it.remoteServerId, it.remoteUserId) !in offered)
+        }
+        deviceOnly.forEach { connection ->
+            currentTokens[connection.credentialRef]?.let { updatedTokens[connection.credentialRef] = it }
+        }
+        val kept = connections.toMutableList()
+        deviceOnly.forEach { connection -> kept.add(current.indexOf(connection).coerceAtMost(kept.size), connection) }
+        (current.map { it.id } - usedIds - deviceOnly.map { it.id }.toSet()).forEach { setFailure(it, null) }
         pendingPush = false
         syncedKeys = keys
-        if (connections + managed == current && updatedTokens == currentTokens) {
+        if (kept == current && updatedTokens == currentTokens) {
             persist(current, currentTokens)
         } else {
-            save(connections + managed, updatedTokens, local = false)
+            save(kept, updatedTokens, local = false)
         }
         return true
     }
+
+    private fun syncsSignIn(connection: ServerConnection): Boolean = provider(connection)?.syncsSignIn != false
 
     fun markPushed(snapshot: ServerSyncSnapshot) {
         if (loadedProfileId != snapshot.profileId) return
@@ -496,5 +599,6 @@ class ServerRepository(
 
     private companion object {
         const val TAG = "ServerRepository"
+        const val MAX_ACCOUNT_TOKEN_LENGTH = 1024
     }
 }

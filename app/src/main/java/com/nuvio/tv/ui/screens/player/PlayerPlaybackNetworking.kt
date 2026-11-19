@@ -8,11 +8,18 @@ import com.nuvio.tv.core.contracts.PlaybackTlsClass
 import com.nuvio.tv.core.contracts.PlaybackTrustHosts
 import com.nuvio.tv.core.network.IPv4FirstDns
 import com.nuvio.tv.core.network.PlaybackSocketFactory
+import com.nuvio.tv.core.player.Http2RetryPolicy
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.HttpsURLConnection
@@ -107,13 +114,73 @@ internal object PlayerPlaybackNetworking {
     }
 
     /**
+     * Hosts that rejected an HTTP/1.1 request with 403 but accepted the same request over HTTP/2.
+     * Kept in memory only (never persisted) so later requests to that host skip the failing
+     * HTTP/1.1 attempt. Bounded so it can never grow without limit.
+     */
+    private val http2Hosts: MutableSet<String> =
+        Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    private const val HTTP2_HOSTS_MAX = 64
+
+    /**
+     * Playback stays on HTTP/1.1. Only for streams that carry addon proxyHeaders: if a request
+     * gets 403 over HTTP/1.1, it is repeated once over HTTP/2 (ALPN, falling back to HTTP/1.1).
+     * A successful retry marks the host, so the following requests go straight to HTTP/2.
+     * Cleartext URLs never negotiate HTTP/2 and are left alone. If the retry also fails, the
+     * original 403 is returned unchanged.
+     */
+    private class Http2On403Interceptor(
+        private val http2Client: OkHttpClient,
+        private val singleUseLink: Boolean,
+        private val playlistDnsInUse: Boolean,
+    ) : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val request = chain.request()
+            // Fork: an IPTV / Stalker / own-source / single-use link is never repeated (a 403 there is
+            // "spent", and the repeat is another request on a single-use URL). See Http2RetryPolicy.
+            val host = request.url.host
+            if (!Http2RetryPolicy.allowed(
+                    isHttps = request.url.isHttps,
+                    host = host,
+                    singleUseLink = singleUseLink,
+                    playlistDnsInUse = playlistDnsInUse,
+                    isPanelHost = PlaybackTrustHosts::isPanelHost,
+                    isMediaServerHost = PlaybackTrustHosts::isMediaServerHost,
+                )
+            ) {
+                return chain.proceed(request)
+            }
+            if (host in http2Hosts) return http2Client.newCall(request).execute()
+
+            val response = chain.proceed(request)
+            if (response.code != 403) return response
+
+            val retry = try {
+                http2Client.newCall(request).execute()
+            } catch (e: IOException) {
+                return response
+            }
+            return if (retry.isSuccessful) {
+                if (http2Hosts.size >= HTTP2_HOSTS_MAX) http2Hosts.clear()
+                http2Hosts.add(host)
+                response.close()
+                retry
+            } else {
+                retry.close()
+                response
+            }
+        }
+    }
+
+    /**
      * [dns]: the IPTV playlist's own resolver (DNS-over-HTTPS) for its VOD; null keeps the default
      * IPv4-first system DNS.
      */
     fun createHttpClient(
         defaultHeaders: Map<String, String> = emptyMap(),
         useLongReadTimeout: Boolean = false,
-        dns: okhttp3.Dns? = null
+        dns: okhttp3.Dns? = null,
+        singleUseLink: Boolean = false
     ): OkHttpClient {
         val builder = playbackHttpClient.newBuilder()
         if (dns != null) builder.dns(dns)
@@ -133,8 +200,18 @@ internal object PlayerPlaybackNetworking {
                 chain.proceed(next.build())
             }
         }
-        return builder
+        val http1Client = builder
             .let { NuvioExoPlayerPerformanceHelper.applyNetworkOptimizations(it) }
+            .build()
+        if (proxyHeaders.isEmpty()) return http1Client
+
+        // Same client (same proxyHeaders network interceptor, pool and dispatcher) but allowed to
+        // negotiate HTTP/2. It does not contain the retry interceptor below, so it cannot loop.
+        val http2Client = http1Client.newBuilder()
+            .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+            .build()
+        return http1Client.newBuilder()
+            .addInterceptor(Http2On403Interceptor(http2Client, singleUseLink, playlistDnsInUse = dns != null))
             .build()
     }
 
@@ -142,7 +219,8 @@ internal object PlayerPlaybackNetworking {
     fun createHttpDataSourceFactory(
         defaultHeaders: Map<String, String> = emptyMap(),
         useLongReadTimeout: Boolean = false,
-        dns: okhttp3.Dns? = null
+        dns: okhttp3.Dns? = null,
+        singleUseLink: Boolean = false
     ): DataSource.Factory {
         val requestHeaders = defaultHeaders.mapNotNull { (rawKey, rawValue) ->
             val key = rawKey.trim()
@@ -153,7 +231,7 @@ internal object PlayerPlaybackNetworking {
                 key to value
             }
         }.toMap()
-        val client = createHttpClient(requestHeaders, useLongReadTimeout, dns)
+        val client = createHttpClient(requestHeaders, useLongReadTimeout, dns, singleUseLink)
         val httpFactory = OkHttpDataSource.Factory(client).apply {
             setDefaultRequestProperties(requestHeaders)
             if (requestHeaders.none { it.key.equals("User-Agent", ignoreCase = true) }) {
@@ -167,9 +245,10 @@ internal object PlayerPlaybackNetworking {
     fun createDataSourceFactory(
         context: android.content.Context,
         defaultHeaders: Map<String, String> = emptyMap(),
-        dns: okhttp3.Dns? = null
+        dns: okhttp3.Dns? = null,
+        singleUseLink: Boolean = false
     ): DataSource.Factory {
-        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, dns = dns))
+        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, dns = dns, singleUseLink = singleUseLink))
     }
 
     fun openConnection(

@@ -237,7 +237,7 @@ class AndroidMpvBackendTest {
     }
 
     @Test
-    fun `only VO presented counter can publish first video frame`() = runTest {
+    fun `only a configured video output can publish first video frame`() = runTest {
         val core = FakeCore()
         val backend = backend(core)
         assertSuccess(backend.attachSurface(FakeLease()))
@@ -245,11 +245,13 @@ class AndroidMpvBackendTest {
             backend.events.first { it == MpvBackendEvent.FirstVideoFrame }
         }
 
-        core.observer?.event(17, MPVNode.None) // VIDEO_RECONFIG is not presentation proof.
-        core.observer?.event(21, MPVNode.None) // PLAYBACK_RESTART is not presentation proof.
+        core.observer?.event(17, MPVNode.None) // VIDEO_RECONFIG alone is not a configured output.
+        core.observer?.event(21, MPVNode.None) // PLAYBACK_RESTART alone is not a configured output.
+        core.observer?.property("vo-configured", false)
         runCurrent()
         assertTrue(!event.isCompleted)
-        core.observer?.property("presented-video-frame-count", 1L)
+        // Stock libmpv 0.2.1 has no presented-frame counter; vo-configured is the closest stock signal.
+        core.observer?.property("vo-configured", true)
         runCurrent()
         assertEquals(MpvBackendEvent.FirstVideoFrame, event.await())
     }

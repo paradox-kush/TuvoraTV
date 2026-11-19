@@ -146,6 +146,9 @@ import com.nuvio.tv.R
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.auth.DeviceSessionRegistration
 import com.nuvio.tv.core.deeplink.DeepLinkHandler
+import com.nuvio.tv.core.deeplink.DeepLinkInstallResult
+import com.nuvio.tv.data.repository.TrackingAddonConsentController
+import com.nuvio.tv.ui.components.TrackingAddonConsentDialog
 import com.nuvio.tv.core.deeplink.DeepLinkParser
 import com.nuvio.tv.core.player.PlayerWindowBackdrop
 import com.nuvio.tv.core.party.PartyRepository
@@ -239,6 +242,7 @@ data class SplashBackground(
 val LocalSplashBackground = compositionLocalOf { SplashBackground() }
 
 private const val SIDEBAR_AUTO_COLLAPSE_DELAY_MS = 3_000L
+private const val SIDEBAR_FOCUS_RECOVERY_ATTEMPTS = 15
 
 private const val MAX_SUPPORTED_FONT_SCALE = 1.15f
 
@@ -328,10 +332,16 @@ open class MainActivity : ComponentActivity() {
     lateinit var trailerPlayerPool: com.nuvio.tv.core.player.TrailerPlayerPool
 
     @Inject
+    lateinit var backgroundTrailerController: com.nuvio.tv.core.player.BackgroundTrailerController
+
+    @Inject
     lateinit var externalPlaybackTracker: com.nuvio.tv.core.player.ExternalPlaybackTracker
 
     @Inject
     lateinit var deepLinkHandler: DeepLinkHandler
+
+    @Inject
+    lateinit var trackingAddonConsentController: TrackingAddonConsentController
 
     @Inject
     lateinit var partyRepository: PartyRepository
@@ -731,6 +741,7 @@ open class MainActivity : ComponentActivity() {
                     LocalMemberAccess provides mainUiPrefs.memberAccess,
                     LocalAmbientIdleController provides ambientIdleController,
                     com.nuvio.tv.core.player.LocalTrailerPlayerPool provides trailerPlayerPool,
+                    com.nuvio.tv.core.player.LocalBackgroundTrailerController provides backgroundTrailerController,
                     LocalSplashBackground provides splashBackground,
                     LocalStartupLoadingState provides startupLoadingState,
                     LocalStartupSplashEnabled provides startupSplashEnabled
@@ -888,7 +899,9 @@ open class MainActivity : ComponentActivity() {
                                 lifecycleScope.launch {
                                     Toast.makeText(context, context.getString(R.string.addon_installing), Toast.LENGTH_SHORT).show()
                                     val result = deepLinkHandler.installAddon(manifestUrl)
-                                    Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                                    if (result !is DeepLinkInstallResult.ConsentRequired) {
+                                        Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                                    }
                                 }
                             }) { androidx.tv.material3.Text(context.getString(R.string.addon_install_title)) }
                         }
@@ -901,6 +914,27 @@ open class MainActivity : ComponentActivity() {
                             addonLinkToConfirm = deepLink.manifestUrl
                             if (pendingDeepLinkUrl.value == url) pendingDeepLinkUrl.value = null
                         }
+                    }
+
+                    val pendingTrackingInstall by trackingAddonConsentController.pending.collectAsState()
+                    pendingTrackingInstall?.let { pending ->
+                        TrackingAddonConsentDialog(
+                            addonName = pending.addon.displayName.ifBlank { pending.addon.baseUrl },
+                            onInstall = {
+                                lifecycleScope.launch {
+                                    val installed = trackingAddonConsentController.install() ?: return@launch
+                                    Toast.makeText(
+                                        context,
+                                        context.getString(
+                                            R.string.addon_install_success,
+                                            installed.displayName.ifBlank { installed.baseUrl }
+                                        ),
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            },
+                            onDismiss = trackingAddonConsentController::dismiss
+                        )
                     }
 
                     if (needsEssentialAddonSetup) {
@@ -1515,19 +1549,23 @@ private fun SidebarFocusRecoveryEffect(
     drawerItems: List<DrawerItem>,
     selectedDrawerRoute: String?,
     drawerItemFocusRequesters: Map<String, FocusRequester>,
-    sidebarOwnsFocus: Boolean
+    sidebarOwnsFocus: Boolean,
+    sidebarHasFocus: Boolean
 ) {
-    LaunchedEffect(drawerItems, sidebarOwnsFocus, selectedDrawerRoute) {
+    LaunchedEffect(drawerItems, sidebarOwnsFocus, selectedDrawerRoute, sidebarHasFocus) {
         if (!sidebarOwnsFocus) {
             return@LaunchedEffect
         }
-        if (selectedDrawerRoute != null && drawerItems.any { it.route == selectedDrawerRoute }) {
+        val selectedVisible = selectedDrawerRoute != null && drawerItems.any { it.route == selectedDrawerRoute }
+        if (selectedVisible && sidebarHasFocus) {
             return@LaunchedEffect
         }
-        val fallbackRoute = drawerItems.firstOrNull()?.route ?: return@LaunchedEffect
-        val requester = drawerItemFocusRequesters[fallbackRoute] ?: return@LaunchedEffect
-        repeat(2) { withFrameNanos { } }
-        runCatching { requester.requestFocus() }
+        val targetRoute = if (selectedVisible) selectedDrawerRoute else drawerItems.firstOrNull()?.route
+        val requester = targetRoute?.let { drawerItemFocusRequesters[it] } ?: return@LaunchedEffect
+        repeat(SIDEBAR_FOCUS_RECOVERY_ATTEMPTS) {
+            repeat(2) { withFrameNanos { } }
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+        }
     }
 }
 
@@ -1578,6 +1616,7 @@ private fun LegacySidebarScaffold(
     val contentFocusRequester = remember { FocusRequester() }
     var pendingContentFocusTransfer by remember { mutableStateOf(false) }
     var pendingSidebarFocusRequest by remember { mutableStateOf(false) }
+    var drawerHasFocus by remember { mutableStateOf(false) }
     // Bumped on every key event the drawer sees so the auto-collapse timer
     // resets while the user navigates between drawer items.
     var legacyDrawerInteractionVersion by remember { mutableStateOf(0) }
@@ -1623,7 +1662,8 @@ private fun LegacySidebarScaffold(
         drawerItems = drawerItems,
         selectedDrawerRoute = selectedDrawerRoute,
         drawerItemFocusRequesters = drawerItemFocusRequesters,
-        sidebarOwnsFocus = showSidebar && drawerState.currentValue == DrawerValue.Open
+        sidebarOwnsFocus = showSidebar && drawerState.currentValue == DrawerValue.Open,
+        sidebarHasFocus = drawerHasFocus
     )
 
     ModalNavigationDrawer(
@@ -1638,6 +1678,7 @@ private fun LegacySidebarScaffold(
                         .background(NuvioTheme.colors.Background)
                         .padding(NuvioTheme.spacing.card.outer)
                         .selectableGroup()
+                        .onFocusChanged { drawerHasFocus = it.hasFocus }
                         .onPreviewKeyEvent { keyEvent ->
                             if (keyEvent.type == KeyEventType.KeyDown) {
                                 legacyDrawerInteractionVersion++
@@ -1991,6 +2032,7 @@ private fun ModernSidebarScaffold(
     var sidebarCollapsePending by remember { mutableStateOf(false) }
     var pendingContentFocusTransfer by remember { mutableStateOf(false) }
     var pendingSidebarFocusRequest by remember { mutableStateOf(false) }
+    var sidebarHasFocus by remember { mutableStateOf(false) }
     var focusedDrawerIndex by remember { mutableStateOf(-1) }
     var isFloatingPillIconOnly by remember { mutableStateOf(false) }
     var pillExpandRequestCount by remember { mutableIntStateOf(0) }
@@ -2146,7 +2188,8 @@ private fun ModernSidebarScaffold(
         drawerItems = drawerItems,
         selectedDrawerRoute = selectedDrawerRoute,
         drawerItemFocusRequesters = drawerItemFocusRequesters,
-        sidebarOwnsFocus = showSidebar && isSidebarExpanded
+        sidebarOwnsFocus = showSidebar && isSidebarExpanded && !sidebarCollapsePending,
+        sidebarHasFocus = sidebarHasFocus
     )
 
     Box(
@@ -2266,6 +2309,7 @@ private fun ModernSidebarScaffold(
                         transformOrigin = TransformOrigin(0f, 0f)
                     }
                     .selectableGroup()
+                    .onFocusChanged { sidebarHasFocus = it.hasFocus }
                     .onPreviewKeyEvent { keyEvent ->
                         if (!isSidebarExpanded || keyEvent.type != KeyEventType.KeyDown) {
                             return@onPreviewKeyEvent false

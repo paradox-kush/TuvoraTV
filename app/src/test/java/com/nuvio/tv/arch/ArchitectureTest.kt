@@ -154,6 +154,8 @@ class ArchitectureTest {
         // (MpvEventRelay / MPV_EVENT_* constants); that file is its libmpv event boundary.
         fun isEnginePackage(rel: String) =
             rel == "com/nuvio/tv/ui/screens/player/NuvioMpvSurfaceView.kt" ||
+                // Upstream's mpv-android-lib 0.2.1 lifecycle base of the shell above (sync 16).
+                rel == "com/nuvio/tv/ui/screens/player/NuvioBaseMpvView.kt" ||
                 rel == "com/nuvio/tv/ui/screens/player/PlayerRuntimeControllerMpvEvents.kt" ||
                 rel.startsWith("com/nuvio/tv/player/mpv/") ||
                 rel.startsWith("com/nuvio/tv/playback/mpv/")

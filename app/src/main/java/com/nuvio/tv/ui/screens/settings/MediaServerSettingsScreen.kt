@@ -179,7 +179,7 @@ internal fun MediaServerSettingsContent(
     }
 
     signIn?.let { request ->
-        ServerSignInDialog(
+        ServerSignInRoute(
             request = request,
             viewModel = viewModel,
             onConnected = { connected ->

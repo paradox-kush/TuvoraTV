@@ -220,6 +220,7 @@ enum class ServerFailure {
     CERTIFICATE_UNTRUSTED,
     /** The server presented a different certificate than the one pinned: refuse and ask to re-trust. */
     CERTIFICATE_CHANGED,
+    REMOTE_PLAYBACK_BLOCKED,
     FAILED
 }
 

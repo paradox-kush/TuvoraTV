@@ -196,11 +196,12 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                     sanitizedHeaders,
                     useLongReadTimeout = isLoopbackUrl(url),
                     dns = playbackDns,
+                    singleUseLink = singleUseLink,
                 ),
             )
             if (isHls) HlsParameterSetInitDataSource.Factory(adaptiveFactory) else adaptiveFactory
         } else {
-            PlayerPlaybackNetworking.createDataSourceFactory(context, sanitizedHeaders, playbackDns)
+            PlayerPlaybackNetworking.createDataSourceFactory(context, sanitizedHeaders, playbackDns, singleUseLink)
         }
 
         val mediaItemBuilder = MediaItem.Builder().setUri(url)

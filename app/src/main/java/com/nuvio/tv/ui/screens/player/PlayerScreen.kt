@@ -1248,6 +1248,7 @@ fun PlayerScreen(
                             tunneledSurfaceFill = uiState.tunneledSurfaceFill,
                             useLibass = uiState.useLibass,
                             libassRenderMode = uiState.libassRenderMode,
+                            letterboxMaskEnabled = !(transparentLetterbox && playerSurfaceIsFullscreen),
                             subtitleStyle = uiState.effectiveSubtitleStyle,
                             subtitleLiftPx = subtitleLiftPx,
                             onBindSubtitleView = viewModel::bindExoSubtitleView,
@@ -1331,12 +1332,17 @@ fun PlayerScreen(
         }
 
         LoadingOverlay(
-            visible = uiState.showLoadingOverlay && uiState.error == null && !postPlayRecommendationState.isVisible,
+            visible = (uiState.showLoadingOverlay || uiState.showEpisodeAutoPlayLoadingOverlay) &&
+                uiState.error == null && !postPlayRecommendationState.isVisible,
             backdropUrl = uiState.backdrop,
             logoUrl = uiState.logo,
             title = uiState.title,
-            message = uiState.loadingMessage.takeIf { uiState.showPlayerLoadingStatus || uiState.isTorrentStream },
-            progress = uiState.loadingProgress,
+            message = if (uiState.isEpisodeAutoPlaySearching) {
+                stringResource(R.string.stream_finding_source).takeIf { uiState.showPlayerLoadingStatus }
+            } else {
+                uiState.loadingMessage.takeIf { uiState.showPlayerLoadingStatus || uiState.isTorrentStream }
+            },
+            progress = uiState.loadingProgress.takeUnless { uiState.isEpisodeAutoPlaySearching },
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(2f)
@@ -1848,7 +1854,8 @@ fun PlayerScreen(
 
         // Episodes/streams side panel (slides in from right)
         AnimatedVisibility(
-            visible = uiState.showEpisodesPanel && uiState.error == null,
+            visible = uiState.showEpisodesPanel && uiState.error == null &&
+                !uiState.showEpisodeAutoPlayLoadingOverlay,
             enter = fadeIn(animationSpec = tween(120)),
             exit = fadeOut(animationSpec = tween(120))
         ) {
@@ -1862,7 +1869,8 @@ fun PlayerScreen(
 
         // Panel itself (slides in from right)
         AnimatedVisibility(
-            visible = uiState.showEpisodesPanel && uiState.error == null,
+            visible = uiState.showEpisodesPanel && uiState.error == null &&
+                !uiState.showEpisodeAutoPlayLoadingOverlay,
             enter = slideInHorizontally(
                 animationSpec = tween(220),
                 initialOffsetX = { it }
@@ -2250,6 +2258,7 @@ private fun ExoPlayerSurface(
     tunneledSurfaceFill: Boolean,
     useLibass: Boolean,
     libassRenderMode: LibassRenderMode,
+    letterboxMaskEnabled: Boolean,
     subtitleStyle: SubtitleStyleSettings,
     subtitleLiftPx: Float,
     onBindSubtitleView: (androidx.media3.ui.SubtitleView?) -> Unit = {},
@@ -2286,6 +2295,9 @@ private fun ExoPlayerSurface(
                 player = player,
                 enabled = useLibass,
                 renderMode = libassRenderMode
+            )
+            it.syncLetterboxMask(
+                letterboxMaskEnabled && useLibass && libassRenderMode == LibassRenderMode.OVERLAY
             )
             latestBindSubtitleView(it.subtitleView)
         }

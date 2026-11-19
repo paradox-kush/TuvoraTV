@@ -23,4 +23,6 @@ class DeviceGuardedAddonApi(
     override suspend fun getMeta(metaUrl: String) = guarded(metaUrl) { delegate.getMeta(metaUrl) }
     override suspend fun getStreams(streamUrl: String) = guarded(streamUrl) { delegate.getStreams(streamUrl) }
     override suspend fun getSubtitles(subtitleUrl: String) = guarded(subtitleUrl) { delegate.getSubtitles(subtitleUrl) }
+    // Tracking-addon events (player/library): a source disabled on this device never receives one.
+    override suspend fun sendEvent(eventUrl: String) = guarded(eventUrl) { delegate.sendEvent(eventUrl) }
 }
