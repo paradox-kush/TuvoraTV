@@ -31,6 +31,7 @@ internal const val MODERN_HERO_FOCUS_DEBOUNCE_MS = 450L
 internal val MODERN_ROW_HEADER_FOCUS_INSET = 40.dp
 internal const val MODERN_CONTINUE_WATCHING_ROW_KEY = "continue_watching"
 internal const val MODERN_UPCOMING_ROW_KEY = "upcoming_section"
+internal const val MODERN_LIVE_RECENTS_ROW_KEY = "live_recents"
 internal val MODERN_LANDSCAPE_LOGO_GRADIENT = Brush.verticalGradient(
     colorStops = arrayOf(
         0.0f to Color.Transparent,
@@ -71,6 +72,13 @@ data class HeroPreview(
 @Immutable
 sealed class ModernPayload {
     data class ContinueWatching(val item: ContinueWatchingItem) : ModernPayload()
+    /** A recently watched live channel (Recent Channels row). OK plays it through the same clean-live ingress as the Library. */
+    data class LiveChannel(
+        val contentId: String,
+        val name: String,
+        val logo: String?,
+        val nowTitle: String?
+    ) : ModernPayload()
     data class Catalog(
         val focusKey: String,
         val itemId: String,
@@ -237,6 +245,7 @@ internal fun ModernCarouselItem.catalogCardMetrics(
         is ModernPayload.Catalog -> metaPreview?.posterShape ?: PosterShape.POSTER
         is ModernPayload.CollectionFolder -> payload.posterShape
         is ModernPayload.ContinueWatching -> PosterShape.POSTER
+        is ModernPayload.LiveChannel -> PosterShape.LANDSCAPE
     }
 
     return when (posterShape) {
@@ -452,6 +461,35 @@ internal fun buildContinueWatchingItem(
         payload = ModernPayload.ContinueWatching(item)
     )
 }
+
+/** One card of the Recent Channels row. The hero shows the channel and what is on now; there is no backdrop to show. */
+internal fun buildLiveChannelItem(
+    recent: com.nuvio.tv.core.contracts.HomeLiveRecent,
+    liveLabel: String
+): ModernCarouselItem = ModernCarouselItem(
+    key = "live:${recent.contentId}",
+    title = recent.name,
+    subtitle = recent.nowTitle,
+    imageUrl = recent.logo,
+    heroPreview = HeroPreview(
+        title = recent.name,
+        logo = null,
+        description = recent.nowTitle,
+        contentTypeText = liveLabel,
+        yearText = null,
+        imdbText = null,
+        genres = emptyList<String>().asStable(),
+        poster = null,
+        backdrop = null,
+        imageUrl = null
+    ),
+    payload = ModernPayload.LiveChannel(
+        contentId = recent.contentId,
+        name = recent.name,
+        logo = recent.logo,
+        nowTitle = recent.nowTitle
+    )
+)
 
 internal fun buildCatalogItem(
     item: MetaPreview,

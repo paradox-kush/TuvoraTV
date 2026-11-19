@@ -9,6 +9,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.nuvio.tv.core.home.HomeSectionOrderPolicy
+import com.nuvio.tv.core.home.HomeSectionsConfig
+import com.nuvio.tv.core.home.HomeSectionsJson
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.sync.LocalHomeCatalogSettingsState
 import com.nuvio.tv.core.sync.SyncHomeCatalogPayload
@@ -76,6 +79,8 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val homeCatalogOrderKeysKey = stringPreferencesKey("home_catalog_order_keys")
     private val disabledHomeCatalogKeysKey = stringPreferencesKey("disabled_home_catalog_keys")
     private val customCatalogTitlesKey = stringPreferencesKey("custom_catalog_titles")
+    /** The shared `home_sections` value (order and visibility of Home's own sections). Synced with the catalog blob, not the settings blob. */
+    private val homeSectionsKey = stringPreferencesKey("home_sections_json")
     private val sidebarCollapsedKey = booleanPreferencesKey("sidebar_collapsed_by_default")
     private val modernSidebarEnabledKey = booleanPreferencesKey("modern_sidebar_enabled")
     private val legacyModernSidebarEnabledKey = booleanPreferencesKey("glass_sidepanel_enabled")
@@ -252,6 +257,11 @@ class LayoutPreferenceDataStore @Inject constructor(
 
     val heroSectionEnabled: Flow<Boolean> = profileFlow { prefs ->
         prefs[heroSectionEnabledKey] ?: true
+    }
+
+    /** Null until the user changes Home's section order or visibility (on any device) or resets it. */
+    val homeSections: Flow<HomeSectionsConfig?> = profileFlow { prefs ->
+        HomeSectionsJson.decode(prefs[homeSectionsKey])
     }
 
     val discoverLocation: Flow<DiscoverLocation> = profileFlow { prefs ->
@@ -611,7 +621,49 @@ class LayoutPreferenceDataStore @Inject constructor(
     suspend fun setHeroSectionEnabled(enabled: Boolean) {
         store().edit { prefs ->
             prefs[heroSectionEnabledKey] = enabled
+            keepHomeSectionsInStepWithLegacyToggle(prefs, HomeSectionOrderPolicy.HERO, enabled)
         }
+    }
+
+    /**
+     * Writes the user's section order / visibility. Hero and Continue Watching keep their long-standing switches
+     * in step with the `enabled` flags, so Settings and the Reorder Home screen never disagree. Null clears it.
+     */
+    suspend fun setHomeSections(config: HomeSectionsConfig?) {
+        store().edit { prefs -> writeHomeSections(prefs, config) }
+    }
+
+    /** Applies a value that arrived from another device: stored as sent, switches brought in step, nothing pushed back. */
+    suspend fun applyHomeSectionsFromRemote(config: HomeSectionsConfig) {
+        store().edit { prefs -> writeHomeSections(prefs, config) }
+    }
+
+    private fun writeHomeSections(prefs: androidx.datastore.preferences.core.MutablePreferences, config: HomeSectionsConfig?) {
+        if (config == null) {
+            prefs.remove(homeSectionsKey)
+            return
+        }
+        prefs[homeSectionsKey] = HomeSectionsJson.encode(config)
+        if (config.customized) {
+            HomeSectionOrderPolicy.storedEnabled(config, HomeSectionOrderPolicy.HERO)
+                ?.let { prefs[heroSectionEnabledKey] = it }
+            HomeSectionOrderPolicy.storedEnabled(config, HomeSectionOrderPolicy.CONTINUE_WATCHING)
+                ?.let { prefs[continueWatchingEnabledKey] = it }
+        } else {
+            // Reset to Default: everything the list governs is back on.
+            prefs[heroSectionEnabledKey] = true
+            prefs[continueWatchingEnabledKey] = true
+        }
+    }
+
+    private fun keepHomeSectionsInStepWithLegacyToggle(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        id: String,
+        enabled: Boolean
+    ) {
+        val current = HomeSectionsJson.decode(prefs[homeSectionsKey]) ?: return
+        val updated = HomeSectionOrderPolicy.withLegacyToggle(current, id, enabled) ?: return
+        if (updated != current) prefs[homeSectionsKey] = HomeSectionsJson.encode(updated)
     }
 
     suspend fun setDiscoverLocation(location: DiscoverLocation) {
@@ -826,6 +878,7 @@ class LayoutPreferenceDataStore @Inject constructor(
     suspend fun setContinueWatchingEnabled(enabled: Boolean) {
         store().edit { prefs ->
             prefs[continueWatchingEnabledKey] = enabled
+            keepHomeSectionsInStepWithLegacyToggle(prefs, HomeSectionOrderPolicy.CONTINUE_WATCHING, enabled)
         }
     }
 
@@ -941,7 +994,7 @@ class LayoutPreferenceDataStore @Inject constructor(
             addons = addons,
             collections = collections,
             localState = getHomeCatalogSettingsState()
-        )
+        ).copy(homeSections = HomeSectionsJson.decode(store().data.first()[homeSectionsKey]))
     }
 
     suspend fun applyCatalogSettingsFromRemote(payload: SyncHomeCatalogPayload) {

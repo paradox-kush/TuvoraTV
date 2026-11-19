@@ -226,6 +226,55 @@ private fun ModernContinueWatchingRowItem(
     )
 }
 
+/** A Recent Channels card: same focus bookkeeping as a Continue Watching card, OK plays the channel. */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun ModernLiveChannelRowItem(
+    payload: ModernPayload.LiveChannel,
+    requester: FocusRequester,
+    isTargetItem: Boolean = false,
+    cardWidth: Dp,
+    imageHeight: Dp,
+    cornerRadius: Dp,
+    onFocused: () -> Unit,
+    onPlayLiveChannel: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val onClick = remember(payload.contentId) { { onPlayLiveChannel(payload.contentId) } }
+    var focusEventId by remember { mutableIntStateOf(0) }
+    var isCardFocused by remember { mutableStateOf(false) }
+    val latestOnFocused by rememberUpdatedState(onFocused)
+
+    LaunchedEffect(focusEventId, isCardFocused) {
+        if (focusEventId == 0 || !isCardFocused) return@LaunchedEffect
+        latestOnFocused()
+    }
+
+    LaunchedEffect(isTargetItem) {
+        if (isTargetItem && !isCardFocused) {
+            runCatching { requester.requestFocus() }
+        }
+    }
+
+    com.nuvio.tv.ui.components.LiveChannelCard(
+        name = payload.name,
+        nowTitle = payload.nowTitle,
+        logo = payload.logo,
+        onClick = onClick,
+        cardWidth = cardWidth,
+        imageHeight = imageHeight,
+        cornerRadius = cornerRadius,
+        modifier = modifier
+            .focusRequester(requester)
+            .onFocusChanged {
+                isCardFocused = it.isFocused
+                if (it.isFocused) {
+                    focusEventId += 1
+                }
+            }
+    )
+}
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun ModernCatalogRowItem(
@@ -266,7 +315,8 @@ private fun ModernCatalogRowItem(
     val focusKey = when (payload) {
         is ModernPayload.Catalog -> payload.focusKey
         is ModernPayload.CollectionFolder -> payload.focusKey
-        is ModernPayload.ContinueWatching -> error("Unsupported payload for ModernCatalogRowItem")
+        is ModernPayload.ContinueWatching,
+        is ModernPayload.LiveChannel -> error("Unsupported payload for ModernCatalogRowItem")
     }
 
     val metaPreview = item.metaPreview
@@ -328,7 +378,7 @@ private fun ModernCatalogRowItem(
                     )
                 )
             }
-            is ModernPayload.ContinueWatching -> Unit
+            is ModernPayload.ContinueWatching, is ModernPayload.LiveChannel -> Unit
         }
     }
 
@@ -426,7 +476,7 @@ private fun ModernCatalogRowItem(
                         payload.folderId
                     )
                 }
-                is ModernPayload.ContinueWatching -> Unit
+                is ModernPayload.ContinueWatching, is ModernPayload.LiveChannel -> Unit
             }
         },
         onLongPress = onLongPress,
@@ -476,6 +526,7 @@ internal fun ModernRowSection(
     continueWatchingCardStyle: ContinueWatchingCardStyle,
     continueWatchingCornerRadius: Dp,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit,
+    onPlayLiveChannel: (String) -> Unit,
     onContinueWatchingOptions: (ContinueWatchingItem) -> Unit,
     isCatalogItemWatched: (MetaPreview) -> Boolean,
     onCatalogItemLongPress: (MetaPreview, String) -> Unit,
@@ -775,6 +826,8 @@ internal fun ModernRowSection(
                         val heightPx = with(density) { metrics.height.roundToPx() }
                         url to "${url}_${widthPx}x${heightPx}"
                     }
+                    // The logo is a small image the card loads itself; nothing worth warming here.
+                    is ModernPayload.LiveChannel -> return null
                     is ModernPayload.ContinueWatching -> {
                         // Use the same model and cache key the card computes so the prefetch warms the entry the card actually reads.
                         val model = continueWatchingImageModel(
@@ -836,7 +889,7 @@ internal fun ModernRowSection(
                             )
                             with(density) { metrics.width.roundToPx() } to with(density) { metrics.height.roundToPx() }
                         }
-                        is ModernPayload.ContinueWatching -> cwWidthPx to cwHeightPx
+                        is ModernPayload.ContinueWatching, is ModernPayload.LiveChannel -> cwWidthPx to cwHeightPx
                     }
                     enqueueIfNeeded(item, wPx, hPx)
                 }
@@ -872,7 +925,7 @@ internal fun ModernRowSection(
                                     )
                                     with(density) { metrics.width.roundToPx() } to with(density) { metrics.height.roundToPx() }
                                 }
-                                is ModernPayload.ContinueWatching -> cwWidthPx to cwHeightPx
+                                is ModernPayload.ContinueWatching, is ModernPayload.LiveChannel -> cwWidthPx to cwHeightPx
                             }
                             enqueueIfNeeded(item, wPx, hPx)
                         }
@@ -1003,6 +1056,7 @@ internal fun ModernRowSection(
                     contentType = { _, item ->
                         when (val payload = item.payload) {
                             is ModernPayload.ContinueWatching -> "modern_cw_card"
+                            is ModernPayload.LiveChannel -> "modern_live_channel_card"
                             is ModernPayload.Catalog -> if (payload.itemId.startsWith("__placeholder_")) "placeholder" else payload.itemType
                             is ModernPayload.CollectionFolder -> "modern_collection_folder_card"
                         }
@@ -1046,6 +1100,19 @@ internal fun ModernRowSection(
                                 onFocused = onFocused,
                                 onContinueWatchingClick = onContinueWatchingClick,
                                 onShowOptions = onContinueWatchingOptions
+                            )
+                        }
+
+                        is ModernPayload.LiveChannel -> {
+                            ModernLiveChannelRowItem(
+                                payload = payload,
+                                requester = requester,
+                                isTargetItem = isTargetItem,
+                                cardWidth = continueWatchingCardWidth,
+                                imageHeight = continueWatchingCardHeight,
+                                cornerRadius = continueWatchingCornerRadius,
+                                onFocused = onFocused,
+                                onPlayLiveChannel = onPlayLiveChannel
                             )
                         }
 

@@ -89,6 +89,7 @@ class HomeViewModel @Inject constructor(
     internal val profileManager: com.nuvio.tv.core.profile.ProfileManager,
     internal val tvRecommendationManager: TvRecommendationManager,
     internal val serverCatalog: ServerCatalog,
+    internal val liveRecentsSource: com.nuvio.tv.core.contracts.HomeLiveRecentsProvider,
     internal val trailerPlayerPool: com.nuvio.tv.core.player.TrailerPlayerPool,
     internal val backgroundTrailerController: com.nuvio.tv.core.player.BackgroundTrailerController,
     internal val metaPreviewEnricher: MetaPreviewEnricher = MetaPreviewEnricher(
@@ -159,6 +160,8 @@ class HomeViewModel @Inject constructor(
     val scrollToTopTrigger: StateFlow<Int> = _scrollToTopTrigger.asStateFlow()
 
     internal val _currentLocaleTag = MutableStateFlow(LocaleCache.localeTag)
+    /** Bumped when Home resumes so the Recent Channels row re-reads what is on now. */
+    internal val _liveRecentsRefresh = MutableStateFlow(0)
 
     fun notifyLocaleChanged() {
         val tag = LocaleCache.localeTag
@@ -388,6 +391,8 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             profileManager.activeProfileReady.first { it }
             observeLayoutPreferences()
+            observeHomeSections()
+            observeLiveRecents()
             observeModernHomePresentation()
             loadContinueWatching()
             observeContinueWatchingReleases()
@@ -513,6 +518,13 @@ class HomeViewModel @Inject constructor(
     private fun observeLayoutPreferences() = observeLayoutPreferencesPipeline()
 
     private fun observeModernHomePresentation() = observeModernHomePresentationPipeline()
+
+    private fun observeHomeSections() = observeHomeSectionsPipeline()
+
+    private fun observeLiveRecents() = observeLiveRecentsPipeline()
+
+    /** Called when Home comes back to the foreground: what is on now moves on while the recents do not. */
+    fun refreshLiveRecents() = requestLiveRecentsRefresh()
 
     private fun observeExternalMetaPrefetchPreference() = observeExternalMetaPrefetchPreferencePipeline()
 

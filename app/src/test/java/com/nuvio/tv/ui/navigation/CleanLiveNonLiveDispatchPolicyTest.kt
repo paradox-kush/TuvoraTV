@@ -25,6 +25,15 @@ class CleanLiveNonLiveDispatchPolicyTest {
     }
 
     @Test
+    fun `home recent channels non-live id surfaces feedback, never a silent no-op`() {
+        // The Recent Channels row only ever holds live channels, so a non-live id there cannot be a detail page.
+        assertEquals(
+            CleanLiveNonLiveOutcome.Feedback(CleanLiveIngressFeedback.INVALID_REQUEST),
+            CleanLiveNonLiveDispatchPolicy.outcome(CleanLiveLaunchOrigin.HOME),
+        )
+    }
+
+    @Test
     fun `content-card ingresses hand a non-live id to their native detail route`() {
         // These origins list mixed content: a non-live id is a movie/series/collection item, so
         // handing off to the caller's detail navigation is the correct, non-silent behaviour.

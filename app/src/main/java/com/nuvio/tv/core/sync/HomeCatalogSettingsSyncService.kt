@@ -2,6 +2,7 @@ package com.nuvio.tv.core.sync
 
 import android.util.Log
 import com.nuvio.tv.core.auth.AuthManager
+import com.nuvio.tv.core.home.HomeSectionsConfig
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.CollectionsDataStore
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
@@ -21,6 +22,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -32,6 +34,7 @@ private const val TAG = "HomeCatalogSettingsSyncService"
 private const val HOME_CATALOG_SHARED_SYNC_PLATFORM = "home_catalog_shared"
 private const val PAYLOAD_SAMPLE_LIMIT = 5
 private const val HIDE_UNRELEASED_CONTENT_KEY = "hide_unreleased_content"
+private const val HOME_SECTIONS_KEY = "home_sections"
 
 @Serializable
 data class SyncCatalogItem(
@@ -49,6 +52,12 @@ data class SyncCatalogItem(
 data class SyncHomeCatalogPayload(
     @SerialName("hide_unreleased_content") val hideUnreleasedContent: Boolean = false,
     val items: List<SyncCatalogItem> = emptyList(),
+    /**
+     * Order and visibility of Home's own sections (hero, Continue Watching, Recent Channels, ...), shared by every
+     * device. Null means this device has nothing to say about it: the key is then left out of a push so another
+     * device's choice is never overwritten with "nothing".
+     */
+    @SerialName("home_sections") val homeSections: HomeSectionsConfig? = null,
 )
 
 private data class HomeCatalogSyncScope(
@@ -66,7 +75,11 @@ internal fun mergeHomeCatalogSettingsJson(
     localJson: JsonObject
 ): JsonObject = buildJsonObject {
     remoteJson?.forEach { (key, value) -> put(key, value) }
-    localJson.forEach { (key, value) -> put(key, value) }
+    localJson.forEach { (key, value) ->
+        // A device that has never customised Home sections exports null; that must not wipe a stored choice.
+        if (key == HOME_SECTIONS_KEY && value is JsonNull) return@forEach
+        put(key, value)
+    }
     // Rows are merged, not replaced: see carryForwardStoredHomeCatalogItems.
     if (remoteJson != null && localJson.containsKey("items")) {
         put("items", carryForwardStoredHomeCatalogItems(remoteJson["items"], localJson["items"]))
@@ -171,6 +184,17 @@ class HomeCatalogSettingsSyncService @Inject constructor(
             }
             Log.d(TAG, "Pull remote payload profile=$profileId ${remotePayload.summary()}")
 
+            // Home sections ride the same blob but are independent of the catalog rows, so they apply even when
+            // the remote has no rows yet.
+            remotePayload.homeSections?.let { sections ->
+                isSyncingFromRemote = true
+                try {
+                    layoutPreferenceDataStore.applyHomeSectionsFromRemote(sections)
+                } finally {
+                    isSyncingFromRemote = false
+                }
+            }
+
             if (remotePayload.items.isEmpty()) {
                 Log.d(TAG, "Remote payload empty profile=$profileId; preserving local (startup is pull-only)")
                 return@withContext Result.success(false)
@@ -238,7 +262,7 @@ class HomeCatalogSettingsSyncService @Inject constructor(
         settingsJson: JsonObject,
         localPayload: SyncHomeCatalogPayload
     ): SyncHomeCatalogPayload? = runCatching {
-        val decoded = json.decodeFromJsonElement(SyncHomeCatalogPayload.serializer(), settingsJson)
+        val decoded = decodeTolerantOfHomeSections(settingsJson)
         decoded.copy(
             hideUnreleasedContent = if (settingsJson.containsKey(HIDE_UNRELEASED_CONTENT_KEY)) {
                 decoded.hideUnreleasedContent
@@ -247,6 +271,14 @@ class HomeCatalogSettingsSyncService @Inject constructor(
             }
         )
     }.getOrNull()
+
+    /** A home_sections value this build cannot read must not take the catalog rows down with it. */
+    private fun decodeTolerantOfHomeSections(settingsJson: JsonObject): SyncHomeCatalogPayload =
+        runCatching { json.decodeFromJsonElement(SyncHomeCatalogPayload.serializer(), settingsJson) }
+            .getOrElse {
+                val withoutSections = JsonObject(settingsJson.filterKeys { it != HOME_SECTIONS_KEY })
+                json.decodeFromJsonElement(SyncHomeCatalogPayload.serializer(), withoutSections)
+            }
 
     private fun mergedSharedPayloadJson(
         syncScope: HomeCatalogSyncScope,

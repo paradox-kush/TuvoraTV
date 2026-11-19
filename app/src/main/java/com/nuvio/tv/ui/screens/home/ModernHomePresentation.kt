@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.compose.runtime.Immutable
 import com.nuvio.tv.LocaleCache
 import com.nuvio.tv.R
+import com.nuvio.tv.core.contracts.HomeLiveRecent
+import com.nuvio.tv.core.home.HomeSectionOrderPolicy
 import com.nuvio.tv.core.util.withAppLocale
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.Collection
@@ -25,7 +27,10 @@ internal data class ModernHomePresentationInput(
     val showImdbRatings: Boolean,
     val detailImdbRatingsVisibility: com.nuvio.tv.domain.model.DetailImdbRatingsVisibility =
         com.nuvio.tv.domain.model.DetailImdbRatingsVisibility.SHOW_ALL,
-    val localeTag: String
+    val localeTag: String,
+    /** Section ids to draw under the hero, top to bottom (see [HomeSectionOrderPolicy.renderOrder]). Default is today's order. */
+    val sectionOrder: List<String> = HomeSectionOrderPolicy.renderOrder(null),
+    val liveRecents: List<HomeLiveRecent> = emptyList()
 )
 
 internal fun buildModernHomePresentation(
@@ -42,7 +47,7 @@ internal fun buildModernHomePresentation(
     val strTypeMovie = localizedContext.getString(R.string.type_movie)
     val strTypeSeries = localizedContext.getString(R.string.type_series)
 
-    val rows = buildList {
+    val builtRows = buildList {
         val activeCatalogKeys = LinkedHashSet<String>()
         val activeCollectionKeys = LinkedHashSet<String>()
         val catalogRowLimit = maxCatalogRows?.coerceAtLeast(0)
@@ -128,6 +133,19 @@ internal fun buildModernHomePresentation(
         } else {
             cache.upcomingItems = emptyList()
             cache.upcomingRow = null
+        }
+
+        // Recent Channels row (shares the Continue Watching card size; see ModernLiveChannelRowItem).
+        if (input.liveRecents.isNotEmpty()) {
+            val liveLabel = localizedContext.getString(R.string.home_live_badge)
+            add(
+                HeroCarouselRow(
+                    key = MODERN_LIVE_RECENTS_ROW_KEY,
+                    title = localizedContext.getString(R.string.home_recent_channels),
+                    globalRowIndex = -1,
+                    items = input.liveRecents.map { buildLiveChannelItem(it, liveLabel) }.asStable()
+                )
+            )
         }
 
         visibleHomeRows.forEachIndexed { index, homeRow ->
@@ -328,11 +346,29 @@ internal fun buildModernHomePresentation(
         cache.collectionRows.keys.retainAll(activeCollectionKeys)
     }
 
+    val rows = arrangeModernRowsBySection(builtRows, input.sectionOrder)
     val lookups = buildCarouselRowLookups(rows)
     return ModernHomePresentationState(
         rows = rows.asStable(),
         lookups = lookups
     )
+}
+
+/** The section a built row belongs to: the three fixed rows by key, every catalog and collection row under `catalogs`. */
+internal fun homeSectionIdForRowKey(rowKey: String): String = when (rowKey) {
+    MODERN_CONTINUE_WATCHING_ROW_KEY -> HomeSectionOrderPolicy.CONTINUE_WATCHING
+    MODERN_UPCOMING_ROW_KEY -> HomeSectionOrderPolicy.UPCOMING
+    MODERN_LIVE_RECENTS_ROW_KEY -> HomeSectionOrderPolicy.LIVE_RECENTS
+    else -> HomeSectionOrderPolicy.CATALOGS
+}
+
+/**
+ * Puts the built rows in the user's section order. A row whose section is not in [sectionOrder] (switched off) is left
+ * out; rows inside one section keep their own order, so the catalog rows stay in the order the catalog screen gave them.
+ */
+internal fun arrangeModernRowsBySection(rows: List<HeroCarouselRow>, sectionOrder: List<String>): List<HeroCarouselRow> {
+    val bySection = rows.groupBy { homeSectionIdForRowKey(it.key) }
+    return sectionOrder.distinct().flatMap { bySection[it].orEmpty() }
 }
 
 private fun resolveVisibleHomeRows(input: ModernHomePresentationInput): List<HomeRow> {
@@ -402,6 +438,9 @@ internal fun buildCarouselRowLookups(carouselRows: List<HeroCarouselRow>): Carou
                 }
                 is ModernPayload.CollectionFolder -> {
                     itemIdentities += "folder:${payload.folderId}"
+                }
+                is ModernPayload.LiveChannel -> {
+                    itemIdentities += "live:${payload.contentId}"
                 }
                 is ModernPayload.ContinueWatching -> {
                     // The card's key, one per title: a hash of the item changes with its progress,
