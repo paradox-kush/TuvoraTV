@@ -4,12 +4,14 @@ import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.auth.AuthManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.rpc
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -43,11 +45,10 @@ class SyncDeviceReporter @Inject constructor(
         reportedForClientId = clientId
 
         try {
-            postgrest.rpc("report_device", buildJsonObject {
-                put("p_client_id", clientId)
-                put("p_device_name", deviceName())
-                put("p_platform", "tv")
-            })
+            postgrest.rpc(
+                "report_device",
+                reportPayload(clientId, deviceName(), BuildConfig.VERSION_NAME),
+            )
             Log.d(TAG, "Reported device name")
         } catch (e: Exception) {
             // An older backend without the RPC, or no network. Not worth retrying — the device is
@@ -84,5 +85,16 @@ class SyncDeviceReporter @Inject constructor(
             else -> "$manufacturer $model"
         }
         return name.ifBlank { "Android TV" }.replaceFirstChar { it.uppercase() }
+    }
+
+    companion object {
+        /** `report_device` args. `p_app_version` lets the dashboard split devices by app version. */
+        internal fun reportPayload(clientId: String, deviceName: String, appVersion: String): JsonObject =
+            buildJsonObject {
+                put("p_client_id", clientId)
+                put("p_device_name", deviceName)
+                put("p_platform", "tv")
+                put("p_app_version", appVersion)
+            }
     }
 }

@@ -256,6 +256,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         val supportCode = com.nuvio.tv.core.telemetry.SupportCodeStore.get(this)
         PostHog.register("support_code", supportCode)
         com.nuvio.tv.core.telemetry.DeviceProfile.properties(this).forEach { (k, v) -> PostHog.register(k, v) }
+        // Install-channel split for retention: flavor + bucketed installer (never the raw package).
+        PostHog.register("build_flavor", com.nuvio.tv.core.build.AppFeaturePolicy.buildFlavor)
+        PostHog.register("install_source", com.nuvio.tv.core.analytics.InstallSourcePolicy.currentBucket(this))
         // Background -> one session_health summary and a durable copy of the on-device log.
         registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
             private var started = 0
