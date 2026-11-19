@@ -303,6 +303,7 @@ internal class AndroidMedia3BackendFactory(
             forcePcm = plan.audioMode == AudioMode.DECODE,
             audioExtensionMode = audioExtensionRendererModeFor(plan),
             hardwareFirstVideo = plan.decoderMode != DecoderMode.SOFTWARE,
+            liveContent = plan.live,
         )
             .setExtensionRendererMode(extensionRendererModeFor(plan))
             .setMediaCodecSelector(codecSelector)
@@ -488,6 +489,7 @@ private class ContractRenderersFactory(
     private val forcePcm: Boolean,
     private val audioExtensionMode: Int,
     private val hardwareFirstVideo: Boolean,
+    private val liveContent: Boolean = false,
 ) : DefaultRenderersFactory(context) {
     /**
      * Fallback otherwise lands a 4K stream on Android's software decoder while the hardware can take
@@ -526,7 +528,7 @@ private class ContractRenderersFactory(
                     .setEventHandler(eventHandler)
                     .setEventListener(eventListener)
                     .setMaxDroppedFramesToNotify(50)
-                out.add(HardwareFirstLiveVideoRenderer(context, builder))
+                out.add(HardwareFirstLiveVideoRenderer(context, builder, liveContent))
             } else {
                 out.add(renderer)
             }
