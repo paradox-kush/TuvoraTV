@@ -73,7 +73,9 @@ private const val PLAYER_SETTINGS_FEATURE = "player_settings"
 private val catalogKeysExcludedFromProfileSettingsBlob = setOf(
     "home_catalog_order_keys",
     "disabled_home_catalog_keys",
-    "custom_catalog_titles"
+    "custom_catalog_titles",
+    // Travels in the shared home_catalog blob (as `home_sections`), never in the per-platform settings blob.
+    "home_sections_json"
 )
 
 private val localOnlyLayoutProfileSettingsKeys = setOf(

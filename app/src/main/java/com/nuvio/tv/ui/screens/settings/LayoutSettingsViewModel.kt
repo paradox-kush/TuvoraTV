@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -668,6 +669,16 @@ class LayoutSettingsViewModel @Inject constructor(
         if (_uiState.value.heroSectionEnabled == enabled) return
         viewModelScope.launch {
             layoutPreferenceDataStore.setHeroSectionEnabled(enabled)
+            pushHomeSectionsIfCustomized()
+        }
+    }
+
+    /** Hero and Continue Watching are also flags in the shared Home section list; once that list exists the change travels with it. */
+    private fun pushHomeSectionsIfCustomized() {
+        viewModelScope.launch {
+            if (layoutPreferenceDataStore.homeSections.first()?.customized == true) {
+                homeCatalogSettingsSyncService.triggerPush()
+            }
         }
     }
 
@@ -944,6 +955,7 @@ class LayoutSettingsViewModel @Inject constructor(
         if (_uiState.value.continueWatchingEnabled == enabled) return
         viewModelScope.launch {
             layoutPreferenceDataStore.setContinueWatchingEnabled(enabled)
+            pushHomeSectionsIfCustomized()
         }
     }
 

@@ -213,6 +213,7 @@ class HomeEnrichmentRepositoryBoundaryTest {
             profileManager = profileManager,
             tvRecommendationManager = mockk(relaxed = true),
             serverCatalog = mockk(relaxed = true),
+            liveRecentsSource = mockk(relaxed = true),
             trailerPlayerPool = mockk(relaxed = true),
             backgroundTrailerController = mockk(relaxed = true)
         )

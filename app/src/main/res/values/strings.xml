@@ -4167,4 +4167,18 @@
     <string name="multiview_notice_on_screen">%1$s is already on screen. Here it is.</string>
     <string name="multiview_notice_leave_guard">Press Back again to leave Multiview</string>
     <string name="iptv_guide_add_to_multiview">Add to Multiview</string>
+    <!-- Home: Recent Channels row and Reorder Home sections -->
+    <string name="home_recent_channels">Recent Channels</string>
+    <string name="home_live_badge">Live</string>
+    <string name="home_order_title">Reorder Home</string>
+    <string name="home_order_subtitle">Move rows up or down, or take one off Home. Your order syncs to your other devices.</string>
+    <string name="home_order_reset">Reset to Default</string>
+    <string name="home_order_catalogs_heading">Catalog rows</string>
+    <string name="home_section_hero">Hero</string>
+    <string name="home_section_hero_desc">Carousel of featured titles</string>
+    <string name="home_section_continue_watching_desc">Next Up and unfinished titles</string>
+    <string name="home_section_live_recents_desc">Live TV you watched lately</string>
+    <string name="home_section_upcoming_desc">From your Library</string>
+    <string name="home_section_catalogs">Your catalogs</string>
+    <string name="home_section_catalogs_desc">Add-on catalogs and collections, ordered below</string>
 </resources>

@@ -15,6 +15,7 @@ enum class CleanLiveLaunchOrigin {
     SPORTS,
     FOLDER,
     CATALOG_SEE_ALL,
+    HOME,
 }
 
 /** Display-only launch metadata. Transport-shaped labels are discarded before storage. */

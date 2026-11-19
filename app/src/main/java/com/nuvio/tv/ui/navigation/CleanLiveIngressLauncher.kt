@@ -55,7 +55,9 @@ internal object CleanLiveNonLiveDispatchPolicy {
     fun outcome(origin: CleanLiveLaunchOrigin): CleanLiveNonLiveOutcome = when (origin) {
         // A Sports match card resolves to a live channel by construction; a non-live id here is an
         // unopenable request, not a movie/series — so tell the user, never fall silent.
-        CleanLiveLaunchOrigin.SPORTS ->
+        // The Home Recent Channels row holds live channels only, so it has the same "cannot dead-click" rule.
+        CleanLiveLaunchOrigin.SPORTS,
+        CleanLiveLaunchOrigin.HOME ->
             CleanLiveNonLiveOutcome.Feedback(CleanLiveIngressFeedback.INVALID_REQUEST)
         CleanLiveLaunchOrigin.SEARCH,
         CleanLiveLaunchOrigin.LIBRARY,

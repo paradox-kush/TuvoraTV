@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.home
 
 import com.nuvio.tv.core.diagnostics.LogRedaction
+import com.nuvio.tv.core.home.HomeSectionOrderPolicy
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import androidx.lifecycle.viewModelScope
@@ -229,8 +230,24 @@ internal fun HomeViewModel.observeLayoutPreferencesPipeline() {
                     suppressFocusSave = true
                     clearFocusState()
                 }
+                // Decided from local state before the first frame (Home shows its loader until
+                // layoutPreferencesReady): the section order and the Recent Channels row arrive in the SAME
+                // update as the layout, so nothing reorders or inserts itself after the screen is drawn.
+                val storedSections = layoutPreferenceDataStore.homeSections.first()
+                val recentsOnFirstFrame =
+                    if (prefs.layout == HomeLayout.MODERN &&
+                        HomeSectionOrderPolicy.LIVE_RECENTS in HomeSectionOrderPolicy.renderOrder(
+                            storedSections, prefs.heroSectionEnabled, _uiState.value.continueWatchingEnabled
+                        )
+                    ) {
+                        runCatching { liveRecentsSource.snapshot() }.getOrDefault(emptyList())
+                    } else {
+                        emptyList()
+                    }
                 _uiState.update {
                     it.copy(
+                        homeSections = storedSections,
+                        liveRecents = recentsOnFirstFrame,
                         layoutPreferencesReady = true,
                         homeLayout = prefs.layout,
                         heroCatalogKeys = prefs.heroCatalogKeys,
@@ -334,7 +351,13 @@ internal fun HomeViewModel.observeModernHomePresentationPipeline() {
                     showFullReleaseDate = state.showFullReleaseDate,
                     showImdbRatings = state.homeImdbRatingsVisibility.showRatings,
                     detailImdbRatingsVisibility = state.detailImdbRatingsVisibility,
-                    localeTag = localeTag
+                    localeTag = localeTag,
+                    sectionOrder = HomeSectionOrderPolicy.renderOrder(
+                        state.homeSections,
+                        state.heroSectionEnabled,
+                        state.continueWatchingEnabled
+                    ),
+                    liveRecents = state.liveRecents
                 )
             }
             // Compare by row structure only (keys + item counts), not by
@@ -350,6 +373,8 @@ internal fun HomeViewModel.observeModernHomePresentationPipeline() {
                     && old.showFullReleaseDate == new.showFullReleaseDate
                     && old.showImdbRatings == new.showImdbRatings
                     && old.localeTag == new.localeTag
+                    && old.sectionOrder == new.sectionOrder
+                    && old.liveRecents == new.liveRecents
                     && old.catalogRows.size == new.catalogRows.size
             }
             .debounce {

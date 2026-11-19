@@ -109,7 +109,9 @@ fun HomeScreen(
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit = onContinueWatchingClick,
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit = onContinueWatchingClick,
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit = { _, _, _ -> },
-    onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> }
+    onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
+    /** Plays a channel from the Recent Channels row (Modern layout), given its content id. */
+    onPlayLiveChannel: (String) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -128,6 +130,7 @@ fun HomeScreen(
                 // Calendar reminders: reads stored data; a refresh only when CalendarRefreshGate allows (≤ 1 per 6 h).
                 calendarReminderViewModel.onHomeResumed()
                 viewModel.refreshContinueWatchingIfReleased()
+                viewModel.refreshLiveRecents()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -498,6 +501,7 @@ fun HomeScreen(
                                 viewModel = viewModel,
                                 uiState = uiState,
                                 onNavigateToDetail = onNavigateToDetailStable,
+                                onPlayLiveChannel = onPlayLiveChannel,
                                 onContinueWatchingClick = onContinueWatchingClickStable,
                                 onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginningStable,
                                 onContinueWatchingPlayManually = onContinueWatchingPlayManuallyStable,
@@ -779,6 +783,7 @@ private fun ModernHomeRoute(
     viewModel: HomeViewModel,
     uiState: HomeUiState,
     onNavigateToDetail: (String, String, String) -> Unit,
+    onPlayLiveChannel: (String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit,
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit,
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit,
@@ -837,6 +842,7 @@ private fun ModernHomeRoute(
         onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginning,
         onContinueWatchingPlayManually = onContinueWatchingPlayManually,
         showContinueWatchingManualPlayOption = showContinueWatchingManualPlayOption,
+        onPlayLiveChannel = onPlayLiveChannel,
         onRequestTrailerPreview = requestTrailerPreview,
         onLoadMoreCatalog = loadMoreCatalog,
         onMarkContinueWatchingWatched = remember(viewModel) {

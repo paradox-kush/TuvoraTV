@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.contracts.ContributedRows
 import com.nuvio.tv.core.contracts.HomeSectionContributorRegistry
+import com.nuvio.tv.core.home.HomeSectionOrderPolicy
+import com.nuvio.tv.core.home.HomeSectionsConfig
 import com.nuvio.tv.core.sync.HomeCatalogSettingsSyncService
 import com.nuvio.tv.core.sync.homeCatalogKey
 import com.nuvio.tv.core.sync.homeLegacyDisabledCatalogKey
@@ -41,8 +43,75 @@ class CatalogOrderViewModel @Inject constructor(
     val uiState: StateFlow<CatalogOrderUiState> = _uiState.asStateFlow()
     private var disabledKeysCache: Set<String> = emptySet()
 
+    // The latest section state, read by the move / toggle handlers so they act on what the user is looking at.
+    private var sectionsConfig: HomeSectionsConfig? = null
+    private var heroEnabled: Boolean = true
+    private var continueWatchingEnabled: Boolean = true
+
     init {
         observeCatalogs()
+        observeSections()
+    }
+
+    fun moveSectionUp(id: String) = moveSection(id, -1)
+
+    fun moveSectionDown(id: String) = moveSection(id, 1)
+
+    private fun moveSection(id: String, direction: Int) {
+        val current = sectionsConfig
+        val updated = HomeSectionOrderPolicy.move(current, id, direction, heroEnabled, continueWatchingEnabled)
+        if (updated === current) return
+        saveSections(updated)
+    }
+
+    /** Switches a Home section on or off (hero included). Hero and Continue Watching keep their Settings switches in step. */
+    fun toggleSectionEnabled(id: String) {
+        val now = HomeSectionOrderPolicy.effective(sectionsConfig, heroEnabled, continueWatchingEnabled)
+            .firstOrNull { it.id == id } ?: return
+        saveSections(
+            HomeSectionOrderPolicy.setEnabled(sectionsConfig, id, !now.enabled, heroEnabled, continueWatchingEnabled)
+        )
+    }
+
+    /** Back to this device's default order with everything on; other devices follow because `customized` is written false. */
+    fun resetSections() {
+        saveSections(HomeSectionOrderPolicy.reset())
+    }
+
+    private fun saveSections(config: HomeSectionsConfig?) {
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setHomeSections(config)
+            homeCatalogSettingsSyncService.triggerPush()
+        }
+    }
+
+    private fun observeSections() {
+        viewModelScope.launch {
+            combine(
+                layoutPreferenceDataStore.homeSections,
+                layoutPreferenceDataStore.heroSectionEnabled,
+                layoutPreferenceDataStore.continueWatchingEnabled
+            ) { config, hero, continueWatching -> Triple(config, hero, continueWatching) }
+                .collectLatest { (config, hero, continueWatching) ->
+                    sectionsConfig = config
+                    heroEnabled = hero
+                    continueWatchingEnabled = continueWatching
+                    val rows = HomeSectionOrderPolicy.movableRows(config, hero, continueWatching)
+                    _uiState.update {
+                        it.copy(
+                            heroEnabled = hero,
+                            sections = rows.mapIndexed { index, entry ->
+                                HomeSectionOrderItem(
+                                    id = entry.id,
+                                    enabled = entry.enabled,
+                                    canMoveUp = index > 0,
+                                    canMoveDown = index < rows.lastIndex
+                                )
+                            }
+                        )
+                    }
+                }
+        }
     }
 
     fun moveUp(key: String) {
@@ -463,7 +532,17 @@ class CatalogOrderViewModel @Inject constructor(
 data class CatalogOrderUiState(
     val isLoading: Boolean = true,
     val items: List<CatalogOrderItem> = emptyList(),
-    val followAddonsOrder: Boolean = false
+    val followAddonsOrder: Boolean = false,
+    /** Home's own sections (Continue Watching, Recent Channels, ...), in order. The hero is separate: on or off only. */
+    val sections: List<HomeSectionOrderItem> = emptyList(),
+    val heroEnabled: Boolean = true
+)
+
+data class HomeSectionOrderItem(
+    val id: String,
+    val enabled: Boolean,
+    val canMoveUp: Boolean,
+    val canMoveDown: Boolean
 )
 
 data class CatalogOrderItem(

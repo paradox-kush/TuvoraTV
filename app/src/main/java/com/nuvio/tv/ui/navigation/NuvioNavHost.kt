@@ -319,7 +319,7 @@ private fun PlaybackNavHost(
             )
         }
 
-        rootComposable(Screen.Home.route) {
+        rootComposable(Screen.Home.route) { homeBackStackEntry ->
             fun createContinueWatchingRoute(
                 item: ContinueWatchingItem,
                 manualSelection: Boolean = false,
@@ -416,6 +416,15 @@ private fun PlaybackNavHost(
                 },
                 onNavigateToFolderDetail = { collectionId, folderId ->
                     navController.navigate(Screen.FolderDetail.createRoute(collectionId, folderId))
+                },
+                // Recent Channels row: the same clean-live launch the Library uses for a favourite channel.
+                onPlayLiveChannel = { contentId ->
+                    dispatchLiveOrElse(
+                        owner = homeBackStackEntry,
+                        contentId = contentId,
+                        origin = CleanLiveLaunchOrigin.HOME,
+                        onNonLive = {},
+                    )
                 }
             )
         }

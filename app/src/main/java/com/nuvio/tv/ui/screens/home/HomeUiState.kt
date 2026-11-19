@@ -1,6 +1,8 @@
 package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.runtime.Immutable
+import com.nuvio.tv.core.home.HomeLiveRecent
+import com.nuvio.tv.core.home.HomeSectionsConfig
 import com.nuvio.tv.core.tracking.TrackingMembershipRemovalConfirmation
 import com.nuvio.tv.data.local.StartupAuthNotice
 import com.nuvio.tv.domain.model.CatalogRow
@@ -42,6 +44,10 @@ data class HomeUiState(
     val heroItems: List<MetaPreview> = emptyList(),
     val heroCatalogKeys: List<String> = emptyList(),
     val heroSectionEnabled: Boolean = true,
+    /** The user's Home section order and visibility; null until they change it (see HomeSectionOrderPolicy). */
+    val homeSections: HomeSectionsConfig? = null,
+    /** Recently watched live channels for the Recent Channels row (empty when the row is off or nothing was watched). */
+    val liveRecents: List<HomeLiveRecent> = emptyList(),
     val modernHomePresentation: ModernHomePresentationState = ModernHomePresentationState(),
     val posterLabelsEnabled: Boolean = true,
     val catalogAddonNameEnabled: Boolean = true,

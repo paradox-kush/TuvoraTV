@@ -112,6 +112,87 @@ class HomeCatalogSettingsSyncServiceTest {
     fun pushWithNoRemoteRowIsUnchanged() {
         val local = payloadJson(listOf(item("a", "bravo", 0)))
 
-        assertEquals(local, mergeHomeCatalogSettingsJson(null, local))
+        // The only difference is the null home_sections key, which is deliberately never pushed.
+        assertEquals(JsonObject(local.filterKeys { it != "home_sections" }), mergeHomeCatalogSettingsJson(null, local))
+    }
+
+    // ---- home_sections (order and visibility of Home's own sections) ----
+
+    private val lenientJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    private fun sections(customized: Boolean, vararg ids: String) =
+        com.nuvio.tv.core.home.HomeSectionsConfig(customized, ids.map { com.nuvio.tv.core.home.HomeSectionEntry(it, true) })
+
+    @Test
+    fun olderPayloadWithoutHomeSectionsDecodesWithNoSectionsChoice() {
+        val older = """{"hide_unreleased_content":true,"items":[{"addon_id":"a","type":"movie","catalog_id":"c","enabled":false,"order":3}]}"""
+
+        val decoded = lenientJson.decodeFromString(SyncHomeCatalogPayload.serializer(), older)
+
+        assertEquals(null, decoded.homeSections)
+        assertEquals(true, decoded.hideUnreleasedContent)
+        assertEquals(1, decoded.items.size)
+    }
+
+    @Test
+    fun payloadWithHomeSectionsDecodesTheSharedShape() {
+        val raw = """{"items":[],"home_sections":{"customized":true,"sections":[{"id":"hero","enabled":false},{"id":"future_row"},{"id":"catalogs","enabled":true}]}}"""
+
+        val decoded = lenientJson.decodeFromString(SyncHomeCatalogPayload.serializer(), raw)
+
+        val config = decoded.homeSections!!
+        assertTrue(config.customized)
+        assertEquals(listOf("hero", "future_row", "catalogs"), config.sections.map { it.id })
+        assertEquals(false, config.sections[0].enabled)
+        assertEquals("a missing enabled flag means on", true, config.sections[1].enabled)
+    }
+
+    @Test
+    fun pushKeepsHomeSectionsWrittenByAnotherDevice() {
+        val remote = buildJsonObject {
+            put("home_sections", lenientJson.encodeToJsonElement(
+                com.nuvio.tv.core.home.HomeSectionsConfig.serializer(), sections(true, "hero", "catalogs", "future_row")
+            ))
+        }
+        // This device never customised Home sections, so it exports null for them.
+        val local = payloadJson(listOf(item("a", "bravo", 0)))
+        assertEquals("sanity: the null is in the exported json", kotlinx.serialization.json.JsonNull, local["home_sections"])
+
+        val merged = mergeHomeCatalogSettingsJson(remote, local)
+
+        val kept = lenientJson.decodeFromJsonElement(
+            com.nuvio.tv.core.home.HomeSectionsConfig.serializer(), merged.getValue("home_sections")
+        )
+        assertEquals(listOf("hero", "catalogs", "future_row"), kept.sections.map { it.id })
+        assertTrue(kept.customized)
+        assertEquals("the rows still merge as before", listOf("a/bravo"), merged.itemKeys())
+    }
+
+    @Test
+    fun pushOfALocalHomeSectionsChoiceReplacesTheStoredOne() {
+        val remote = buildJsonObject {
+            put("home_sections", lenientJson.encodeToJsonElement(
+                com.nuvio.tv.core.home.HomeSectionsConfig.serializer(), sections(true, "hero", "catalogs")
+            ))
+        }
+        val local = lenientJson.encodeToJsonElement(
+            SyncHomeCatalogPayload.serializer(),
+            SyncHomeCatalogPayload(homeSections = sections(false, "hero", "continue_watching"))
+        ).jsonObject
+
+        val merged = mergeHomeCatalogSettingsJson(remote, local)
+
+        val written = lenientJson.decodeFromJsonElement(
+            com.nuvio.tv.core.home.HomeSectionsConfig.serializer(), merged.getValue("home_sections")
+        )
+        assertEquals("Reset to Default is a real write, not a null", false, written.customized)
+        assertEquals(listOf("hero", "continue_watching"), written.sections.map { it.id })
+    }
+
+    @Test
+    fun pushWithNoRemoteAndNoLocalChoiceLeavesHomeSectionsOutEntirely() {
+        val local = payloadJson(listOf(item("a", "bravo", 0)))
+
+        assertTrue("home_sections" !in mergeHomeCatalogSettingsJson(null, local))
     }
 }

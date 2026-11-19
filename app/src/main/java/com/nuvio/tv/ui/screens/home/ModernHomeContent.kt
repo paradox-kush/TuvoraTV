@@ -128,6 +128,7 @@ fun ModernHomeContent(
     trailerPreviewAudioUrls: Map<String, String> = emptyMap(),
     onNavigateToDetail: (String, String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit,
+    onPlayLiveChannel: (String) -> Unit = {},
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit = {},
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit = {},
     showContinueWatchingManualPlayOption: Boolean = false,
@@ -433,7 +434,7 @@ fun ModernHomeContent(
                         (item.payload as? ModernPayload.CollectionFolder)?.focusKey == selection.focusKey
                     }
                 }
-                is ModernPayload.ContinueWatching -> true
+                is ModernPayload.ContinueWatching, is ModernPayload.LiveChannel -> true
             }
         } ?: false
         if (staleSelection) {
@@ -1212,6 +1213,7 @@ fun ModernHomeContent(
                 onNavigateToFolderDetail = onNavigateToFolderDetail,
                 onLoadMoreCatalog = onLoadMoreCatalog,
                 onContinueWatchingClick = onContinueWatchingClick,
+                onPlayLiveChannel = onPlayLiveChannel,
                 onContinueWatchingOptions = onContinueWatchingOptionsLambda,
                 onRequestLazyCatalogLoad = stableOnRequestLazyCatalogLoad,
                 onBackdropInteraction = onBackdropInteractionLambda,
