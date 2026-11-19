@@ -1045,7 +1045,9 @@ class StalkerClient @Inject constructor(
 
     private suspend fun categories(acc: XtreamAccount, type: String, action: String): Result<List<XtreamCategory>> = runCatching {
         val js = browse(acc, mapOf("type" to type, "action" to action))
-        val arr = js as? com.google.gson.JsonArray ?: return@runCatching emptyList()
+        // A reply that is not a list is a broken reply, not an empty portal: fail so the hub shows Retry.
+        val arr = js as? com.google.gson.JsonArray
+            ?: throw StalkerSessionUnavailableException("${acc.name} answered $action with something other than a list")
         arr.mapNotNull { it as? JsonObject }
             .mapNotNull { obj ->
                 val id = obj.str("id") ?: return@mapNotNull null

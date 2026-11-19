@@ -3625,8 +3625,10 @@
     <string name="iptv_hub_no_provider_title">No IPTV playlist yet</string>
     <string name="iptv_hub_no_provider_subtitle">Add your Xtream Codes portal or M3U URL to watch Live TV, Movies and Series.</string>
     <string name="iptv_hub_add_provider">Add IPTV playlist</string>
-    <string name="iptv_hub_empty_title">Nothing here</string>
-    <string name="iptv_hub_empty_subtitle">This playlist has no content in this section.</string>
+    <string name="iptv_hub_empty_title">Nothing here yet</string>
+    <string name="iptv_hub_empty_subtitle">This playlist has no categories in this section. Try again, pick another section, or add a different playlist.</string>
+    <string name="iptv_hub_empty_checked">Checked just now, still empty</string>
+    <string name="iptv_hub_empty_add_playlist">Add Playlist</string>
     <string name="iptv_hub_row_failed">Couldn’t load · Retry</string>
     <string name="iptv_hub_error_timeout">This playlist didn’t answer in time. Check the portal is up and try again.</string>
     <string name="iptv_settings_load_failed">Couldn’t load this from the provider.</string>

@@ -87,6 +87,8 @@ data class XtreamHubUiState(
     val error: String? = null,
     /** UX164: the section whose portal said it has nothing there — shown plainly, with no Retry. */
     val unavailableSection: XtreamSection? = null,
+    /** A user-pressed Retry has run for the current playlist+section (drives "Checked just now, still empty"). */
+    val userRetried: Boolean = false,
     /** UX147: playlists whose portal positively has no series section; their Series tab is hidden. */
     val seriesUnavailableIds: Set<String> = emptySet(),
     // The user's poster-size preference (Layout settings) — the hub's rails derive their card
@@ -322,7 +324,7 @@ class XtreamHubViewModel @Inject constructor(
         com.nuvio.tv.core.iptv.stalker.StalkerPlaybackTraffic.onProviderSwitched()
         posterEnricher.onProviderSwitched(accountId)
         val section = coerceSection(_uiState.value.section, _uiState.value.accounts.firstOrNull { it.id == accountId })
-        _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap(), unavailableSection = null) }
+        _uiState.update { it.copy(selectedAccountId = accountId, section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap(), unavailableSection = null, userRetried = false) }
         rememberSelection()
         loadCategories()
     }
@@ -335,7 +337,7 @@ class XtreamHubViewModel @Inject constructor(
 
     private fun switchSection(section: XtreamSection, persist: Boolean) {
         if (section == _uiState.value.section) return
-        _uiState.update { it.copy(section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap(), unavailableSection = null) }
+        _uiState.update { it.copy(section = section, categories = emptyList(), itemsByCategory = emptyMap(), rowLoads = emptyMap(), unavailableSection = null, userRetried = false) }
         if (persist) rememberSelection()
         loadCategories()
     }
@@ -357,7 +359,12 @@ class XtreamHubViewModel @Inject constructor(
         // User-driven retry: clear the panel breaker FIRST (WP6) so it can never fast-fail the
         // very attempt the user just asked for.
         _uiState.value.selectedAccount?.let { IptvPanelGuard.resetForAccount(it) }
-        _uiState.update { it.copy(error = null) }
+        _uiState.update { it.copy(error = null, userRetried = true) }
+        // A cached (possibly empty) answer would make Retry a no-op: ask again for real.
+        _uiState.value.selectedAccount?.let { acc ->
+            val catKey = "${acc.id}|${_uiState.value.section}"
+            categoriesCache.remove(catKey)
+        }
         loadCategories()
     }
 
