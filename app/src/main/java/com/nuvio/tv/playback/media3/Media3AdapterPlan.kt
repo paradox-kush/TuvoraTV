@@ -54,15 +54,13 @@ internal data class Media3AdapterPlan(
     val normalization: Boolean,
     val audioDelayMs: Long,
     val subtitleDelayMs: Long,
-    /** True for a live request: [Media3LivePlaybackPolicy] tunes its load control. */
-    val live: Boolean = false,
 ) {
     /** Never expose provider URLs, request headers, cookies, proxy material, or DRM secrets. */
     override fun toString(): String =
         "Media3AdapterPlan(request=$request, tracks=$tracks, buffer=$buffer, " +
             "decoderMode=$decoderMode, decoderFallback=$decoderFallback, audioMode=$audioMode, " +
             "audioOutput=$audioOutput, skipSilence=$skipSilence, downmixToStereo=$downmixToStereo, " +
-            "normalization=$normalization, audioDelayMs=$audioDelayMs, subtitleDelayMs=$subtitleDelayMs, live=$live)"
+            "normalization=$normalization, audioDelayMs=$audioDelayMs, subtitleDelayMs=$subtitleDelayMs)"
 }
 
 internal data class Media3NetworkPlan(
@@ -140,11 +138,7 @@ internal object Media3AdapterPlanFactory {
 
         val ceiling = requirements.adaptiveDimensionCeiling
         val custom = requirements.customBuffer
-        val live = request.contentType == com.nuvio.tv.playback.core.ContentType.LIVE
-        val liveBuffer = if (live) Media3LivePlaybackPolicy.bufferPlan(requirements.buffering) else null
-        val buffer = if (liveBuffer != null) {
-            liveBuffer
-        } else if (requirements.buffering == BufferingPreference.CUSTOM && custom != null) {
+        val buffer = if (requirements.buffering == BufferingPreference.CUSTOM && custom != null) {
             Media3BufferPlan(
                 minimumMs = custom.minimumBufferMs,
                 maximumMs = custom.maximumBufferMs,
@@ -221,7 +215,6 @@ internal object Media3AdapterPlanFactory {
             normalization = requirements.audioNormalization && requirements.pcmProcessingAllowed,
             audioDelayMs = requirements.audioDelayMs,
             subtitleDelayMs = requirements.subtitleDelayMs,
-            live = live,
         )
     }
 

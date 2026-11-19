@@ -262,23 +262,16 @@ internal class AndroidMedia3BackendFactory(
             setDrmSessionManagerProvider(drmProvider)
             media3LoadErrorPolicyFor(plan.request.transientLoadRetryPolicy)?.let(::setLoadErrorHandlingPolicy)
         }
-        // The byte cap is the real limit (size over time), so a long live window never exceeds a
-        // low-RAM tier's budget; a guide tile keeps its own small byte budget.
-        val targetBufferBytes =
-            tile?.bufferBytes ?: playerMemoryBudget.exoTargetBufferBytes(Runtime.getRuntime().maxMemory())
-        val buffer = if (plan.live) {
-            Media3LivePlaybackPolicy.clampToByteBudget(plan.buffer, targetBufferBytes)
-        } else {
-            plan.buffer
-        }
         val loadControl = DefaultLoadControl.Builder()
-            .setTargetBufferBytes(targetBufferBytes)
+            .setTargetBufferBytes(
+                tile?.bufferBytes ?: playerMemoryBudget.exoTargetBufferBytes(Runtime.getRuntime().maxMemory()),
+            )
             .setPrioritizeTimeOverSizeThresholds(false)
             .setBufferDurationsMs(
-                buffer.minimumMs,
-                buffer.maximumMs,
-                buffer.playbackMs,
-                buffer.rebufferMs,
+                plan.buffer.minimumMs,
+                plan.buffer.maximumMs,
+                plan.buffer.playbackMs,
+                plan.buffer.rebufferMs,
             )
             .build()
         val trackSelector = DefaultTrackSelector(applicationContext).apply {
