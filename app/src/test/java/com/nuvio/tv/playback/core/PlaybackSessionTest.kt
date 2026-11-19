@@ -3497,35 +3497,98 @@ class PlaybackSessionTest {
         close(session)
     }
 
+    private fun ladderChannel() = PlaybackRequest(
+        "http://panel.example/live/u/p/104.m3u8",
+        contentType = ContentType.LIVE,
+        contentKey = SecretValue("live:104"),
+    )
+
     @Test
-    fun `the ladder memory follows the channel not the URL`() = runTest {
+    fun `a second tune of the same channel plays via the remembered step without the failing open`() = runTest {
         val surface = FakeSurface()
-        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val urls = mutableListOf<String>()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface, onStart = { _, input, _ -> urls += input.request.url })
         val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
-        val request = PlaybackRequest(
-            "http://panel.example/live/u/p/104.m3u8",
-            contentType = ContentType.LIVE,
-            contentKey = SecretValue("live:104"),
-        )
+        val request = ladderChannel()
         val session = ladderSession(request, ladderHls, preferred, fallback)
         session.dispatch(PlaybackCommand.SurfaceAvailable)
         session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
         advanceUntilIdle()
         preferred.emit(PlaybackEvent.Failed(1, ladderManifestFailure))
         advanceUntilIdle()
-        assertEquals(2, preferred.startCalls)
+        preferred.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+        assertEquals(listOf("http://panel.example/live/u/p/104.m3u8", "http://panel.example/live/u/p/104.ts"), urls)
+
+        // Leave and come back: the winning step is applied directly, no failing .m3u8 request.
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        assertEquals("http://panel.example/live/u/p/104.ts", urls.last())
+        assertEquals("one start, not open-fail-reopen", 3, urls.size)
+        assertEquals(0, fallback.startCalls)
+        close(session)
+    }
+
+    @Test
+    fun `a remembered step that fails is forgotten and the ladder runs once from the original`() = runTest {
+        val surface = FakeSurface()
+        val urls = mutableListOf<String>()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface, onStart = { _, input, _ -> urls += input.request.url })
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val request = ladderChannel()
+        val session = ladderSession(request, ladderHls, preferred, fallback)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.Failed(1, ladderManifestFailure))
+        advanceUntilIdle()
         preferred.emit(PlaybackEvent.FirstVideoFrame(1))
         advanceUntilIdle()
 
-        // Tuning the same channel again (a fresh URL resolves to the .m3u8 again): the step is spent.
         session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
         advanceUntilIdle()
-        val secondGeneration = session.snapshot.value.generation
-        preferred.emit(PlaybackEvent.Failed(secondGeneration, ladderManifestFailure))
+        val second = session.snapshot.value.generation
+        preferred.emit(PlaybackEvent.Failed(second, ladderDemuxFailure)) // the remembered .ts now fails
         advanceUntilIdle()
-        // Only FORCE_RAW_TS was spent with the sibling step, so nothing is left: hand-off.
-        assertEquals("no second ladder run for the same channel", 3, preferred.startCalls)
+        // Forgotten: the original URL is re-opened (a normal first open) ...
+        assertEquals("http://panel.example/live/u/p/104.m3u8", urls.last())
+        preferred.emit(PlaybackEvent.Failed(second, ladderManifestFailure))
+        advanceUntilIdle()
+        // ... and the ladder runs once more, on the same engine.
+        assertEquals("http://panel.example/live/u/p/104.ts", urls.last())
+        assertEquals(0, fallback.startCalls)
+        // A third failure in this tune: nothing left, the usual hand-off, no loop.
+        preferred.emit(PlaybackEvent.Failed(second, ladderDemuxFailure))
+        advanceUntilIdle()
         assertEquals(1, fallback.startCalls)
+        close(session)
+    }
+
+    @Test
+    fun `without a first frame a new tune runs the ladder again from scratch`() = runTest {
+        val surface = FakeSurface()
+        val urls = mutableListOf<String>()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface, onStart = { _, input, _ -> urls += input.request.url })
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val request = ladderChannel()
+        val session = ladderSession(request, ladderHls, preferred, fallback)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.Failed(1, ladderManifestFailure))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.Failed(1, ladderDemuxFailure)) // the .ts failed too: hand-off
+        advanceUntilIdle()
+        assertEquals(1, fallback.startCalls)
+
+        // The step scope is ONE tune: a new tune of the channel gets its own ladder pass.
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        val second = session.snapshot.value.generation
+        assertEquals("http://panel.example/live/u/p/104.m3u8", urls.last())
+        preferred.emit(PlaybackEvent.Failed(second, ladderManifestFailure))
+        advanceUntilIdle()
+        assertEquals("http://panel.example/live/u/p/104.ts", urls.last())
         close(session)
     }
 

@@ -113,13 +113,25 @@ class PlaybackSession(
      * B262: live format-ladder steps already taken per channel identity (bounded). Keyed by the
      * channel's content key, never the URL: the sibling-.ts step changes the URL mid-ladder.
      */
-    private val formatLadderTried = LinkedHashMap<String, Set<LiveFormatStep>>()
+    private var formatLadderTried: Set<LiveFormatStep> = emptySet()
+    private var formatLadderTriedGeneration: Long = -1L
+
+    /** The step that last produced a first frame per channel identity (bounded, in memory, per session). */
+    private val formatLadderWinners = LinkedHashMap<String, LiveFormatStep>()
 
     /** The generation whose same-engine format re-open is releasing/committing; the old engine's trailing errors are noise. */
     private var formatLadderReopeningGeneration: Long? = null
     private var formatLadderInFlight: FormatLadderInFlight? = null
 
-    private data class FormatLadderInFlight(val generation: Long, val step: LiveFormatStep)
+    private data class FormatLadderInFlight(
+        val generation: Long,
+        val step: LiveFormatStep,
+        val key: String?,
+        /** The request as resolved, before this step changed it (restored if a remembered step fails). */
+        val original: ResolvedPlaybackRequest,
+        /** True when the step was applied up front from memory instead of after a failure. */
+        val remembered: Boolean,
+    )
 
     /** Freezes answered in the open incident; reset when the incident ends. */
     private var incidentFreezes = 0
@@ -358,7 +370,6 @@ class PlaybackSession(
             // A viewer Retry starts the channel over; a zap only moves to another channel's own budget.
             if ((input as PlaybackReducerInput.Command).value == PlaybackCommand.Retry) {
                 channelFreezes.clear()
-                formatLadderTried.clear()
             }
         }
         if (engineStartAccepted) {
@@ -573,9 +584,9 @@ class PlaybackSession(
      */
     private fun interceptWithFormatLadder(event: PlaybackEvent.Failed): Boolean {
         if (formatLadderReopeningGeneration == event.generation) return true
-        val step = nextFormatLadderStep(event)
-        formatLadderInFlight?.takeIf { it.generation == event.generation }?.let { previous ->
-            formatLadderInFlight = null
+        val previous = formatLadderInFlight?.takeIf { it.generation == event.generation }
+        formatLadderInFlight = null
+        if (previous != null) {
             diagnostics.record(
                 PlaybackDiagnosticEvent(
                     generation = event.generation,
@@ -587,18 +598,25 @@ class PlaybackSession(
                 ),
             )
         }
-        if (step == null) return false
         val graph = activeGraph ?: return false
         val current = resolved?.takeIf { it.generation == event.generation }?.value ?: return false
         val engine = engineRegistry.engine(graph.engine) ?: return false
         val effective = requirements?.takeIf { it.generation == event.generation }?.value ?: return false
-        val key = formatLadderKey(current.request, event.generation)
-        formatLadderTried[key] = formatLadderTried[key].orEmpty() + LiveFormatLadderPolicy.spentBy(step)
-        while (formatLadderTried.size > FORMAT_LADDER_MEMORY) {
-            formatLadderTried.remove(formatLadderTried.keys.first())
+        if (previous?.remembered == true && formatLadderStartupEligible(event.generation)) {
+            // The remembered step no longer works: forget it, and give this tune one normal ladder pass
+            // from the original request (a plain first open; its failure then runs the ladder once).
+            previous.key?.let(formatLadderWinners::remove)
+            formatLadderTried = emptySet()
+            formatLadderReopeningGeneration = event.generation
+            reopenForFormatLadder(event.generation, graph, engine, previous.original, effective)
+            return true
         }
+        val step = nextFormatLadderStep(event) ?: return false
+        formatLadderTried = triedSteps(event.generation) + LiveFormatLadderPolicy.spentBy(step)
         formatLadderReopeningGeneration = event.generation
-        formatLadderInFlight = FormatLadderInFlight(event.generation, step)
+        formatLadderInFlight = FormatLadderInFlight(
+            event.generation, step, rememberKey(current.request), current, remembered = false,
+        )
         diagnostics.record(
             PlaybackDiagnosticEvent(
                 generation = event.generation,
@@ -608,8 +626,80 @@ class PlaybackSession(
                 formatStep = step.name,
             ),
         )
-        reopenForFormatLadder(event.generation, step, graph, engine, current, effective)
+        reopenForFormatLadder(event.generation, graph, engine, ladderResolved(step, current), effective)
         return true
+    }
+
+    /** The steps spent in THIS tune (a generation, which includes its own reconnects); a new tune starts empty. */
+    private fun triedSteps(forGeneration: Long): Set<LiveFormatStep> {
+        if (formatLadderTriedGeneration != forGeneration) {
+            formatLadderTriedGeneration = forGeneration
+            formatLadderTried = emptySet()
+        }
+        return formatLadderTried
+    }
+
+    private fun formatLadderStartupEligible(gen: Long): Boolean {
+        val snapshot = machine.snapshot
+        return gen == snapshot.generation &&
+            snapshot.state == PlaybackState.STARTING_PRIMARY &&
+            !snapshot.isReconnecting &&
+            machine.sessionActive &&
+            machine.lifecycleActive
+    }
+
+    private fun ladderResolved(step: LiveFormatStep, current: ResolvedPlaybackRequest): ResolvedPlaybackRequest {
+        val request = if (step == LiveFormatStep.SIBLING_TS_URL) {
+            LiveFormatLadderPolicy.siblingTsUrl(current.request.url)
+                ?.let(current.request::withUrl) ?: current.request
+        } else {
+            current.request
+        }
+        return current.copy(
+            request = request,
+            summary = request.summary(),
+            evidence = LiveFormatLadderPolicy.evidenceFor(step, current.evidence),
+        )
+    }
+
+    private fun rememberKey(request: PlaybackRequest): String? = request.contentKey?.value
+
+    /**
+     * A channel whose format step produced a first frame earlier in this session starts with that step
+     * applied, skipping the failing open. Live Media3, not single-use, and only while the step still
+     * fits the request (the sibling step needs the Xtream .m3u8 shape).
+     */
+    private fun applyRememberedFormatStep(
+        gen: Long,
+        graph: PlaybackGraph,
+        current: ResolvedPlaybackRequest,
+    ): ResolvedPlaybackRequest {
+        val request = current.request
+        if (request.contentType != ContentType.LIVE || graph.engine != EngineType.MEDIA3) return current
+        if (request.network.transientLoadRetryPolicy == TransientLoadRetryPolicy.SESSION_ONLY) return current
+        val key = rememberKey(request) ?: return current
+        val step = formatLadderWinners[key] ?: return current
+        if (step == LiveFormatStep.SIBLING_TS_URL && LiveFormatLadderPolicy.siblingTsUrl(request.url) == null) return current
+        val next = ladderResolved(step, current)
+        formatLadderTried = LiveFormatLadderPolicy.spentBy(step)
+        formatLadderTriedGeneration = gen
+        formatLadderInFlight = FormatLadderInFlight(gen, step, key, current, remembered = true)
+        resolved = GenerationValue(gen, next)
+        machine = machine.copy(
+            request = next.request,
+            evidence = next.evidence,
+            snapshot = machine.snapshot.copy(requestSummary = next.summary),
+        )
+        _snapshot.value = machine.snapshot
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = gen,
+                code = PlaybackDiagnosticCode.LIVE_FORMAT_LADDER_STEP,
+                engine = graph.engine,
+                formatStep = step.name,
+            ),
+        )
+        return next
     }
 
     private fun nextFormatLadderStep(event: PlaybackEvent.Failed): LiveFormatStep? {
@@ -633,17 +723,21 @@ class PlaybackSession(
                 url = request.url,
                 // Stalker's SESSION_ONLY link is spent by its first open: excluded from the ladder.
                 singleUse = request.network.transientLoadRetryPolicy == TransientLoadRetryPolicy.SESSION_ONLY,
-                tried = formatLadderTried[formatLadderKey(request, gen)].orEmpty(),
+                tried = triedSteps(gen),
             ),
         )
     }
 
-    private fun formatLadderKey(request: PlaybackRequest, forGeneration: Long): String =
-        request.contentKey?.value ?: "generation:$forGeneration"
-
     private fun noteFormatLadderPlayed(forGeneration: Long) {
         val inFlight = formatLadderInFlight?.takeIf { it.generation == forGeneration } ?: return
         formatLadderInFlight = null
+        inFlight.key?.let { key ->
+            formatLadderWinners.remove(key)
+            formatLadderWinners[key] = inFlight.step
+            while (formatLadderWinners.size > FORMAT_LADDER_MEMORY) {
+                formatLadderWinners.remove(formatLadderWinners.keys.first())
+            }
+        }
         diagnostics.record(
             PlaybackDiagnosticEvent(
                 generation = forGeneration,
@@ -658,10 +752,9 @@ class PlaybackSession(
     /** Release, swap the URL/evidence, and start the same engine again - the shape of [recoverOnce] without a re-mint. */
     private fun reopenForFormatLadder(
         gen: Long,
-        step: LiveFormatStep,
         graph: PlaybackGraph,
         engine: PlaybackEngine,
-        current: ResolvedPlaybackRequest,
+        next: ResolvedPlaybackRequest,
         effective: PlaybackRequirements,
     ) {
         val startPaused = machine.paused
@@ -675,17 +768,6 @@ class PlaybackSession(
                 fail(gen, release.failure)
                 return@launch
             }
-            val request = if (step == LiveFormatStep.SIBLING_TS_URL) {
-                LiveFormatLadderPolicy.siblingTsUrl(current.request.url)
-                    ?.let(current.request::withUrl) ?: current.request
-            } else {
-                current.request
-            }
-            val next = current.copy(
-                request = request,
-                summary = request.summary(),
-                evidence = LiveFormatLadderPolicy.evidenceFor(step, current.evidence),
-            )
             val accepted = CompletableDeferred<Boolean>()
             lane.send(LaneMessage.FormatLadderReady(gen, next, accepted))
             if (!accepted.await()) {
@@ -1044,13 +1126,14 @@ class PlaybackSession(
     }
 
     private fun startGraph(action: PlaybackAction.StartGraph) {
-        val resolvedRequest = resolved.takeIf { it?.generation == action.generation }?.value
+        val resolvedBefore = resolved.takeIf { it?.generation == action.generation }?.value
         val effective = requirements.takeIf { it?.generation == action.generation }?.value
         val engine = engineRegistry.engine(action.graph.engine)
-        if (resolvedRequest == null || effective == null || engine == null) {
+        if (resolvedBefore == null || effective == null || engine == null) {
             tryFail(action.generation, internalFailure(FailurePhase.ENGINE_START))
             return
         }
+        val resolvedRequest = applyRememberedFormatStep(action.generation, action.graph, resolvedBefore)
         activeGraph = action.graph
         activeGraphGeneration = action.generation
         generationScope(action.generation).launch {
