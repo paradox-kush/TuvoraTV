@@ -70,7 +70,9 @@ data class GuideChannel(
     val entityId: String = "",
     /** True when this channel is pinned in the personalization overlay — drives the guide's pin marker.
      *  Stamped by [displayChannels] from the overlay; synthetic Favorites/Recent rows stay false. */
-    val pinned: Boolean = false
+    val pinned: Boolean = false,
+    /** True on the (up to 4) channels "Pin all N" offers; they are listed first. Stamped by [displayChannels]. */
+    val suggested: Boolean = false,
 )
 
 internal object GuideRapidZapPolicy {
@@ -268,6 +270,8 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
     private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
     private val accountStore: com.nuvio.tv.data.local.XtreamAccountStore,
+    /** On-device play counts and the suggestion's switch/snooze: what "Pin all N" is built from. */
+    private val pinSuggestions: com.nuvio.tv.data.local.PinSuggestionStore,
     /** "Add to Multiview" fills this; the Multiview screen takes it. One instance app-wide (Hilt singleton). */
     private val multiviewQueue: com.nuvio.tv.core.multiview.MultiviewQueue = com.nuvio.tv.core.multiview.MultiviewQueue(),
 ) : ViewModel() {
@@ -307,14 +311,19 @@ class XtreamLiveGuideViewModel @Inject constructor(
     // from the website re-applies live. (Also declared before init, for the same inline-emit reason.)
     private var lastRawCategories: List<GuideCategory> = emptyList()
     private var lastCategoryAccountId: String? = null
+    // Bumped by "Not now" / "Stop suggesting" so the shown list re-derives its suggestion (declared before init, as above).
+    private val suggestionRevision = MutableStateFlow(0)
 
     init {
         overlayRepository.ensureLoaded()
         overlayRepository.pull()
         viewModelScope.launch {
-            overlayRepository.uiState
-                .map { Triple(it.channels, it.categories, it.groups) }
-                .distinctUntilChanged()
+            kotlinx.coroutines.flow.combine(
+                overlayRepository.uiState.map { Triple(it.channels, it.categories, it.groups) }.distinctUntilChanged(),
+                // A favourite added or removed changes who may be suggested; "Not now" / "Stop" bump the revision.
+                libraryRepository.libraryItems.map { items -> items.filter { XtreamItemRegistry.isLiveContentId(it.id) }.map { it.id }.toSet() }.distinctUntilChanged(),
+                suggestionRevision,
+            ) { overlayParts, _, _ -> overlayParts }
                 .collect {
                 if (lastRawChannels.isNotEmpty()) {
                     val raw = lastRawChannels
@@ -497,14 +506,24 @@ class XtreamLiveGuideViewModel @Inject constructor(
                         categories = categorySnapshot.map { com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.NamedCategory(it.id, it.name) },
                         overlay = overlaySnapshot.categories,
                     )
-                    com.nuvio.tv.core.iptv.GuideAllChannelsCapPolicy.capped(
-                        channels = com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.guideChannels(
-                            channels, hiddenIds, allowedBySelection = { true }, categoryOf = { it.categoryId },
-                        ),
+                    val visible = com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy.guideChannels(
+                        channels, hiddenIds, allowedBySelection = { true }, categoryOf = { it.categoryId },
+                    )
+                    val capped = com.nuvio.tv.core.iptv.GuideAllChannelsCapPolicy.capped(
+                        channels = visible,
                         overlay = overlay,
                         cap = ALL_CAP,
                         entityId = { it.entityId },
                         withName = { row, newName -> row.copy(name = newName) },
+                    )
+                    // "Pin all N": the channels the viewer keeps coming back to are listed first. Chosen from the
+                    // whole visible catalogue (not the capped one) so a rarely-scrolled-to channel can still qualify.
+                    val suggested = suggestedChannels(visible, overlay)
+                    val cappedById = capped.associateBy { it.contentId }
+                    com.nuvio.tv.core.iptv.PinSuggestionPolicy.listedFirst(
+                        rows = capped.map { if (it.suggested) it.copy(suggested = false) else it },
+                        suggested = suggested.map { row -> (cappedById[row.contentId] ?: row).copy(suggested = true) },
+                        idOf = { it.contentId },
                     )
                 } else if (overlay.isEmpty()) {
                     channels
@@ -524,6 +543,62 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 channels
             }
         }
+    }
+
+    /**
+     * The channels to offer in the "Pin all N" line, best first (empty = no line). Reads only the device's own play
+     * counts; nothing is fetched. Degrades to none on any error: a suggestion must never break the guide.
+     */
+    private suspend fun suggestedChannels(
+        visible: List<GuideChannel>,
+        overlay: Map<String, com.nuvio.tv.core.iptv.overlay.ChannelOverlay>,
+    ): List<GuideChannel> {
+        try {
+            val snapshot = pinSuggestions.snapshot()
+            if (snapshot.plays.isEmpty()) return emptyList()
+            val played = visible.filter { it.contentId in snapshot.plays && it.entityId.isNotBlank() }
+            if (played.isEmpty()) return emptyList()
+            val favourites = libraryRepository.libraryItems.first()
+                .filter { XtreamItemRegistry.isLiveContentId(it.id) }.map { it.id }.toSet()
+            // Hidden and already-pinned channels are not offered either.
+            val excluded = favourites + played.filter { overlay[it.entityId]?.let { o -> o.hidden || o.pinned } == true }.map { it.contentId }
+            val byId = played.associateBy { it.contentId }
+            val ids = com.nuvio.tv.core.iptv.PinSuggestionPolicy.suggest(
+                plays = snapshot.plays.filterKeys { it in byId },
+                excluded = excluded,
+                prefs = snapshot.prefs,
+                nowMs = System.currentTimeMillis(),
+            )
+            return ids.mapNotNull { byId[it] }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("PinSuggestion", "suggestion skipped: ${e.javaClass.simpleName}")
+            return emptyList()
+        }
+    }
+
+    /** "Pin all N": pins the listed suggestion through the overlay's existing channel pin (the one the website sets). */
+    fun pinSuggested() {
+        val targets = _uiState.value.channels.filter { it.suggested }.map {
+            com.nuvio.tv.core.iptv.PinSuggestionActions.Target(
+                entityId = it.entityId,
+                playlistId = XtreamItemRegistry.parseId(it.contentId)?.accountId ?: lastOverlayAccountId,
+            )
+        }
+        com.nuvio.tv.core.iptv.PinSuggestionActions.pinAll(targets) { entityId, playlistId, pinned ->
+            overlayRepository.setChannelPinned(entityId, playlistId, pinned)
+        }
+    }
+
+    /** "Not now" on the line: hide it for 14 days. */
+    fun snoozePinSuggestion() {
+        viewModelScope.launch { pinSuggestions.snooze(); suggestionRevision.update { it + 1 } }
+    }
+
+    /** "Stop suggesting" on the line: off until the viewer turns it back on in IPTV settings. */
+    fun stopPinSuggestions() {
+        viewModelScope.launch { pinSuggestions.setEnabled(false); suggestionRevision.update { it + 1 } }
     }
 
     /** Provider categories reordered / hidden / renamed by the CATEGORY overlay (the website's edits),

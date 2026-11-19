@@ -114,6 +114,7 @@ class GuideFirstPaintStoredWindowTest {
                 coEvery { storedWindow(any(), any(), any(), any()) } returns (if (account.sourceType == XtreamAccount.SOURCE_STALKER) emptyList() else stored)
             },
             overlayRepository = overlay,
+            pinSuggestions = mockk(relaxed = true),
             accountStore = mockk<com.nuvio.tv.data.local.XtreamAccountStore>(relaxed = true) {
                 every { accounts } returns flowOf(listOf(account))
             },

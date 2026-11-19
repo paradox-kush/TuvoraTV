@@ -108,6 +108,7 @@ class LiveGuideBoundedLoadTest {
                 every { guideCommitted } returns MutableSharedFlow()
             },
             overlayRepository = overlay,
+            pinSuggestions = mockk(relaxed = true),
             accountStore = mockk<com.nuvio.tv.data.local.XtreamAccountStore>(relaxed = true) {
                 every { accounts } returns flowOf(listOf(account))
             },

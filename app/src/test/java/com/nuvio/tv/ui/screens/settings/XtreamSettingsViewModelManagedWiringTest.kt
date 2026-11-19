@@ -67,6 +67,7 @@ class XtreamSettingsViewModelManagedWiringTest {
             mockk(relaxed = true), mockk(relaxed = true), auth, failover, refresher, profiles, mockk(relaxed = true),
             com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests(),
             mockk(relaxed = true),
+            mockk(relaxed = true),
         )
     }
 
