@@ -436,7 +436,7 @@
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">Nuvio koristi MDBList za ocene i podatke eksternih provajdera rezulata. Nuvio nije povezan niti podržan od strane MDBList-a.</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
-    <string name="licenses_attributions_introdb_body">Nuvio koristi IntroDB API za vremenske oznake uvodnih špica, rezimea, odjavnih špica i pregleda koje obezbeđuje zajednica, a koje se koriste za preskakanje. Nuvio nije povezan niti podržan od strane IntroDB-a.</string>
+    <string name="licenses_attributions_introdb_body">Nuvio koristi IntroDB API za vremenske oznake uvodnih špica, rezimea, odjavnih špica i pregleda koje obezbeđuje zajednica, a koje se koriste za preskakanje. Nuvio nije povezan niti podržan od strane IntroDB-a. Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_imdb_title">IMDb nekomercijalni skupovi podataka</string>
     <string name="licenses_attributions_imdb_body">Nuvio koristi IMDb nekomercijalne skupove podataka, uključujući title.ratings.tsv.gz, za IMDb ocene i broj glasova. Podaci ljubaznošću IMDb-a (https://www.imdb.com). Korišćeno uz dozvolu. IMDb podaci su za ličnu i nekomercijalnu upotrebu pod IMDb uslovima.</string>
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>

@@ -373,7 +373,7 @@
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">Nuvio menggunakan MDBList untuk rating dan data penyedia skor eksternal. Nuvio tidak berafiliasi dengan atau didukung oleh MDBList.</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
-    <string name="licenses_attributions_introdb_body">Nuvio menggunakan API IntroDB untuk cap waktu intro, rekap, kredit, dan pratinjau dari komunitas yang digunakan oleh kontrol lewati. Nuvio tidak berafiliasi dengan atau didukung oleh IntroDB.</string>
+    <string name="licenses_attributions_introdb_body">Nuvio menggunakan API IntroDB untuk cap waktu intro, rekap, kredit, dan pratinjau dari komunitas yang digunakan oleh kontrol lewati. Nuvio tidak berafiliasi dengan atau didukung oleh IntroDB. Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_imdb_title">Dataset Non-Komersial IMDb</string>
     <string name="licenses_attributions_imdb_body">Nuvio menggunakan Dataset Non-Komersial IMDb, termasuk title.ratings.tsv.gz, untuk rating dan jumlah suara IMDb. Informasi atas izin IMDb (https://www.imdb.com). Digunakan dengan izin. Data IMDb untuk penggunaan pribadi dan non-komersial sesuai ketentuan IMDb.</string>
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>

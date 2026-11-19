@@ -456,7 +456,7 @@
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">Nuvioは評価、視聴履歴、再生トラッキングにMDBListを使用します。NuvioはMDBListと提携または承認されていません。</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
-    <string name="licenses_attributions_introdb_body">Nuvioはコミュニティ提供のイントロ、リキャップ、クレジット、プレビューのタイムスタンプにIntroDB APIを使用します(スキップコントロール用)。NuvioはIntroDBと提携または承認されていません。</string>
+    <string name="licenses_attributions_introdb_body">Nuvioはコミュニティ提供のイントロ、リキャップ、クレジット、プレビューのタイムスタンプにIntroDB APIを使用します(スキップコントロール用)。NuvioはIntroDBと提携または承認されていません。 Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_imdb_title">IMDb非商用データセット</string>
     <string name="licenses_attributions_imdb_body">NuvioはIMDb非商用データセット(title.ratings.tsv.gzを含む)を使用し、IMDb評価と投票数を取得します。情報提供: IMDb (https://www.imdb.com)。許可を得て使用。IMDbデータは個人・非商用利用に限ります。</string>
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>

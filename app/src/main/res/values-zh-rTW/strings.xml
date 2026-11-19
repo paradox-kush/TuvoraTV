@@ -437,7 +437,7 @@
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">Nuvio 使用 MDBList 獲取評分、觀看歷史和播放追蹤。Nuvio 與 MDBList 無關聯或未經其認可。</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
-    <string name="licenses_attributions_introdb_body">Nuvio 使用 IntroDB API 獲取社群提供的片頭、前情提要、片尾和工作人員名單時間戳，用於跳過控制。Nuvio 與 IntroDB 無關聯或未經其認可。</string>
+    <string name="licenses_attributions_introdb_body">Nuvio 使用 IntroDB API 獲取社群提供的片頭、前情提要、片尾和工作人員名單時間戳，用於跳過控制。Nuvio 與 IntroDB 無關聯或未經其認可。 Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_imdb_title">IMDb 非商業資料集</string>
     <string name="licenses_attributions_imdb_body">Nuvio 使用 IMDb 非商業資料集，包括 title.ratings.tsv.gz，以獲取 IMDb 評分和投票數。資訊由 IMDb 提供 (https://www.imdb.com)。經許可使用。IMDb 資料根據 IMDb 條款僅供個人和非商業使用。</string>
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>
