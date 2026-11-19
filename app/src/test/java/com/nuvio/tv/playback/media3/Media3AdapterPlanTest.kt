@@ -405,6 +405,35 @@ class Media3AdapterPlanTest {
         assertFalse("never printable", plan.toString().contains("tok"))
     }
 
+    @Test
+    fun `auto live buffer is continuous loading`() {
+        val plan = plan(requirements = requirements().copy(buffering = BufferingPreference.LOW_LATENCY_LIVE))
+        assertEquals("continuous buffer", Media3BufferPlan(60_000, 60_000, 2_000, 4_000), plan.buffer)
+        assertTrue("live plan", plan.live)
+    }
+
+    @Test
+    fun `a custom live buffer still wins`() {
+        val custom = com.nuvio.tv.playback.core.CustomBufferPreference(10_000, 20_000, 1_500, 5_000)
+        val plan = plan(
+            requirements = requirements().copy(buffering = BufferingPreference.CUSTOM, customBuffer = custom),
+        )
+        assertEquals("user's choice", Media3BufferPlan(10_000, 20_000, 1_500, 5_000), plan.buffer)
+        assertTrue("live plan", plan.live)
+    }
+
+    @Test
+    fun `vod keeps its own buffer and is not a live plan`() {
+        val plan = Media3AdapterPlanFactory.create(
+            PlaybackRequest("https://example.test/movie.mkv", contentType = ContentType.VOD),
+            StreamEvidence(),
+            graph(),
+            requirements().copy(buffering = BufferingPreference.LOW_LATENCY_LIVE),
+        )
+        assertFalse("not live", plan.live)
+        assertEquals("vod buffer", Media3BufferPlan(2_000, 8_000, 500, 1_000), plan.buffer)
+    }
+
     private fun plan(
         evidence: StreamEvidence = StreamEvidence(),
         requirements: PlaybackRequirements = requirements(),
