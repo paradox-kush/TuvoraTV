@@ -1462,7 +1462,9 @@ class PlaybackSessionTest {
             advanceUntilIdle()
         }
 
-        assertEquals(7, engine.startCalls) // initial + six budgeted reconnect provider opens
+        // initial + three reconnects: each showed a frame and died at once, so none proved itself and
+        // they share one incident budget (2026-11-19: they used to restart at attempt 0 every time).
+        assertEquals(4, engine.startCalls)
         assertEquals(PlaybackState.FAILED, session.snapshot.value.state)
         assertEquals(FailureCode.LIVE_RECONNECT_EXHAUSTED, session.snapshot.value.failure?.code)
         close(session)
@@ -2781,6 +2783,92 @@ class PlaybackSessionTest {
         assertEquals(1, engine.releaseCalls)
         assertEquals(1, engine.maxActiveConnections)
         close(session)
+    }
+
+    // 2026-11-19 Onn, build G: a 4K HEVC + E-AC-3 channel. Every reconnect showed one frame (video)
+    // or started audio (audio-only), then sat buffering with nothing buffered. Each stall took ~55 s
+    // to detect, so 30 s of wall time after the "success" wiped the reconnect budget and every loop
+    // restarted at attempt 0: "tuning" forever, no Failed, no Retry. A reconnect earns its budget
+    // back only by actually playing (out of buffering), for video and audio-only streams alike.
+    private suspend fun TestScope.reconnectThatNeverPlaysEnds(hasVideo: Boolean) {
+        val engine = FakeEngine { count, input, events ->
+            if (count > 1) {
+                events.emit(PlaybackEvent.TracksAvailable(input.generation, hasVideo = hasVideo, 1, 0))
+                if (hasVideo) {
+                    events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+                } else {
+                    events.emit(PlaybackEvent.FirstAudio(input.generation))
+                }
+                events.emit(PlaybackEvent.BufferingStarted(input.generation))
+            }
+        }
+        val session = session(engine, policy = PlaybackPolicy(), clock = virtualClock())
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = hasVideo, 1, 0))
+        if (hasVideo) engine.emit(PlaybackEvent.FirstVideoFrame(1)) else engine.emit(PlaybackEvent.FirstAudio(1))
+        engine.emit(PlaybackEvent.BufferingStarted(1))
+        runCurrent()
+
+        runUntil(maxMs = 15 * 60_000L) { session.snapshot.value.state == PlaybackState.FAILED }
+
+        val state = session.snapshot.value
+        assertEquals("hasVideo=$hasVideo $state", PlaybackState.FAILED, state.state)
+        assertTrue(
+            "hasVideo=$hasVideo: at most the per-incident budget of reconnects, got ${engine.startCalls - 1}",
+            engine.startCalls - 1 <= PlaybackPolicy().liveReconnectMaxAttemptsPerIncident,
+        )
+        close(session)
+    }
+
+    @Test
+    fun `video reconnects that show a frame but never play end in failed`() = runTest {
+        reconnectThatNeverPlaysEnds(hasVideo = true)
+    }
+
+    @Test
+    fun `audio only reconnects that start audio but never play end in failed`() = runTest {
+        reconnectThatNeverPlaysEnds(hasVideo = false)
+    }
+
+    // Guard against over-correcting: stalls far apart, each followed by real playback, keep
+    // reconnecting rather than failing the channel — whether the engine reports rendered frames
+    // (probation passes) or reports no frame metrics at all (nothing else can prove playback).
+    private suspend fun TestScope.reconnectThatReallyPlaysEarnsBudgetBack(framesReported: Boolean) {
+        val engine = FakeEngine { count, input, events ->
+            if (count > 1) {
+                if (framesReported) events.emit(PlaybackEvent.TracksAvailable(input.generation, hasVideo = true, 1, 0))
+                events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+            }
+        }
+        engine.videoMoving = framesReported
+        engine.audioMoving = framesReported
+        val session = session(engine, policy = PlaybackPolicy(), clock = virtualClock())
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        if (framesReported) engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+        repeat(5) { stall ->
+            engine.emit(PlaybackEvent.BufferingStarted(1))
+            runUntil(maxMs = 120_000L) { engine.startCalls >= stall + 2 }
+            runFor(5 * 60_000L) // plays cleanly for five minutes
+        }
+        assertEquals("framesReported=$framesReported", 6, engine.startCalls)
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        close(session)
+    }
+
+    @Test
+    fun `a reconnect that really plays earns the budget back`() = runTest {
+        reconnectThatReallyPlaysEarnsBudgetBack(framesReported = true)
+    }
+
+    @Test
+    fun `a reconnect that really plays earns the budget back without frame metrics`() = runTest {
+        reconnectThatReallyPlaysEarnsBudgetBack(framesReported = false)
     }
 
     @Test

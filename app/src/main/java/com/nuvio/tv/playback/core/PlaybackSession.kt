@@ -100,7 +100,16 @@ class PlaybackSession(
     private val decoderStableIds = mutableMapOf<Pair<Long, EngineType>, String>()
     private val recordedCompatibilityOutcomes = mutableSetOf<CompatibilityRecordingKey>()
     private val liveReconnectAttempts = ArrayDeque<Long>()
+    /** When live playback last became real (playing, not buffering, not paused); null while it is not. */
     private var reconnectPlaybackStableSinceEpochMs: Long? = null
+
+    /**
+     * Reconnects that reached a first frame (or, audio-only, first audio) but have not yet proved
+     * themselves by playing. The next stall continues this count instead of starting at 0, so a
+     * channel that shows one frame and then buffers forever spends the per-incident budget and ends
+     * in Failed (or a hand-off) instead of "tuning" forever (2026-11-19 Onn, 4K HEVC + E-AC-3).
+     */
+    private var unprovenReconnectAttempts = 0
     /** B259: whether the link most recently handed to an engine was single-use (SingleUseRemintSpacingPolicy). */
     @Volatile private var lastLinkSingleUse: Boolean = false
     /** B259: when an engine connection was last proven closed (release or hard abort succeeded). */
@@ -339,7 +348,6 @@ class PlaybackSession(
             event.generation == before.snapshot.generation &&
             before.snapshot.isReconnecting
         ) {
-            reconnectPlaybackStableSinceEpochMs = clock.nowEpochMs()
             probationPassingWindows = 0
         }
         if (event is PlaybackEvent.FirstVideoFrame) lastFreezeKind = null
@@ -367,6 +375,7 @@ class PlaybackSession(
             // previous stream's reconnect pressure must not decide this one's first blip.
             liveReconnectAttempts.clear()
             reconnectPlaybackStableSinceEpochMs = null
+            unprovenReconnectAttempts = 0
             // A viewer Retry starts the channel over; a zap only moves to another channel's own budget.
             if ((input as PlaybackReducerInput.Command).value == PlaybackCommand.Retry) {
                 channelFreezes.clear()
@@ -380,6 +389,7 @@ class PlaybackSession(
             runtimeMetricsUnavailableAttempt = null
         }
         machine = transition.state
+        trackReconnectProof(before)
         if (transition.state.incident == null) {
             incidentFreezes = 0
             probationPassingWindows = 0
@@ -1672,7 +1682,8 @@ class PlaybackSession(
         val openingFailure = machine.snapshot.failure
         var reconnectFeedback = openingFailure?.toProviderResolutionFeedback()
         reconnectJob = generationScope(action.generation).launch {
-            var attempt = 0
+            // A reconnect that "succeeded" but never played is still the same incident.
+            var attempt = unprovenReconnectAttempts
             // What refused the latest attempt: the next re-mint is told (a 401 at open switches the
             // Stalker stream identity), and an exhausted budget reports a provider refusal as such.
             var lastAttemptFailure: PlaybackFailure? = openingFailure
@@ -1687,14 +1698,8 @@ class PlaybackSession(
                     continue
                 }
                 val now = clock.nowEpochMs()
-                // While a freeze incident is open only a passed probation hands the budget back; the
-                // wall clock must not (a reconnect that shows frames for 30 s but never proves itself).
-                if (machine.incident?.probation != true) reconnectPlaybackStableSinceEpochMs?.let { stableSince ->
-                    if (policy.stablePlaybackResetsReconnectPressure((now - stableSince).coerceAtLeast(0L))) {
-                        liveReconnectAttempts.clear()
-                        reconnectPlaybackStableSinceEpochMs = null
-                    }
-                }
+                // Pressure is handed back only by real playback (trackReconnectProof) or a passed
+                // probation, never by wall time since a first frame.
                 val windowStart = policy.liveReconnectWindowStart(now)
                 while (liveReconnectAttempts.firstOrNull()?.let { it < windowStart } == true) {
                     liveReconnectAttempts.removeFirst()
@@ -1849,6 +1854,8 @@ class PlaybackSession(
                                 attempt = attempt,
                             ),
                         )
+                        // Not proven yet: it counts until the stream actually plays.
+                        unprovenReconnectAttempts = attempt + 1
                         return@launch
                     }
                     is PlaybackEvent.Failed -> {
@@ -2246,6 +2253,37 @@ class PlaybackSession(
         }
     }
 
+    /**
+     * Live reconnect pressure is handed back only for playback that really ran: the session sat in
+     * PLAYING, not buffering and not paused, for the policy's stable period. A first frame or first
+     * audio followed by endless buffering never qualifies, for video and audio-only streams alike.
+     * Inside an open freeze probation only a passed probation hands it back (runtimeWindowPassed).
+     */
+    private fun trackReconnectProof(before: PlaybackMachineState) {
+        val snapshot = machine.snapshot
+        val playing = machine.request?.contentType == ContentType.LIVE &&
+            snapshot.state == PlaybackState.PLAYING &&
+            !snapshot.isBuffering &&
+            !machine.paused
+        val now = clock.nowEpochMs()
+        if (playing) {
+            if (reconnectPlaybackStableSinceEpochMs == null) reconnectPlaybackStableSinceEpochMs = now
+            return
+        }
+        val since = reconnectPlaybackStableSinceEpochMs ?: return
+        reconnectPlaybackStableSinceEpochMs = null
+        // Inside a freeze probation the rendered-frame windows are the proof. They only run for a known
+        // video track with frame metrics; without either, playing time is the only proof left.
+        val probationCanProve = before.snapshot.progress.discoveredTracks &&
+            before.snapshot.tracks.hasVideoTrack &&
+            runtimeMetricsUnavailableAttempt != engineAttempt
+        val inProbation = before.incident?.probation == true || machine.incident?.probation == true
+        if ((!inProbation || !probationCanProve) && policy.stablePlaybackResetsReconnectPressure((now - since).coerceAtLeast(0L))) {
+            liveReconnectAttempts.clear()
+            unprovenReconnectAttempts = 0
+        }
+    }
+
     /** A healthy window: after enough of them in a row the reconnect's probation is over. */
     private suspend fun runtimeWindowPassed(generation: Long, live: Boolean) {
         pictureStuckReportedAttempt = null
@@ -2256,6 +2294,7 @@ class PlaybackSession(
         // The stream held for the whole probation: hand the reconnect budget back with the incident.
         liveReconnectAttempts.clear()
         reconnectPlaybackStableSinceEpochMs = null
+        unprovenReconnectAttempts = 0
         applyReducer(PlaybackReducerInput.LiveProbationPassed(generation))
     }
 
