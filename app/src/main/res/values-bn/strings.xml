@@ -415,7 +415,7 @@
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">Nuvio রেটিং, দেখার হিস্ট্রি এবং প্লেব্যাক ট্র্যাকিংয়ের জন্য MDBList ব্যবহার করে। Nuvio MDBList দ্বারা অনুমোদিত বা প্রত্যয়িত নয়।</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
-    <string name="licenses_attributions_introdb_body">Nuvio স্কিপ কন্ট্রোলের মাধ্যমে ইন্ট্রো, রিক্যাপ, ক্রেডিট এবং প্রিভিউ টাইমস্ট্যাম্পের জন্য IntroDB API ব্যবহার করে। Nuvio IntroDB দ্বারা অনুমোদিত বা প্রত্যয়িত নয়।</string>
+    <string name="licenses_attributions_introdb_body">Nuvio স্কিপ কন্ট্রোলের মাধ্যমে ইন্ট্রো, রিক্যাপ, ক্রেডিট এবং প্রিভিউ টাইমস্ট্যাম্পের জন্য IntroDB API ব্যবহার করে। Nuvio IntroDB দ্বারা অনুমোদিত বা প্রত্যয়িত নয়। Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_imdb_title">IMDb অ-বাণিজ্যিক ডেটাসেট</string>
     <string name="licenses_attributions_imdb_body">Nuvio IMDb রেটিং এবং ভোট কাউন্টের জন্য title.ratings.tsv.gz-সহ IMDb নন-কমার্শিয়াল ডেটাসেট ব্যবহার করে। তথ্যগুলো IMDb (https://www.imdb.com)-এর সৌজন্যে প্রাপ্ত। অনুমতিক্রমে ব্যবহৃত। IMDb-র শর্ত অনুযায়ী IMDb-র ডেটা ব্যক্তিগত এবং নন-কমার্শিয়াল ব্যবহারের জন্য।</string>
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>

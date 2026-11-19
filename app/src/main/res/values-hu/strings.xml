@@ -455,7 +455,7 @@
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">A Nuvio az MDBList-et használja az értékelésekhez, a megtekintési előzményekhez és a lejátszás követéséhez. A Nuvio nem áll kapcsolatban az MDBList-tel, és az nem hagyta jóvá.</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
-    <string name="licenses_attributions_introdb_body">A Nuvio az IntroDB API-t használja a közösség által biztosított intro, összefoglaló, stáblista és előzetes időbélyegekhez, amelyeket az átugrási vezérlők használnak. A Nuvio nem áll kapcsolatban az IntroDB-vel, és az nem hagyta jóvá.</string>
+    <string name="licenses_attributions_introdb_body">A Nuvio az IntroDB API-t használja a közösség által biztosított intro, összefoglaló, stáblista és előzetes időbélyegekhez, amelyeket az átugrási vezérlők használnak. A Nuvio nem áll kapcsolatban az IntroDB-vel, és az nem hagyta jóvá. Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_imdb_title">IMDb nem kereskedelmi adatkészletek</string>
     <string name="licenses_attributions_imdb_body">A Nuvio az IMDb nem kereskedelmi adatkészleteit, beleértve a title.ratings.tsv.gz fájlt, az IMDb értékelésekhez és szavazatszámokhoz használja. Az információk az IMDb (https://www.imdb.com) jóvoltából származnak. Engedéllyel felhasználva. Az IMDb adatai személyes és nem kereskedelmi célokra használhatók az IMDb feltételei alapján.</string>
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>

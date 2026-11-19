@@ -378,7 +378,7 @@
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">Nuvio používá MDBList pro hodnocení a data externích poskytovatelů skóre. Nuvio není spojen ani schválen MDBList.</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
-    <string name="licenses_attributions_introdb_body">Nuvio používá API IntroDB pro komunitně poskytované časové značky intra, rekapitulace, titulků a náhledů používané ovládacími prvky přeskočení. Nuvio není spojen ani schválen IntroDB.</string>
+    <string name="licenses_attributions_introdb_body">Nuvio používá API IntroDB pro komunitně poskytované časové značky intra, rekapitulace, titulků a náhledů používané ovládacími prvky přeskočení. Nuvio není spojen ani schválen IntroDB. Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_imdb_title">IMDb nekomerční datové sady</string>
     <string name="licenses_attributions_imdb_body">Nuvio používá IMDb nekomerční datové sady, včetně title.ratings.tsv.gz, pro hodnocení IMDb a počty hlasů. Informace s laskavým svolením IMDb (https://www.imdb.com). Použito se svolením. Data IMDb jsou pro osobní a nekomerční použití podle podmínek IMDb.</string>
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>

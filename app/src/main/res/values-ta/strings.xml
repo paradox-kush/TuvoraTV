@@ -357,7 +357,7 @@
     <string name="licenses_attributions_mdblist_title">எம்டிபிலிஸ்ட்</string>
     <string name="licenses_attributions_mdblist_body">நுவியோ மதிப்பீடுகள் மற்றும் வெளிப்புற மதிப்பெண் தரவுகளுக்காக MDBList-ஐ பயன்படுத்துகிறது. நுவியோ MDBList உடன் தொடர்புடையதல்ல.</string>
     <string name="licenses_attributions_introdb_title">இன்ட்ரோடிபி</string>
-    <string name="licenses_attributions_introdb_body">நுவியோ தொடக்க பகுதி, சுருக்கம், கிரெடிட்ஸ் மற்றும் முன்காட்சி நேரங்களுக்காக IntroDB API-ஐ பயன்படுத்துகிறது.</string>
+    <string name="licenses_attributions_introdb_body">நுவியோ தொடக்க பகுதி, சுருக்கம், கிரெடிட்ஸ் மற்றும் முன்காட்சி நேரங்களுக்காக IntroDB API-ஐ பயன்படுத்துகிறது. Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_imdb_title">IMDb வணிகமற்ற தரவுத்தொகுப்புகள்</string>
     <string name="licenses_attributions_imdb_body">நுவியோ IMDb மதிப்பீடுகள் மற்றும் வாக்கு எண்ணிக்கைகளுக்காக IMDb தரவுத்தொகுப்புகளை பயன்படுத்துகிறது.</string>
     <string name="licenses_attributions_exoplayer_title">ஆண்ட்ராய்ட்எக்ஸ் மீடியா3 எக்ஸோபிளேயர் 1.8.0</string>

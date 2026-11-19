@@ -409,7 +409,7 @@
 <string name="licenses_attributions_mdblist_title">MDBList</string>
 <string name="licenses_attributions_mdblist_body">Nuvio utilizza MDBList per le valutazioni e i dati di fornitori esterni. Nuvio non è affiliato né approvato da MDBList.</string>
 <string name="licenses_attributions_introdb_title">IntroDB</string>
-<string name="licenses_attributions_introdb_body">Nuvio utilizza l\'API di IntroDB per i timestamp di intro, riassunti, crediti e anteprime forniti dalla community, utilizzati per i controlli di salto. Nuvio non è affiliato né approvato da IntroDB.</string>
+<string name="licenses_attributions_introdb_body">Nuvio utilizza l\'API di IntroDB per i timestamp di intro, riassunti, crediti e anteprime forniti dalla community, utilizzati per i controlli di salto. Nuvio non è affiliato né approvato da IntroDB. Contains data from IntroDB (introdb.app), available under the ODbL.</string>
 <string name="licenses_attributions_imdb_title">Dataset IMDb non commerciali</string>
 <string name="licenses_attributions_imdb_body">Nuvio utilizza i dataset non commerciali di IMDb per valutazioni e conteggio voti. Informazioni per gentile concessione di IMDb (https://www.imdb.com). Utilizzato con autorizzazione. I dati IMDb sono per uso personale e non commerciale secondo i termini di IMDb.</string>
 <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>

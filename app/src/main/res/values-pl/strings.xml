@@ -2386,7 +2386,7 @@
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>
     <string name="licenses_attributions_imdb_body">Nuvio korzysta z niekomercyjnych zbiorów danych IMDb, w tym title.ratings.tsv.gz, do ocen i liczby głosów IMDb. Informacje dzięki uprzejmości IMDb (https://www.imdb.com). Używane za zgodą.</string>
     <string name="licenses_attributions_imdb_title">Niekomercyjne zbiory danych IMDb</string>
-    <string name="licenses_attributions_introdb_body">Nuvio korzysta z API IntroDB do znaczników czasu intro, podsumowań, napisów końcowych i podglądów dostarczanych przez społeczność. Nuvio nie jest powiązane z IntroDB.</string>
+    <string name="licenses_attributions_introdb_body">Nuvio korzysta z API IntroDB do znaczników czasu intro, podsumowań, napisów końcowych i podglądów dostarczanych przez społeczność. Nuvio nie jest powiązane z IntroDB. Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
     <string name="licenses_attributions_libmpv_body">Używany jako silnik odtwarzania Android. Wrapper libmpv-android jest licencjonowany na licencji MIT; mpv/libmpv i dołączone komponenty natywne zachowują warunki licencji upstream.</string>
     <string name="licenses_attributions_libmpv_title">libmpv / libmpv-android</string>

@@ -1273,7 +1273,7 @@
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">„Nuvio“ naudoja „MDBList“ įvertinimams, žiūrėjimo istorijai ir atkūrimui sekti. „Nuvio“ nėra susijusi su „MDBList“ ar jos patvirtinta.</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
-    <string name="licenses_attributions_introdb_body">„Nuvio“ naudoja „IntroDB“ API bendruomenės pateiktoms pradžios, santraukos, titrų ir peržiūros laiko žymoms, naudojamoms praleidimo valdikliuose. „Nuvio“ nėra susijusi su „IntroDB“ ar jos patvirtinta.</string>
+    <string name="licenses_attributions_introdb_body">„Nuvio“ naudoja „IntroDB“ API bendruomenės pateiktoms pradžios, santraukos, titrų ir peržiūros laiko žymoms, naudojamoms praleidimo valdikliuose. „Nuvio“ nėra susijusi su „IntroDB“ ar jos patvirtinta. Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_imdb_title">IMDb Non-Commercial Datasets</string>
     <string name="licenses_attributions_imdb_body">„Nuvio“ naudoja IMDb nekomercinius duomenų rinkinius, įskaitant title.ratings.tsv.gz, IMDb įvertinimams ir balsų skaičiui. Informaciją suteikė IMDb (https://www.imdb.com). Naudojama gavus leidimą. Pagal IMDb sąlygas duomenys skirti asmeniniam ir nekomerciniam naudojimui.</string>
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>

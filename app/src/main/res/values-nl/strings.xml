@@ -456,7 +456,7 @@
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">Nuvio gebruikt MDBList voor beoordelingen, kijkgeschiedenis en het bijhouden van afspeelvoortgang. Nuvio is niet verbonden aan of onderschreven door MDBList.</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
-    <string name="licenses_attributions_introdb_body">Nuvio gebruikt de IntroDB-API voor door de community aangeleverde tijdstempels van intro\'s, samenvattingen, aftitelingen en previews die worden gebruikt door de overslaanknoppen. Nuvio is niet verbonden aan of onderschreven door IntroDB.</string>
+    <string name="licenses_attributions_introdb_body">Nuvio gebruikt de IntroDB-API voor door de community aangeleverde tijdstempels van intro\'s, samenvattingen, aftitelingen en previews die worden gebruikt door de overslaanknoppen. Nuvio is niet verbonden aan of onderschreven door IntroDB. Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="licenses_attributions_imdb_title">Niet-commerciële IMDb-datasets</string>
     <string name="licenses_attributions_imdb_body">Nuvio gebruikt niet-commerciële IMDb-datasets, waaronder title.ratings.tsv.gz, voor IMDb-beoordelingen en het aantal stemmen. Informatie met dank aan IMDb (https://www.imdb.com). Gebruikt met toestemming. IMDb-gegevens zijn bestemd voor persoonlijk en niet-commercieel gebruik onder de IMDb-voorwaarden.</string>
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>
