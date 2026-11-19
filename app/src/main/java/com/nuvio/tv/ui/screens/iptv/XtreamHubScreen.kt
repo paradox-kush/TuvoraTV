@@ -426,6 +426,7 @@ fun XtreamHubScreen(
                 uiState = uiState,
                 onActivate = onActivate,
                 onRetry = viewModel::retry,
+                onAddProvider = onAddProvider,
                 onLoadCategory = viewModel::loadCategory,
                 onRetryCategory = viewModel::retryCategory,
                 onPrefetchCategory = viewModel::prefetchCategory,
@@ -476,6 +477,7 @@ private fun HubBrowseContent(
     uiState: XtreamHubUiState,
     onActivate: (XtreamHubItem) -> Unit,
     onRetry: () -> Unit,
+    onAddProvider: () -> Unit,
     onLoadCategory: (String) -> Unit,
     onRetryCategory: (String) -> Unit,
     onPrefetchCategory: (String) -> Unit,
@@ -513,9 +515,10 @@ private fun HubBrowseContent(
         pageStatus is LoadStatus.Failed && uiState.categories.isEmpty() ->
             ErrorState(message = stringResource(R.string.iptv_hub_error_timeout), onRetry = onRetry)
         pageStatus is LoadStatus.Loading && uiState.categories.isEmpty() -> HubSkeletonRows(cardStyle = portraitStyle)
-        uiState.categories.isEmpty() -> EmptyScreenState(
-            title = stringResource(R.string.iptv_hub_empty_title),
-            subtitle = stringResource(R.string.iptv_hub_empty_subtitle)
+        uiState.categories.isEmpty() -> HubEmptyWithRetry(
+            presentation = HubEmptyStatePolicy.forEmpty(uiState.userRetried, pageStatus),
+            onRetry = onRetry,
+            onAddPlaylist = onAddProvider
         )
         else -> {
             val sharedShimmerOffsetState = rememberPlaceholderShimmerOffsetState(label = "hubRowShimmer")
@@ -955,6 +958,45 @@ private fun HubSkeletonRows(cardStyle: PosterCardStyle) {
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * "Nothing here yet": Retry (focused by default, so one OK press asks again) next to Add Playlist. Both are
+ * real buttons with the standard focus highlight; the body and the "checked" line are not focusable.
+ */
+@Composable
+private fun HubEmptyWithRetry(
+    presentation: HubEmptyStatePolicy.Presentation,
+    onRetry: () -> Unit,
+    onAddPlaylist: () -> Unit
+) {
+    val retryFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { retryFocus.requestFocus() } }
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        EmptyScreenState(
+            title = stringResource(R.string.iptv_hub_empty_title),
+            subtitle = stringResource(R.string.iptv_hub_empty_subtitle),
+            height = if (presentation.showCheckedJustNow) 130.dp else 110.dp
+        )
+        if (presentation.showCheckedJustNow) {
+            Text(
+                text = stringResource(R.string.iptv_hub_empty_checked),
+                style = MaterialTheme.typography.bodyMedium,
+                color = NuvioTheme.colors.TextTertiary
+            )
+        }
+        Spacer(Modifier.height(NuvioTheme.spacing.lg))
+        Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+            if (presentation.offersRetry) {
+                HubActionButton(text = stringResource(R.string.action_retry), onClick = onRetry, focusRequester = retryFocus)
+            }
+            HubActionButton(text = stringResource(R.string.iptv_hub_empty_add_playlist), onClick = onAddPlaylist)
         }
     }
 }
