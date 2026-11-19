@@ -54,13 +54,15 @@ internal data class Media3AdapterPlan(
     val normalization: Boolean,
     val audioDelayMs: Long,
     val subtitleDelayMs: Long,
+    /** True for a live request: lets the backend apply live-only decoder rules (no software video above 1080p). */
+    val live: Boolean = false,
 ) {
     /** Never expose provider URLs, request headers, cookies, proxy material, or DRM secrets. */
     override fun toString(): String =
         "Media3AdapterPlan(request=$request, tracks=$tracks, buffer=$buffer, " +
             "decoderMode=$decoderMode, decoderFallback=$decoderFallback, audioMode=$audioMode, " +
             "audioOutput=$audioOutput, skipSilence=$skipSilence, downmixToStereo=$downmixToStereo, " +
-            "normalization=$normalization, audioDelayMs=$audioDelayMs, subtitleDelayMs=$subtitleDelayMs)"
+            "normalization=$normalization, audioDelayMs=$audioDelayMs, subtitleDelayMs=$subtitleDelayMs, live=$live)"
 }
 
 internal data class Media3NetworkPlan(
@@ -215,6 +217,7 @@ internal object Media3AdapterPlanFactory {
             normalization = requirements.audioNormalization && requirements.pcmProcessingAllowed,
             audioDelayMs = requirements.audioDelayMs,
             subtitleDelayMs = requirements.subtitleDelayMs,
+            live = request.contentType == com.nuvio.tv.playback.core.ContentType.LIVE,
         )
     }
 

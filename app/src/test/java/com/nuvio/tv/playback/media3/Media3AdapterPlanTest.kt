@@ -445,4 +445,22 @@ class Media3AdapterPlanTest {
         secureOutputRequired = false,
         resourceBudget = ResourceBudget(),
     )
+
+    @Test
+    fun `a live request is marked live and keeps the default live buffer`() {
+        val plan = plan(requirements = requirements().copy(buffering = BufferingPreference.LOW_LATENCY_LIVE))
+        assertTrue("live plan", plan.live)
+        assertEquals("live buffer unchanged", Media3BufferPlan(2_000, 8_000, 500, 1_000), plan.buffer)
+    }
+
+    @Test
+    fun `a vod request is not a live plan`() {
+        val plan = Media3AdapterPlanFactory.create(
+            PlaybackRequest("https://example.test/movie.mkv", contentType = ContentType.VOD),
+            StreamEvidence(),
+            graph(),
+            requirements().copy(buffering = BufferingPreference.LOW_LATENCY_LIVE),
+        )
+        assertFalse("not live", plan.live)
+    }
 }
