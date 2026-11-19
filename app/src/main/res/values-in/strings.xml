@@ -2564,8 +2564,6 @@
     <string name="external_auto_next_loading">Memuat episode berikutnya…</string>
     <string name="advanced_sentry_reports">Laporan crash Sentry</string>
     <string name="advanced_sentry_reports_subtitle">Kirim laporan crash dan ANR dengan konteks aman. Aktif secara default.</string>
-    <string name="advanced_playback_issue_reports">Laporan masalah pemutaran</string>
-    <string name="advanced_playback_issue_reports_subtitle">Tampilkan tombol laporan selama pemutaran, pemuatan lama, dan error pemutaran</string>
     <string name="advanced_player_stats_hud">Overlay statistik pemutaran</string>
     <string name="advanced_player_stats_hud_subtitle">Tampilkan tombol di info stream untuk mengalihkan cpu, memori, buffer, bitrate, dan suhu secara langsung saat pemutaran</string>
     <string name="sentry_enable_dialog_title">Aktifkan laporan crash?</string>

@@ -598,8 +598,6 @@
     <string name="advanced_section_diagnostics">Teşhis</string>
     <string name="advanced_sentry_reports">Sentry çökme raporları</string>
     <string name="advanced_sentry_reports_subtitle">Güvenli bağlamla çökme ve ANR raporları gönder. Varsayılan olarak açık.</string>
-    <string name="advanced_playback_issue_reports">Oynatma sorunu raporları</string>
-    <string name="advanced_playback_issue_reports_subtitle">Oynatma sırasında, uzun yüklemelerde ve oynatma hatalarında sorun bildirme butonlarını göster</string>
     <string name="advanced_player_stats_hud">Oynatma istatistikleri katmanı</string>
     <string name="advanced_player_stats_hud_subtitle">Oynatma sırasında canlı CPU, bellek, tampon, bit hızı ve sıcaklık okumalarını açıp kapatmak için yayın bilgisine bir düğme ekler</string>
     <string name="sentry_enable_dialog_title">Çökme raporları açılsın mı?</string>
@@ -3512,8 +3510,6 @@
     <string name="autosync_label_synced">Otomatik eşitlendi</string>
     <string name="stream_resume_from_time">%1$s konumundan devam et</string>
     <string name="stream_resume_from_percent">%1$d%% konumundan devam et</string>
-    <string name="library_empty_local_title">Henüz içerik eklemediniz</string>
-    <string name="library_empty_trakt_title">Bu listede içerik görünmüyor</string>
     <string name="sub_startup_mode_title">Eklenti Altyazılarını Yükleme</string>
     <string name="sub_startup_mode_fast">Hızlı başlangıç</string>
     <string name="sub_startup_mode_preferred">Tercih edilen diller</string>

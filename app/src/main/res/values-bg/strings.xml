@@ -590,8 +590,6 @@
     <string name="advanced_section_diagnostics">Диагностика</string>
     <string name="advanced_sentry_reports">Отчети за сривове на Sentry</string>
     <string name="advanced_sentry_reports_subtitle">Изпращане на отчети за сривове и ANR с безопасен контекст. Включено по подразбиране.</string>
-    <string name="advanced_playback_issue_reports">Отчети за проблеми с възпроизвеждането</string>
-    <string name="advanced_playback_issue_reports_subtitle">Показване на бутони за докладване по време на възпроизвеждане, продължително зареждане и грешки при възпроизвеждане</string>
     <string name="advanced_player_stats_hud">Наслагване на статистика за възпроизвеждане</string>
     <string name="advanced_player_stats_hud_subtitle">Показване на бутон в информацията за източника, за да се превключват показанията на процесора, паметта, буфера, битрейта и температурата в реално време по време на възпроизвеждане</string>
     <string name="sentry_enable_dialog_title">Да се включат ли отчетите за сривове?</string>

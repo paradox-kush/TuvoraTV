@@ -2948,8 +2948,6 @@
     <string name="action_switch">تبديل</string>
     <string name="advanced_nuvio_performance_mode">ذاكرة ExoPlayer الأصلية</string>
     <string name="advanced_nuvio_performance_mode_subtitle">يفعّل مخصّص ذاكرة أصليًا عالي الأداء وذاكرة خارج الكومة وتحسينات للشبكة لتشغيل أكثر سلاسة</string>
-    <string name="advanced_playback_issue_reports">تقارير مشاكل التشغيل</string>
-    <string name="advanced_playback_issue_reports_subtitle">إظهار أزرار التقرير أثناء التشغيل والتحميل الطويل وأخطاء التشغيل</string>
     <string name="advanced_player_stats_hud">تراكب إحصاءات التشغيل</string>
     <string name="advanced_player_stats_hud_subtitle">إظهار زر في معلومات المصدر لتبديل عرض قراءات مباشرة للمعالج والذاكرة والمخزن المؤقت ومعدل البت والحرارة أثناء التشغيل</string>
     <string name="advanced_sentry_reports">تقارير أعطال Sentry</string>
