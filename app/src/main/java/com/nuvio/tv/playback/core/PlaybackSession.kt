@@ -92,6 +92,7 @@ class PlaybackSession(
     private var nextStageToken: Long = 1
     private var engineAttempt: Long = 0
     private var engineAttemptGeneration: Long? = null
+    private var engineAttemptStartedAtEpochMs: Long = 0
     private var runtimeMetricsUnavailableAttempt: Long? = null
     private val decoderStableIds = mutableMapOf<Pair<Long, EngineType>, String>()
     private val recordedCompatibilityOutcomes = mutableSetOf<CompatibilityRecordingKey>()
@@ -360,6 +361,7 @@ class PlaybackSession(
         if (engineStartAccepted) {
             check(engineAttempt < Long.MAX_VALUE) { "Playback engine attempt exhausted" }
             engineAttempt++
+            engineAttemptStartedAtEpochMs = clock.nowEpochMs()
             engineAttemptGeneration = engineStarting.generation
             runtimeMetricsUnavailableAttempt = null
         }
@@ -1977,6 +1979,10 @@ class PlaybackSession(
                         request.network,
                         machine.snapshot.tracks.videoDimensions,
                         requirements.takeIf { it?.generation == arm.generation }?.value?.customBuffer,
+                        // A live reconnect attempt keeps the phase deadlines: the patient single startup
+                        // budget is for a tune, and the reconnect ladder's cadence is not changed here.
+                        activeGraph?.engine?.takeUnless { machine.snapshot.isReconnecting },
+                        (clock.nowEpochMs() - engineAttemptStartedAtEpochMs).coerceAtLeast(0L),
                     ),
                 )
                 lane.send(

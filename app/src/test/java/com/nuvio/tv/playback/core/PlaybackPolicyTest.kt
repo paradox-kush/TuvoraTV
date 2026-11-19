@@ -219,6 +219,49 @@ class PlaybackPolicyTest {
         )
     }
 
+
+    // Fix 2 (Media3 live): one patient startup budget instead of 1.5 / 2.5 / 1 s micro-phases.
+    // Field evidence: a healthy raw .ts over chunked HTTP had its renderer watchdog expire at ~5.4 s and
+    // was handed to libmpv (picture at ~6 s) while a stock ExoPlayer showed it in ~0.5 s.
+    @Test
+    fun `media3 live startup is one budget counted from the engine start`() {
+        val network = PlaybackNetworkRequest(readTimeoutMs = 60_000, callTimeoutMs = 12_000)
+        val uhd = VideoDimensions(3840, 2160)
+        val phases = listOf(
+            PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS,
+            PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY,
+            PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,
+        )
+        for (phase in phases) {
+            fun delay(elapsed: Long, dims: VideoDimensions? = null) = policy.watchdogDelayMs(
+                phase, ContentType.LIVE, network, dims, null, EngineType.MEDIA3, elapsed,
+            )
+            assertEquals("$phase full budget", 15_000L, delay(0))
+            assertEquals("$phase 5.4 s in", 9_600L, delay(5_400))
+            assertEquals("$phase resolution does not change it", 15_000L, delay(0, uhd))
+            assertEquals("$phase never below a floor", 1_000L, delay(20_000))
+        }
+    }
+
+    @Test
+    fun `media3 live keeps the surface byte and runtime guards and other engines and VOD keep their budgets`() {
+        val network = PlaybackNetworkRequest(readTimeoutMs = 60_000, callTimeoutMs = 12_000)
+        fun delay(phase: PlaybackPolicy.WatchdogPhase, type: ContentType, engine: EngineType?) =
+            policy.watchdogDelayMs(phase, type, network, null, null, engine, 3_000L)
+        assertEquals(12_000L, delay(PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE, ContentType.LIVE, EngineType.MEDIA3))
+        assertEquals(
+            SurfaceAttachmentBudget.WATCHDOG_MS,
+            delay(PlaybackPolicy.WatchdogPhase.WAITING_FOR_SURFACE, ContentType.LIVE, EngineType.MEDIA3),
+        )
+        assertEquals(5_000L, delay(PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS, ContentType.LIVE, EngineType.MEDIA3))
+        assertEquals(30_000L, delay(PlaybackPolicy.WatchdogPhase.LIVE_REBUFFER, ContentType.LIVE, EngineType.MEDIA3))
+        assertEquals(1_500L, delay(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, ContentType.LIVE, EngineType.LIBMPV))
+        assertEquals(2_500L, delay(PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY, ContentType.LIVE, EngineType.LIBMPV))
+        assertEquals(1_000L, delay(PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME, ContentType.LIVE, EngineType.LIBMPV))
+        assertEquals(3_000L, delay(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, ContentType.VOD, EngineType.MEDIA3))
+        assertEquals(2_000L, delay(PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME, ContentType.CATCH_UP, EngineType.MEDIA3))
+    }
+
     // B50: the coordinator's surface wait and this watchdog were both 3 s, so the watchdog fired
     // SURFACE_LOST at the instant the coordinator gave up and blamed the engine. With the
     // coordinator's one fresh-view retry, the watchdog must outlast every wait it can make.

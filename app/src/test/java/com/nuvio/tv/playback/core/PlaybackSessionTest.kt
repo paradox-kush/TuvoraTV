@@ -2196,7 +2196,8 @@ class PlaybackSessionTest {
         engine.emit(PlaybackEvent.BytesReceived(1))
         runCurrent()
 
-        advanceTimeBy(1_499)
+        // Media3 live: one 15 s startup budget (was 1.5 s for bytes -> tracks).
+        advanceTimeBy(14_999)
         runCurrent()
         assertEquals(0, engine.releaseCalls)
         advanceTimeBy(1)
@@ -2206,6 +2207,48 @@ class PlaybackSessionTest {
         assertEquals(FailureCode.MANIFEST_INVALID, expired.failure?.code)
         assertEquals(FailureDomain.MANIFEST, expired.failure?.domain)
         assertEquals(1, engine.releaseCalls)
+        close(session)
+    }
+
+    @Test
+    fun `media3 live waits past the old micro-deadlines and ends one budget after the engine start`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine()
+        val clock = object : PlaybackClock {
+            override fun nowEpochMs(): Long = testScheduler.currentTime
+            override suspend fun delayMs(durationMs: Long) = delay(durationMs)
+        }
+        val session = session(
+            engine = engine,
+            policy = PlaybackPolicy(),
+            clock = clock,
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.BytesReceived(1))
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
+        runCurrent()
+
+        // Old budgets: 2.5 s to a decoder, then 1 s to a frame. A healthy chunked TS start still runs.
+        advanceTimeBy(5_500)
+        runCurrent()
+        engine.emit(PlaybackEvent.VideoDecoderInitialized(1, "decoder"))
+        runCurrent()
+        advanceTimeBy(4_000)
+        runCurrent()
+        assertTrue(diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        assertEquals(0, engine.releaseCalls)
+
+        // The phases share ONE 15 s budget counted from the engine start: 9.5 s in, 5.5 s remain.
+        advanceTimeBy(5_499)
+        runCurrent()
+        assertTrue(diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        advanceTimeBy(1)
+        runCurrent()
+        val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
+        assertEquals(FailureCode.VIDEO_RENDERER_FAILED, expired.failure?.code)
         close(session)
     }
 
@@ -2225,7 +2268,8 @@ class PlaybackSessionTest {
         engine.emit(PlaybackEvent.VideoDecoderInitialized(1, "decoder"))
         runCurrent()
 
-        advanceTimeBy(999)
+        // Media3 live: one 15 s startup budget (was 1 s for ready -> first frame).
+        advanceTimeBy(14_999)
         runCurrent()
         assertEquals(0, engine.releaseCalls)
         advanceTimeBy(1)
@@ -2253,7 +2297,8 @@ class PlaybackSessionTest {
         engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
         runCurrent()
 
-        advanceTimeBy(2_500)
+        // Media3 live: one 15 s startup budget (was 2.5 s for tracks -> decoder).
+        advanceTimeBy(15_000)
         runCurrent()
 
         val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
