@@ -113,4 +113,31 @@ class StalkerNonArrayReplyTest {
         genresReply = """{"js":[]}"""
         assertEquals(emptyList<String>(), client().liveCategories(acc).getOrThrow().map { it.id })
     }
+
+    // The series probe is a capability probe: its non-array answer is evidence the module is absent, not a failure.
+    @Test
+    fun `a non-array series reply on a Ministra portal still yields the vod series tree`() = runBlocking {
+        seriesReply = """{"js":{"error":"no module"}}"""
+        vodCategories = """{"js":[{"id":"*","title":"All"},{"id":"1","title":"Drama"}]}"""
+        val c = client()
+        assertEquals(listOf("1"), c.seriesCategories(acc).getOrThrow().map { it.id })
+        assertFalse(c.seriesAbsent(acc))
+    }
+
+    @Test
+    fun `a non-array series reply with plain vod is an empty success not a failure`() = runBlocking {
+        seriesReply = """{"js":{"error":"no module"}}"""
+        val r = client().seriesCategories(acc)
+        assertTrue("the probe answer is empty, not failed", r.isSuccess)
+        assertEquals(emptyList<String>(), r.getOrThrow().map { it.id })
+    }
+
+    @Test
+    fun `a non-array vod reply in the fallback does not claim series absent`() = runBlocking {
+        seriesReply = """{"js":{"error":"no module"}}"""
+        vodCategories = """{"js":{"error":"broken"}}"""
+        val c = client()
+        c.seriesCategories(acc)
+        assertFalse("a failed vod probe proves nothing", c.seriesAbsent(acc))
+    }
 }
