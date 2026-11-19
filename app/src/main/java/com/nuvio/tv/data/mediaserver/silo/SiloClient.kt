@@ -45,13 +45,13 @@ internal class SiloClient(
 
     /** The name the server shows for this device in its list of signed-in devices. */
     val deviceName: String
-        get() = "Nuvio on ${identity.device}"
+        get() = "Tuvora on ${identity.device}"
 
     val deviceHeaders: Map<String, String>
         get() = mapOf(
             "X-Device-ID" to deviceId,
             "X-Silo-Device-Id" to deviceId,
-            "X-Client-Name" to "Nuvio",
+            "X-Client-Name" to "Tuvora",
             "X-Client-Version" to identity.version.take(MAX_HEADER)
         )
 

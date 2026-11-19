@@ -191,11 +191,13 @@ class AddonEventDispatcherTest {
     private object GrantAll : TrackingAddonConsents {
         override fun isGranted(baseUrl: String) = true
         override fun grant(baseUrl: String) = Unit
+        override fun revoke(baseUrl: String) = Unit
     }
 
     private class FakeConsents(private val granted: Set<String> = emptySet()) : TrackingAddonConsents {
         override fun isGranted(baseUrl: String) = baseUrl in granted
         override fun grant(baseUrl: String) = Unit
+        override fun revoke(baseUrl: String) = Unit
     }
 
     @Test
@@ -252,5 +254,40 @@ class AddonEventDispatcherTest {
             TrackingAddonConsentPolicy.consentKey("https://a.example/x") ==
                 TrackingAddonConsentPolicy.consentKey("https://b.example/x")
         )
+    }
+
+    private class MutableConsents : TrackingAddonConsents {
+        val granted = mutableSetOf<String>()
+        override fun isGranted(baseUrl: String) = TrackingAddonConsentPolicy.consentKey(baseUrl) in granted
+        override fun grant(baseUrl: String) { granted += TrackingAddonConsentPolicy.consentKey(baseUrl) }
+        override fun revoke(baseUrl: String) { granted -= TrackingAddonConsentPolicy.consentKey(baseUrl) }
+    }
+
+    @Test
+    fun `revoking consent stops events until a new consent`() = runBlocking {
+        val consents = MutableConsents().apply { grant("https://t.example") }
+        val addon = trackingAddon("https://t.example")
+        assertTrue(TrackingAddonConsentPolicy.mayReceiveEvents(addon, consents))
+        consents.revoke("https://t.example/manifest.json")
+        assertFalse("removed then re-added add-on needs a new consent", TrackingAddonConsentPolicy.mayReceiveEvents(addon, consents))
+    }
+
+    @Test
+    fun `own source ids never reach a consented tracker`() = runBlocking {
+        val delivered = Collections.synchronizedList(mutableListOf<String>())
+        val api = recordingApi(delivered)
+        val dispatcher = AddonEventDispatcher(api, repositoryWith(trackingAddon("https://t.example")), GrantAll)
+        // dispatch() consults OwnSourcePolicy; register the IPTV namespaces the way the app does.
+        com.nuvio.tv.core.contracts.OwnSourcePolicy.registerContentIdPredicate("test-iptv") { it.startsWith("xtream:") || it.startsWith("m3u:") }
+        try {
+            dispatcher.player(AddonPlayerEventTarget("tv", "xtream:1:live:9"), AddonPlayerAction.START, 0L, 0L)
+            dispatcher.library("tv", "m3u:abc:5", AddonLibraryAction.WATCHED)
+            dispatcher.library("movie", "tt0898266", AddonLibraryAction.WATCHED)
+            coVerify(timeout = 2_000) { api.sendEvent(match { it.contains("tt0898266") }) }
+            Thread.sleep(200)
+            assertEquals(1, delivered.size)
+        } finally {
+            com.nuvio.tv.core.contracts.OwnSourcePolicy.resetForTest()
+        }
     }
 }

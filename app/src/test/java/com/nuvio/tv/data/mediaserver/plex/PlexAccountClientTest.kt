@@ -34,7 +34,7 @@ class PlexAccountClientTest {
         assertEquals(PlexPinStatus.Waiting, plex.checkPin(pin))
         linked = true
         assertEquals("account-token", (plex.checkPin(pin) as PlexPinStatus.Linked).accountToken)
-        assertEquals("Nuvio", http.requests.first().header("X-Plex-Product"))
+        assertEquals("Tuvora", http.requests.first().header("X-Plex-Product"))
         assertEquals("device-1", http.requests.first().header("X-Plex-Client-Identifier"))
     }
 

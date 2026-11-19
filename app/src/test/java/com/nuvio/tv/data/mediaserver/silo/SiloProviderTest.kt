@@ -487,4 +487,11 @@ class SiloProviderTest {
         assertEquals(TrackingExternalIds(), contentIdExternalIds("movie-local-42"))
         assertNull(episodeContentId("movie-tmdb-603", 1, 1))
     }
+
+    @Test
+    fun theDeviceIdentifiesAsTuvora() {
+        val client = SiloClient(SiloTestHttp { ok("{}") }.client, siloTestIdentity)
+        assertEquals("Tuvora", client.deviceHeaders["X-Client-Name"])
+        assertTrue(client.deviceName.startsWith("Tuvora on "))
+    }
 }

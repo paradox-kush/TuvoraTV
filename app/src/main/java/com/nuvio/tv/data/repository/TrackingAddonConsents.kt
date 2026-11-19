@@ -15,6 +15,9 @@ import javax.inject.Singleton
 interface TrackingAddonConsents {
     fun isGranted(baseUrl: String): Boolean
     fun grant(baseUrl: String)
+
+    /** The add-on was removed: a later re-install (or a sync that brings it back) needs a new consent. */
+    fun revoke(baseUrl: String)
 }
 
 /**
@@ -57,6 +60,10 @@ class SharedPrefsTrackingAddonConsents @Inject constructor(
 
     override fun grant(baseUrl: String) {
         prefs.edit().putBoolean(TrackingAddonConsentPolicy.consentKey(baseUrl), true).apply()
+    }
+
+    override fun revoke(baseUrl: String) {
+        prefs.edit().remove(TrackingAddonConsentPolicy.consentKey(baseUrl)).apply()
     }
 
     private companion object {

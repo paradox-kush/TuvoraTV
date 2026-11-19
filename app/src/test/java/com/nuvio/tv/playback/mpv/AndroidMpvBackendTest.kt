@@ -246,12 +246,15 @@ class AndroidMpvBackendTest {
         }
 
         core.observer?.event(17, MPVNode.None) // VIDEO_RECONFIG alone is not a configured output.
-        core.observer?.event(21, MPVNode.None) // PLAYBACK_RESTART alone is not a configured output.
         core.observer?.property("vo-configured", false)
         runCurrent()
         assertTrue(!event.isCompleted)
-        // Stock libmpv 0.2.1 has no presented-frame counter; vo-configured is the closest stock signal.
+        // Stock libmpv 0.2.1 has no presented-frame counter: vo-configured alone is not enough ...
         core.observer?.property("vo-configured", true)
+        runCurrent()
+        assertTrue(!event.isCompleted)
+        // ... it takes PLAYBACK_RESTART as well.
+        core.observer?.event(21, MPVNode.None)
         runCurrent()
         assertEquals(MpvBackendEvent.FirstVideoFrame, event.await())
     }

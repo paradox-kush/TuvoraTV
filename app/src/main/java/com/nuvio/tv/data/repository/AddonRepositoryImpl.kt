@@ -67,7 +67,9 @@ class AddonRepositoryImpl(
      */
     private val dispatcher: CoroutineDispatcher,
     /** Source of the refresh clock, injectable so the TTL policy can be tested without waiting. */
-    private val clock: () -> Long
+    private val clock: () -> Long,
+    /** Revoked when an add-on is removed (null in tests that do not care). */
+    private val trackingConsents: TrackingAddonConsents? = null
 ) : AddonRepository {
 
     @Inject
@@ -76,7 +78,8 @@ class AddonRepositoryImpl(
         preferences: AddonPreferences,
         addonSyncService: AddonSyncService,
         authManager: AuthManager,
-        @ApplicationContext context: Context
+        @ApplicationContext context: Context,
+        trackingConsents: TrackingAddonConsents
     ) : this(
         api = api,
         preferences = preferences,
@@ -84,7 +87,8 @@ class AddonRepositoryImpl(
         authManager = authManager,
         context = context,
         dispatcher = Dispatchers.IO,
-        clock = System::currentTimeMillis
+        clock = System::currentTimeMillis,
+        trackingConsents = trackingConsents
     )
 
     companion object {
@@ -470,6 +474,7 @@ class AddonRepositoryImpl(
     override suspend fun removeAddon(url: String) {
         val cleanUrl = canonicalizeUrl(url)
         if (!preferences.removeAddon(cleanUrl)) return
+        trackingConsents?.revoke(cleanUrl)
         if (removeCachedManifest(cleanUrl)) {
             persistManifestCacheToDisk()
             bumpManifestCacheRevision()

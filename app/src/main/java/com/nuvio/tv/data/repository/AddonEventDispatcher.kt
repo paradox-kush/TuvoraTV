@@ -121,7 +121,7 @@ class AddonEventDispatcher @Inject constructor(
         id: String,
         extra: List<Pair<String, String>>
     ) {
-        if (type.isBlank() || id.isBlank() || ServerItemRef.isServerId(id)) return
+        if (type.isBlank() || !AddonEventPolicy.mayDescribe(id, ServerItemRef::isServerId)) return
         events.trySend(AddonEvent(resource, type, id, extra))
     }
 

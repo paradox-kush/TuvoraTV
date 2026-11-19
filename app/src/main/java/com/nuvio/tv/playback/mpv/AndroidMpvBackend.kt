@@ -204,6 +204,8 @@ internal class AndroidMpvBackend(
     private var lease: MpvSurfaceLease? = null
     private var lastStreamPosition = -1L
     private var firstVideoFrameSent = false
+    private var voConfigured = false
+    private var playbackRestarted = false
     private var firstAudioSent = false
 
     @Volatile private var audioProgress: Long? = null
@@ -629,12 +631,9 @@ internal class AndroidMpvBackend(
     override fun property(name: String, value: Boolean) {
         scope.launch {
             if (terminalEventsSuppressed) return@launch
-            if (name == VIDEO_OUTPUT_CONFIGURED && value && !firstVideoFrameSent &&
-                lifecycle != MpvBackendLifecycle.DEAD && lifecycle != MpvBackendLifecycle.RELEASING
-            ) {
-                firstVideoFrameSent = true
-                lifecycle = MpvBackendLifecycle.PLAYING
-                _events.tryEmit(MpvBackendEvent.FirstVideoFrame)
+            if (name == VIDEO_OUTPUT_CONFIGURED) {
+                voConfigured = value
+                maybeEmitFirstVideoFrame()
             }
             if (name == "paused-for-cache") {
                 _events.tryEmit(if (value) MpvBackendEvent.BufferingStarted else MpvBackendEvent.BufferingEnded)
@@ -741,10 +740,29 @@ internal class AndroidMpvBackend(
                     lifecycle = MpvBackendLifecycle.PLAYING
                     _events.tryEmit(MpvBackendEvent.StateObserved(PlaybackEngineState.READY, !paused, false))
                 }
+                MPV_EVENT_PLAYBACK_RESTART_ID -> {
+                    playbackRestarted = true
+                    maybeEmitFirstVideoFrame()
+                }
                 MPV_EVENT_END_FILE -> handleEndFile(parseEndFile(data), evidence)
                 MPV_EVENT_SHUTDOWN -> _events.tryEmit(MpvBackendEvent.Ended(PlaybackEndReason.SHUTDOWN))
             }
         }
+    }
+
+    /**
+     * GAP (sync 16): the stock mpv-android-lib 0.2.1 core has no presented-frame counter, so "a frame is on screen" is
+     * inferred from two stock facts that must BOTH hold: the video output is configured (`vo-configured`) and mpv
+     * reported PLAYBACK_RESTART (first video frame ready after a load). Neither proves a pixel was presented; a stuck
+     * black screen after both is only caught by the freeze/startup watchdogs, not by a frame counter.
+     */
+    private fun maybeEmitFirstVideoFrame() {
+        if (firstVideoFrameSent || !voConfigured || !playbackRestarted) return
+        if (lifecycle == MpvBackendLifecycle.DEAD || lifecycle == MpvBackendLifecycle.RELEASING) return
+        firstVideoFrameSent = true
+        lifecycle = MpvBackendLifecycle.PLAYING
+        android.util.Log.i("MpvBackend", "first-video-frame inferred from vo-configured + playback-restart (no presented-frame counter on stock libmpv)")
+        _events.tryEmit(MpvBackendEvent.FirstVideoFrame)
     }
 
     private fun handleEndFile(end: ParsedMpvEndFile, evidence: MpvLoadEvidence) {
@@ -763,6 +781,9 @@ internal class AndroidMpvBackend(
     private fun resetSourceFacts() {
         lastStreamPosition = -1L
         firstVideoFrameSent = false
+        // voConfigured is observed state, not per-file: a reused VO stays configured across loads and mpv does
+        // not notify again, so resetting it would make every later channel wait forever.
+        playbackRestarted = false
         firstAudioSent = false
         audioProgress = null
         lastAudioPts = null
@@ -1006,6 +1027,7 @@ internal class AndroidMpvBackend(
         const val MPV_EVENT_START_FILE = 6
         const val MPV_EVENT_END_FILE = 7
         const val MPV_EVENT_FILE_LOADED = 8
+        const val MPV_EVENT_PLAYBACK_RESTART_ID = 21
         val activeStates = setOf(
             MpvBackendLifecycle.ATTACHED,
             MpvBackendLifecycle.LOADING,
