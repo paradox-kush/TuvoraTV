@@ -57,14 +57,14 @@ class PlaybackPolicy(
         /** Absolute live buffering bound, including slow trickle/refill without an engine error. */
         val liveRebufferMs: Long = 30_000L,
         /**
-         * Media3 live: ONE startup budget from the engine start to the first rendered frame, instead
-         * of the 1.5 s / 2.5 s / 1 s phase micro-deadlines. Field/bench evidence (2026-11-19, format
-         * test F5): a healthy raw .ts over chunked HTTP had its renderer watchdog expire at ~5.4 s and
-         * was handed to libmpv (picture at ~6 s) while a stock ExoPlayer app showed it in ~0.5 s; the
-         * earlier 1 s budget also killed healthy 4K HEVC starts. 15 s still ends in a typed failure
-         * (bounded-load rule); the first-byte read-timeout and surface guards are unchanged.
+         * Live, EITHER engine: ONE startup budget from the engine start to the first rendered frame,
+         * instead of the 1.5 s / 2.5 s / 1 s phase micro-deadlines. Evidence (2026-11-19): a healthy raw
+         * .ts over chunked HTTP had its Media3 renderer watchdog expire at ~5.4 s (stock ExoPlayer showed
+         * it in ~0.5 s), and on the Onn libmpv's picture landed ~0.1 s after the 1 s ready->first-frame
+         * verdict, which also re-armed every second during a reconnect. 15 s still ends in a typed
+         * failure (bounded-load rule); the first-byte read-timeout and surface guards are unchanged.
          */
-        val media3LiveStartupMs: Long = 15_000L,
+        val liveStartupMs: Long = 15_000L,
         /**
          * Floor for the two decoder phases when the track header says >1080p. Measured first
          * frame on 4K HEVC: MediaTek (Fire TV 4K Max) 3.8s, Amlogic (Onn) 4.18s — a 3.5s floor
@@ -85,7 +85,7 @@ class PlaybackPolicy(
                 require(runtimeVideoProgressWindowMs > 0)
                 require(surfaceAttachmentProgressMs > 0)
                 require(liveRebufferMs > 0)
-                require(media3LiveStartupMs > 0)
+                require(liveStartupMs > 0)
             }
         }
     }
@@ -102,6 +102,9 @@ class PlaybackPolicy(
 
     fun watchdogEnabled(): Boolean = watchdogConfiguration.enabled
 
+    /** The phases that share the one live startup budget (bytes -> tracks -> decoder -> first frame). */
+    fun isLiveStartupPhase(phase: WatchdogPhase): Boolean = phase in LIVE_STARTUP_PHASES
+
     fun runtimeVideoWindowMs(): Long = watchdogConfiguration.runtimeVideoProgressWindowMs
 
     /** Passing runtime windows that end a live reconnect's probation (~30 s). */
@@ -116,18 +119,12 @@ class PlaybackPolicy(
         network: PlaybackNetworkRequest,
         videoDimensions: VideoDimensions? = null,
         customBuffer: CustomBufferPreference? = null,
-        /** The engine this attempt runs on; Media3 live startup is one budget (see [WatchdogConfiguration.media3LiveStartupMs]). */
-        engine: EngineType? = null,
         /** Time since this engine attempt started, so the three startup phases share one budget. */
         startupElapsedMs: Long = 0L,
-    ): Long = if (
-        engine == EngineType.MEDIA3 &&
-        contentType == ContentType.LIVE &&
-        phase in MEDIA3_LIVE_STARTUP_PHASES
-    ) {
+    ): Long = if (contentType == ContentType.LIVE && phase in LIVE_STARTUP_PHASES) {
         maxOf(
             MIN_STARTUP_REMAINING_MS,
-            watchdogConfiguration.media3LiveStartupMs - startupElapsedMs.coerceAtLeast(0L),
+            watchdogConfiguration.liveStartupMs - startupElapsedMs.coerceAtLeast(0L),
         )
     } else when (phase) {
         WatchdogPhase.WAITING_FOR_SURFACE -> watchdogConfiguration.surfaceAttachmentProgressMs
@@ -539,7 +536,7 @@ class PlaybackPolicy(
 
     private companion object {
         val DEFAULT_ENGINE_ORDER = listOf(EngineType.MEDIA3, EngineType.LIBMPV)
-        val MEDIA3_LIVE_STARTUP_PHASES = setOf(
+        val LIVE_STARTUP_PHASES = setOf(
             WatchdogPhase.BYTES_TO_TRACKS,
             WatchdogPhase.VIDEO_TRACKS_TO_READY,
             WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,

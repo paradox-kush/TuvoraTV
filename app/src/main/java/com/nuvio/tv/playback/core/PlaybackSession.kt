@@ -93,6 +93,9 @@ class PlaybackSession(
     private var engineAttempt: Long = 0
     private var engineAttemptGeneration: Long? = null
     private var engineAttemptStartedAtEpochMs: Long = 0
+
+    /** The engine attempt whose live startup budget already expired: it is judged once, never re-armed every second. */
+    private var startupBudgetExpiredAttempt: Long? = null
     private var runtimeMetricsUnavailableAttempt: Long? = null
     private val decoderStableIds = mutableMapOf<Pair<Long, EngineType>, String>()
     private val recordedCompatibilityOutcomes = mutableSetOf<CompatibilityRecordingKey>()
@@ -1949,6 +1952,15 @@ class PlaybackSession(
             cancelWatchdog()
             return
         }
+        if (policy.isLiveStartupPhase(desired) &&
+            machine.request?.contentType == ContentType.LIVE &&
+            startupBudgetExpiredAttempt == engineAttempt
+        ) {
+            // The one startup budget of this attempt is spent and was reported; a reconnect starts a
+            // new attempt (new budget). Re-arming a minimal phase here made NO_PROGRESS fire every second.
+            cancelWatchdog()
+            return
+        }
         val current = watchdogArm
         if (
             current?.generation == machine.snapshot.generation &&
@@ -1979,9 +1991,6 @@ class PlaybackSession(
                         request.network,
                         machine.snapshot.tracks.videoDimensions,
                         requirements.takeIf { it?.generation == arm.generation }?.value?.customBuffer,
-                        // A live reconnect attempt keeps the phase deadlines: the patient single startup
-                        // budget is for a tune, and the reconnect ladder's cadence is not changed here.
-                        activeGraph?.engine?.takeUnless { machine.snapshot.isReconnecting },
                         (clock.nowEpochMs() - engineAttemptStartedAtEpochMs).coerceAtLeast(0L),
                     ),
                 )
@@ -2109,6 +2118,7 @@ class PlaybackSession(
         }
         watchdogArm = null
         watchdogJob = null
+        if (policy.isLiveStartupPhase(message.phase)) startupBudgetExpiredAttempt = message.attempt
         emitWatchdogFailure(message.generation, message.phase)
     }
 

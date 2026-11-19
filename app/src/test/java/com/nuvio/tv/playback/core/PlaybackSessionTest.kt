@@ -1970,7 +1970,8 @@ class PlaybackSessionTest {
 
         engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
         runCurrent()
-        advanceTimeBy(1_000)
+        // A reconnect attempt gets the same single live startup budget, not a 1 s phase.
+        advanceTimeBy(15_000)
         runCurrent()
 
         assertTrue(engine.startCalls >= 2)
@@ -2249,6 +2250,108 @@ class PlaybackSessionTest {
         runCurrent()
         val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
         assertEquals(FailureCode.VIDEO_RENDERER_FAILED, expired.failure?.code)
+        close(session)
+    }
+
+    private suspend fun TestScope.handOffToLibmpv(
+        session: PlaybackSession,
+        preferred: FakeEngine,
+        fallback: FakeEngine,
+    ) {
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        preferred.emit(
+            PlaybackEvent.Failed(
+                1,
+                PlaybackFailure(
+                    FailureCode.VIDEO_DECODER_FAILED,
+                    FailureDomain.VIDEO_DECODER,
+                    FailurePhase.ENGINE_START,
+                    Retryability.HANDOFF_ELIGIBLE,
+                ),
+            ),
+        )
+        runCurrent()
+        assertEquals("handed off to libmpv", 1, fallback.startCalls)
+        fallback.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
+        fallback.emit(PlaybackEvent.VideoDecoderInitialized(1, "decoder"))
+        runCurrent()
+    }
+
+    @Test
+    fun `libmpv live first frame at 1_2 s is not a failure or a handoff`() = runTest {
+        val surface = FakeSurface()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val session = ladderSession(liveRequest, StreamEvidence(), preferred, fallback, diagnostics, PlaybackPolicy())
+        handOffToLibmpv(session, preferred, fallback)
+        advanceTimeBy(1_200)
+        runCurrent()
+        fallback.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+
+        assertTrue(diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        close(session)
+    }
+
+    @Test
+    fun `no live first frame by the budget fails exactly once on libmpv`() = runTest {
+        val surface = FakeSurface()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val session = ladderSession(liveRequest, StreamEvidence(), preferred, fallback, diagnostics, PlaybackPolicy())
+        handOffToLibmpv(session, preferred, fallback)
+        advanceTimeBy(14_999)
+        runCurrent()
+        assertTrue(diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        advanceTimeBy(1)
+        runCurrent()
+        advanceTimeBy(60_000)
+        runCurrent()
+
+        val expired = diagnostics.filter { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
+        assertEquals(1, expired.size)
+        assertEquals(FailureCode.VIDEO_RENDERER_FAILED, expired.single().failure?.code)
+        close(session)
+    }
+
+    @Test
+    fun `a live reconnect attempt with no frame does not expire every second`() = runTest {
+        val engine = FakeEngine { start, input, events ->
+            if (start >= 2) {
+                events.emit(PlaybackEvent.TracksAvailable(input.generation, hasVideo = true, 1, 0))
+                events.emit(PlaybackEvent.VideoDecoderInitialized(input.generation, "decoder"))
+            }
+        }
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val clock = object : PlaybackClock {
+            override fun nowEpochMs(): Long = testScheduler.currentTime
+            override suspend fun delayMs(durationMs: Long) = delay(durationMs)
+        }
+        val session = session(
+            engine,
+            policy = PlaybackPolicy(),
+            clock = clock,
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+        )
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+        engine.emit(PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF))
+        runCurrent()
+        advanceTimeBy(40_000)
+        runCurrent()
+
+        val expiries = diagnostics.count {
+            it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED && it.failure?.code == FailureCode.NO_PROGRESS
+        }
+        assertTrue("one expiry per attempt at most, got $expiries in 40 s", expiries in 1..3)
         close(session)
     }
 
@@ -3243,9 +3346,11 @@ class PlaybackSessionTest {
         preferred: FakeEngine,
         fallback: FakeEngine,
         diagnostics: MutableList<PlaybackDiagnosticEvent> = mutableListOf(),
+        policy: PlaybackPolicy = PlaybackPolicy(PlaybackPolicy.WatchdogConfiguration(enabled = false)),
     ) = session(
         engine = preferred,
         otherEngine = fallback,
+        policy = policy,
         requestResolver = PlaybackRequestResolver { PlaybackResult.Success(ResolvedPlaybackRequest(request, request.summary(), evidence)) },
         requirementsResolver = PlaybackRequirementsResolver {
             PlaybackResult.Success(requirements(setOf(EngineType.MEDIA3, EngineType.LIBMPV)))

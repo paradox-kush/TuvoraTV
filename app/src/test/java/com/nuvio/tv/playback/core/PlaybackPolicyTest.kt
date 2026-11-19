@@ -178,7 +178,7 @@ class PlaybackPolicyTest {
             ),
         )
         assertEquals(
-            1_500L,
+            15_000L,
             policy.watchdogDelayMs(
                 PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS,
                 ContentType.LIVE,
@@ -194,7 +194,7 @@ class PlaybackPolicyTest {
             ),
         )
         assertEquals(
-            2_500L,
+            15_000L,
             policy.watchdogDelayMs(
                 PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY,
                 ContentType.LIVE,
@@ -202,7 +202,7 @@ class PlaybackPolicyTest {
             ),
         )
         assertEquals(
-            1_000L,
+            15_000L,
             policy.watchdogDelayMs(
                 PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,
                 ContentType.LIVE,
@@ -234,7 +234,7 @@ class PlaybackPolicyTest {
         )
         for (phase in phases) {
             fun delay(elapsed: Long, dims: VideoDimensions? = null) = policy.watchdogDelayMs(
-                phase, ContentType.LIVE, network, dims, null, EngineType.MEDIA3, elapsed,
+                phase, ContentType.LIVE, network, dims, null, elapsed,
             )
             assertEquals("$phase full budget", 15_000L, delay(0))
             assertEquals("$phase 5.4 s in", 9_600L, delay(5_400))
@@ -244,22 +244,25 @@ class PlaybackPolicyTest {
     }
 
     @Test
-    fun `media3 live keeps the surface byte and runtime guards and other engines and VOD keep their budgets`() {
+    fun `live startup budget is engine independent and the guards and VOD budgets are unchanged`() {
         val network = PlaybackNetworkRequest(readTimeoutMs = 60_000, callTimeoutMs = 12_000)
-        fun delay(phase: PlaybackPolicy.WatchdogPhase, type: ContentType, engine: EngineType?) =
-            policy.watchdogDelayMs(phase, type, network, null, null, engine, 3_000L)
-        assertEquals(12_000L, delay(PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE, ContentType.LIVE, EngineType.MEDIA3))
+        fun delay(phase: PlaybackPolicy.WatchdogPhase, type: ContentType) =
+            policy.watchdogDelayMs(phase, type, network, null, null, 3_000L)
+        // The Onn false verdicts: libmpv's picture landed ~0.1 s after a 1 s ready->first-frame budget.
+        listOf(
+            PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS,
+            PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY,
+            PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,
+        ).forEach { assertEquals("$it", 12_000L, delay(it, ContentType.LIVE)) }
+        assertEquals(12_000L, delay(PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE, ContentType.LIVE))
         assertEquals(
             SurfaceAttachmentBudget.WATCHDOG_MS,
-            delay(PlaybackPolicy.WatchdogPhase.WAITING_FOR_SURFACE, ContentType.LIVE, EngineType.MEDIA3),
+            delay(PlaybackPolicy.WatchdogPhase.WAITING_FOR_SURFACE, ContentType.LIVE),
         )
-        assertEquals(5_000L, delay(PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS, ContentType.LIVE, EngineType.MEDIA3))
-        assertEquals(30_000L, delay(PlaybackPolicy.WatchdogPhase.LIVE_REBUFFER, ContentType.LIVE, EngineType.MEDIA3))
-        assertEquals(1_500L, delay(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, ContentType.LIVE, EngineType.LIBMPV))
-        assertEquals(2_500L, delay(PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY, ContentType.LIVE, EngineType.LIBMPV))
-        assertEquals(1_000L, delay(PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME, ContentType.LIVE, EngineType.LIBMPV))
-        assertEquals(3_000L, delay(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, ContentType.VOD, EngineType.MEDIA3))
-        assertEquals(2_000L, delay(PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME, ContentType.CATCH_UP, EngineType.MEDIA3))
+        assertEquals(5_000L, delay(PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS, ContentType.LIVE))
+        assertEquals(30_000L, delay(PlaybackPolicy.WatchdogPhase.LIVE_REBUFFER, ContentType.LIVE))
+        assertEquals(3_000L, delay(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, ContentType.VOD))
+        assertEquals(2_000L, delay(PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME, ContentType.CATCH_UP))
     }
 
     // B50: the coordinator's surface wait and this watchdog were both 3 s, so the watchdog fired
@@ -772,13 +775,16 @@ class PlaybackPolicyTest {
             PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY,
             PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,
         )) {
-            assertEquals("$phase 4K", 6_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, uhd))
-            assertEquals("$phase HD", if (phase == PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY) 2_500L else 1_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, hd))
-            assertEquals("$phase unknown", if (phase == PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY) 2_500L else 1_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, null))
+            // Live: the one 15 s startup budget already exceeds the 4K floor and does not follow resolution.
+            assertEquals("$phase 4K", 15_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, uhd))
+            assertEquals("$phase HD", 15_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, hd))
+            assertEquals("$phase unknown", 15_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, null))
+            // VOD keeps the decoder budgets and the 4K floor.
+            assertEquals("$phase VOD 4K", 6_000L, policy.watchdogDelayMs(phase, ContentType.VOD, network, uhd))
         }
         // Resolution never touches the transport phases: those budgets are about bytes, not decoders.
         assertEquals(
-            1_500L,
+            15_000L,
             policy.watchdogDelayMs(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, ContentType.LIVE, network, uhd),
         )
     }
