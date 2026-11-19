@@ -266,6 +266,7 @@ class PlaybackRequestMapper {
             EvidenceProvenance.HLS_CODECS_ATTRIBUTE -> 65
             EvidenceProvenance.SEGMENT_HINT -> 60
             EvidenceProvenance.PROVIDER_DECLARED -> 50
+            EvidenceProvenance.LADDER_FORCED -> 55
             EvidenceProvenance.HTTP_MIME_HINT -> 40
             EvidenceProvenance.URL_INFERRED -> 20
             EvidenceProvenance.UNKNOWN -> 0

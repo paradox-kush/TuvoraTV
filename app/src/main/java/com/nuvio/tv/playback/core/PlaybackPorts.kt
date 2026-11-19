@@ -311,6 +311,12 @@ enum class PlaybackDiagnosticCode {
 
     /** libmpv shows a frozen picture while its audio plays: reported once, playback continues. */
     LIVE_PICTURE_STUCK,
+
+    /** B262: a live Media3 start was re-opened once on the same engine in another format (no URL, no host). */
+    LIVE_FORMAT_LADDER_STEP,
+
+    /** B262: how that re-open ended: it produced a first frame, or it failed and the usual path went on. */
+    LIVE_FORMAT_LADDER_RESULT,
 }
 
 /**
@@ -346,6 +352,10 @@ data class PlaybackDiagnosticEvent(
     val freeze: LiveFreezeTelemetry? = null,
     /** Which shutdown step was in flight when release failed — the step enum name only. */
     val releaseStep: String? = null,
+    /** B262: which ladder step ran ([LiveFormatStep] name) - never a URL or host. */
+    val formatStep: String? = null,
+    /** B262: on LIVE_FORMAT_LADDER_RESULT, whether the re-open reached a first frame. */
+    val formatPlayed: Boolean? = null,
 )
 
 fun interface PlaybackDiagnostics {

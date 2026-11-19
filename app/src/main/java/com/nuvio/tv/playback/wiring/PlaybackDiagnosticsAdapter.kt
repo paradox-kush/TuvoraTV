@@ -32,6 +32,8 @@ object PlaybackDiagnosticFormatter {
         event.outputStatus?.let { properties["output_status"] = it.name }
         event.releaseReason?.let { properties["release_reason"] = it.name }
         event.releaseStep?.let(::identifier)?.let { properties["release_step"] = it }
+        event.formatStep?.let(::identifier)?.let { properties["format_step"] = it }
+        event.formatPlayed?.let { properties["format_played"] = it }
         event.highResolution?.let { properties["high_resolution"] = it }
         event.changeImpact?.let { properties["change_impact"] = it.name }
         event.changedFields?.let { fields ->

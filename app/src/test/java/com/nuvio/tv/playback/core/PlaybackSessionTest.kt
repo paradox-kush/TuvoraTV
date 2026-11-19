@@ -3173,6 +3173,212 @@ class PlaybackSessionTest {
         close(rig.session)
     }
 
+
+    // ---- B262: one-shot live format ladder on the same engine, before any hand-off ----
+
+    private val ladderHls = StreamEvidence(
+        delivery = EvidenceFact(DeliveryType.HLS, EvidenceProvenance.URL_INFERRED),
+    )
+    private val ladderManifestFailure = PlaybackFailure(
+        FailureCode.MANIFEST_INVALID,
+        FailureDomain.MANIFEST,
+        FailurePhase.ENGINE_START,
+        Retryability.HANDOFF_ELIGIBLE,
+    )
+    private val ladderDemuxFailure = PlaybackFailure(
+        FailureCode.DEMUX_FAILED,
+        FailureDomain.DEMUX,
+        FailurePhase.ENGINE_START,
+        Retryability.HANDOFF_ELIGIBLE,
+    )
+
+    private fun TestScope.ladderSession(
+        request: PlaybackRequest,
+        evidence: StreamEvidence,
+        preferred: FakeEngine,
+        fallback: FakeEngine,
+        diagnostics: MutableList<PlaybackDiagnosticEvent> = mutableListOf(),
+    ) = session(
+        engine = preferred,
+        otherEngine = fallback,
+        requestResolver = PlaybackRequestResolver { PlaybackResult.Success(ResolvedPlaybackRequest(request, request.summary(), evidence)) },
+        requirementsResolver = PlaybackRequirementsResolver {
+            PlaybackResult.Success(requirements(setOf(EngineType.MEDIA3, EngineType.LIBMPV)))
+        },
+        diagnostics = PlaybackDiagnostics(diagnostics::add),
+    )
+
+    @Test
+    fun `F4 an Xtream m3u8 that is not a playlist re-opens on the sibling ts on the same engine`() = runTest {
+        val surface = FakeSurface()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val request = PlaybackRequest("http://panel.example/live/u/p/104.m3u8", contentType = ContentType.LIVE)
+        val session = ladderSession(request, ladderHls, preferred, fallback, diagnostics)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.Failed(1, ladderManifestFailure))
+        advanceUntilIdle()
+
+        assertEquals("the same engine was started again", 2, preferred.startCalls)
+        assertEquals("no hand-off", 0, fallback.startCalls)
+        val reopened = preferred.lastStartInput!!
+        assertEquals("http://panel.example/live/u/p/104.ts", reopened.request.url)
+        assertEquals(DeliveryType.RAW_TRANSPORT_STREAM, reopened.evidence.delivery?.value)
+        assertEquals(1, diagnostics.count { it.code == PlaybackDiagnosticCode.LIVE_FORMAT_LADDER_STEP })
+
+        preferred.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+        val result = diagnostics.single { it.code == PlaybackDiagnosticCode.LIVE_FORMAT_LADDER_RESULT }
+        assertEquals(true, result.formatPlayed)
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        close(session)
+    }
+
+    @Test
+    fun `a plain m3u8 that is raw TS is re-opened with a forced TS type and the URL is kept`() = runTest {
+        val surface = FakeSurface()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val request = PlaybackRequest("http://cdn.example/a/channel.m3u8", contentType = ContentType.LIVE)
+        val session = ladderSession(request, ladderHls, preferred, fallback)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.Failed(1, ladderManifestFailure))
+        advanceUntilIdle()
+
+        assertEquals(2, preferred.startCalls)
+        assertEquals(0, fallback.startCalls)
+        assertEquals("http://cdn.example/a/channel.m3u8", preferred.lastStartInput!!.request.url)
+        assertEquals(DeliveryType.RAW_TRANSPORT_STREAM, preferred.lastStartInput!!.evidence.delivery?.value)
+        close(session)
+    }
+
+    @Test
+    fun `an extension-less HLS that fails to demux is re-opened as HLS`() = runTest {
+        val surface = FakeSurface()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val request = PlaybackRequest("http://cdn.example/a/channel", contentType = ContentType.LIVE)
+        val session = ladderSession(request, StreamEvidence(), preferred, fallback)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.Failed(1, ladderDemuxFailure))
+        advanceUntilIdle()
+
+        assertEquals(2, preferred.startCalls)
+        assertEquals(0, fallback.startCalls)
+        assertEquals(DeliveryType.HLS, preferred.lastStartInput!!.evidence.delivery?.value)
+        close(session)
+    }
+
+    @Test
+    fun `an exhausted ladder falls through to today's hand-off and each step runs once`() = runTest {
+        val surface = FakeSurface()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val request = PlaybackRequest("http://panel.example/live/u/p/104.m3u8", contentType = ContentType.LIVE)
+        val session = ladderSession(request, ladderHls, preferred, fallback, diagnostics)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.Failed(1, ladderManifestFailure))
+        advanceUntilIdle()
+        assertEquals(2, preferred.startCalls)
+        // The .ts re-open fails too (the sibling is not TS either): nothing is left to try.
+        preferred.emit(PlaybackEvent.Failed(1, ladderDemuxFailure))
+        advanceUntilIdle()
+
+        assertEquals("exactly one ladder re-open", 2, preferred.startCalls)
+        assertEquals("then the usual hand-off to libmpv", 1, fallback.startCalls)
+        assertEquals(1, diagnostics.count { it.code == PlaybackDiagnosticCode.LIVE_FORMAT_LADDER_STEP })
+        assertEquals(
+            false,
+            diagnostics.single { it.code == PlaybackDiagnosticCode.LIVE_FORMAT_LADDER_RESULT }.formatPlayed,
+        )
+        close(session)
+    }
+
+    @Test
+    fun `a single-use link never goes through the ladder`() = runTest {
+        val surface = FakeSurface()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val request = PlaybackRequest(
+            "http://panel.example/live/u/p/104.m3u8",
+            contentType = ContentType.LIVE,
+            network = PlaybackNetworkRequest(
+                retryConnectionFailures = false,
+                transientLoadRetryPolicy = TransientLoadRetryPolicy.SESSION_ONLY,
+            ),
+        )
+        val session = ladderSession(request, ladderHls, preferred, fallback)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.Failed(1, ladderManifestFailure))
+        advanceUntilIdle()
+
+        assertEquals("the spent link is not re-requested on Media3", 1, preferred.startCalls)
+        assertEquals("existing behaviour: straight to the hand-off", 1, fallback.startCalls)
+        close(session)
+    }
+
+    @Test
+    fun `VOD manifest failures are not re-opened by the live ladder`() = runTest {
+        val surface = FakeSurface()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val request = PlaybackRequest("http://panel.example/vod/u/p/104.m3u8", contentType = ContentType.VOD)
+        val session = ladderSession(request, ladderHls, preferred, fallback)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.Failed(1, ladderManifestFailure))
+        advanceUntilIdle()
+
+        assertEquals(1, preferred.startCalls)
+        assertEquals(1, fallback.startCalls)
+        close(session)
+    }
+
+    @Test
+    fun `the ladder memory follows the channel not the URL`() = runTest {
+        val surface = FakeSurface()
+        val preferred = FakeEngine(type = EngineType.MEDIA3, surface = surface)
+        val fallback = FakeEngine(type = EngineType.LIBMPV, surface = surface)
+        val request = PlaybackRequest(
+            "http://panel.example/live/u/p/104.m3u8",
+            contentType = ContentType.LIVE,
+            contentKey = SecretValue("live:104"),
+        )
+        val session = ladderSession(request, ladderHls, preferred, fallback)
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        preferred.emit(PlaybackEvent.Failed(1, ladderManifestFailure))
+        advanceUntilIdle()
+        assertEquals(2, preferred.startCalls)
+        preferred.emit(PlaybackEvent.FirstVideoFrame(1))
+        advanceUntilIdle()
+
+        // Tuning the same channel again (a fresh URL resolves to the .m3u8 again): the step is spent.
+        session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+        advanceUntilIdle()
+        val secondGeneration = session.snapshot.value.generation
+        preferred.emit(PlaybackEvent.Failed(secondGeneration, ladderManifestFailure))
+        advanceUntilIdle()
+        // Only FORCE_RAW_TS was spent with the sibling step, so nothing is left: hand-off.
+        assertEquals("no second ladder run for the same channel", 3, preferred.startCalls)
+        assertEquals(1, fallback.startCalls)
+        close(session)
+    }
+
     private fun TestScope.session(
         engine: FakeEngine,
         otherEngine: FakeEngine? = null,

@@ -69,6 +69,27 @@ class PlaybackRequest(
         secureOutputRequired = drm?.secureOutputRequired == true,
     )
 
+    /** The same request for another address (a format-ladder re-open); every other field is kept. */
+    fun withUrl(newUrl: String): PlaybackRequest = PlaybackRequest(
+        url = newUrl,
+        headers = headers,
+        cookies = cookies,
+        userAgent = userAgent,
+        referer = referer,
+        origin = origin,
+        redirectPolicy = redirectPolicy,
+        crossHostAuthorization = crossHostAuthorization,
+        tlsPolicy = tlsPolicy,
+        dnsPolicy = dnsPolicy,
+        applicationDnsKey = applicationDnsKey,
+        network = network,
+        drm = drm,
+        contentType = contentType,
+        contentKey = contentKey,
+        providerConnectionLimit = providerConnectionLimit,
+        originBoundHeaders = originBoundHeaders,
+    )
+
     override fun toString(): String = "PlaybackRequest(summary=${summary()})"
 }
 
@@ -359,6 +380,8 @@ enum class EvidenceProvenance {
     HLS_CODECS_ATTRIBUTE,
     SEGMENT_HINT,
     URL_INFERRED,
+    /** B262: a one-shot live format re-open asserted this type to learn if the stream plays as it. */
+    LADDER_FORCED,
     UNKNOWN,
 }
 

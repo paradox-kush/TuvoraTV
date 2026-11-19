@@ -28,6 +28,8 @@ object DiagTrailPolicy {
         // Live freeze: what froze, which ladder rung answered, the decoder, firmware and the playback
         // session that reported it (identifier-safe values only).
         "freeze_kind", "ladder_rung", "decoder", "build_id", "session_instance",
+        // B262: which live format re-open ran on the same engine and whether it reached a first frame.
+        "format_step", "format_played",
     )
 
     private val identifier = Regex("^[A-Za-z0-9_:-]{1,$MAX_STRING}$")

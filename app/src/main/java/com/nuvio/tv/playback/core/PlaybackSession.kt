@@ -105,6 +105,18 @@ class PlaybackSession(
     /** Opaque id of this session, so two NO_PROGRESS reports can be told apart (guide preview vs fullscreen). */
     private val instanceId = Integer.toHexString(System.identityHashCode(this))
 
+    /**
+     * B262: live format-ladder steps already taken per channel identity (bounded). Keyed by the
+     * channel's content key, never the URL: the sibling-.ts step changes the URL mid-ladder.
+     */
+    private val formatLadderTried = LinkedHashMap<String, Set<LiveFormatStep>>()
+
+    /** The generation whose same-engine format re-open is releasing/committing; the old engine's trailing errors are noise. */
+    private var formatLadderReopeningGeneration: Long? = null
+    private var formatLadderInFlight: FormatLadderInFlight? = null
+
+    private data class FormatLadderInFlight(val generation: Long, val step: LiveFormatStep)
+
     /** Freezes answered in the open incident; reset when the incident ends. */
     private var incidentFreezes = 0
 
@@ -256,6 +268,7 @@ class PlaybackSession(
             is LaneMessage.ResolutionFinished -> resolutionFinished(message)
             is LaneMessage.HandoffResolutionFinished -> handoffResolutionFinished(message)
             is LaneMessage.FreshResolutionReady -> freshResolutionReady(message)
+            is LaneMessage.FormatLadderReady -> formatLadderReady(message)
             is LaneMessage.SelectionFinished -> selectionFinished(message)
             is LaneMessage.RequirementsChangeFinished -> requirementsChangeFinished(message)
             is LaneMessage.RequirementsApplied -> requirementsApplied(message)
@@ -289,6 +302,11 @@ class PlaybackSession(
     }
 
     private suspend fun applyReducer(input: PlaybackReducerInput) {
+        val incoming = (input as? PlaybackReducerInput.Event)?.value
+        // B262: a live Media3 start that failed on its format gets one same-engine re-open per step
+        // before the hand-off decision below ever sees the failure.
+        if (incoming is PlaybackEvent.Failed && interceptWithFormatLadder(incoming)) return
+        if (incoming is PlaybackEvent.FirstVideoFrame) noteFormatLadderPlayed(incoming.generation)
         if (input is PlaybackReducerInput.Command && input.value is PlaybackCommand.PreferencesChanged) {
             preferences = input.value.preferences
         }
@@ -334,7 +352,10 @@ class PlaybackSession(
             liveReconnectAttempts.clear()
             reconnectPlaybackStableSinceEpochMs = null
             // A viewer Retry starts the channel over; a zap only moves to another channel's own budget.
-            if ((input as PlaybackReducerInput.Command).value == PlaybackCommand.Retry) channelFreezes.clear()
+            if ((input as PlaybackReducerInput.Command).value == PlaybackCommand.Retry) {
+                channelFreezes.clear()
+                formatLadderTried.clear()
+            }
         }
         if (engineStartAccepted) {
             check(engineAttempt < Long.MAX_VALUE) { "Playback engine attempt exhausted" }
@@ -538,6 +559,181 @@ class PlaybackSession(
             )
             lane.send(LaneMessage.ResolutionFinished(action.generation, result))
         }
+    }
+
+    /**
+     * B262: returns true when the failure was answered by a same-engine format re-open (the event is
+     * then NOT forwarded to the reducer: the incident has not happened yet). Startup of a live Media3
+     * attempt only; everything else, and every exhausted case, falls through unchanged.
+     */
+    private fun interceptWithFormatLadder(event: PlaybackEvent.Failed): Boolean {
+        if (formatLadderReopeningGeneration == event.generation) return true
+        val step = nextFormatLadderStep(event)
+        formatLadderInFlight?.takeIf { it.generation == event.generation }?.let { previous ->
+            formatLadderInFlight = null
+            diagnostics.record(
+                PlaybackDiagnosticEvent(
+                    generation = event.generation,
+                    code = PlaybackDiagnosticCode.LIVE_FORMAT_LADDER_RESULT,
+                    engine = activeGraph?.engine,
+                    failure = event.failure,
+                    formatStep = previous.step.name,
+                    formatPlayed = false,
+                ),
+            )
+        }
+        if (step == null) return false
+        val graph = activeGraph ?: return false
+        val current = resolved?.takeIf { it.generation == event.generation }?.value ?: return false
+        val engine = engineRegistry.engine(graph.engine) ?: return false
+        val effective = requirements?.takeIf { it.generation == event.generation }?.value ?: return false
+        val key = formatLadderKey(current.request, event.generation)
+        formatLadderTried[key] = formatLadderTried[key].orEmpty() + LiveFormatLadderPolicy.spentBy(step)
+        while (formatLadderTried.size > FORMAT_LADDER_MEMORY) {
+            formatLadderTried.remove(formatLadderTried.keys.first())
+        }
+        formatLadderReopeningGeneration = event.generation
+        formatLadderInFlight = FormatLadderInFlight(event.generation, step)
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = event.generation,
+                code = PlaybackDiagnosticCode.LIVE_FORMAT_LADDER_STEP,
+                engine = graph.engine,
+                failure = event.failure,
+                formatStep = step.name,
+            ),
+        )
+        reopenForFormatLadder(event.generation, step, graph, engine, current, effective)
+        return true
+    }
+
+    private fun nextFormatLadderStep(event: PlaybackEvent.Failed): LiveFormatStep? {
+        val gen = event.generation
+        val snapshot = machine.snapshot
+        if (gen != snapshot.generation ||
+            snapshot.state != PlaybackState.STARTING_PRIMARY ||
+            snapshot.isReconnecting ||
+            !machine.sessionActive ||
+            !machine.lifecycleActive
+        ) return null
+        val graph = activeGraph?.takeIf { activeGraphGeneration == gen } ?: return null
+        val current = resolved?.takeIf { it.generation == gen }?.value ?: return null
+        val request = current.request
+        return LiveFormatLadderPolicy.next(
+            LiveFormatLadderPolicy.Input(
+                contentType = request.contentType,
+                engine = graph.engine,
+                failure = event.failure,
+                delivery = current.evidence.delivery,
+                url = request.url,
+                // Stalker's SESSION_ONLY link is spent by its first open: excluded from the ladder.
+                singleUse = request.network.transientLoadRetryPolicy == TransientLoadRetryPolicy.SESSION_ONLY,
+                tried = formatLadderTried[formatLadderKey(request, gen)].orEmpty(),
+            ),
+        )
+    }
+
+    private fun formatLadderKey(request: PlaybackRequest, forGeneration: Long): String =
+        request.contentKey?.value ?: "generation:$forGeneration"
+
+    private fun noteFormatLadderPlayed(forGeneration: Long) {
+        val inFlight = formatLadderInFlight?.takeIf { it.generation == forGeneration } ?: return
+        formatLadderInFlight = null
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = forGeneration,
+                code = PlaybackDiagnosticCode.LIVE_FORMAT_LADDER_RESULT,
+                engine = activeGraph?.engine,
+                formatStep = inFlight.step.name,
+                formatPlayed = true,
+            ),
+        )
+    }
+
+    /** Release, swap the URL/evidence, and start the same engine again - the shape of [recoverOnce] without a re-mint. */
+    private fun reopenForFormatLadder(
+        gen: Long,
+        step: LiveFormatStep,
+        graph: PlaybackGraph,
+        engine: PlaybackEngine,
+        current: ResolvedPlaybackRequest,
+        effective: PlaybackRequirements,
+    ) {
+        val startPaused = machine.paused
+        generationScope(gen).launch {
+            fun endReopen() {
+                if (formatLadderReopeningGeneration == gen) formatLadderReopeningGeneration = null
+            }
+            val release = releaseAdapterUntilComplete(gen, engine)
+            if (release is PlaybackResult.Failure) {
+                endReopen()
+                fail(gen, release.failure)
+                return@launch
+            }
+            val request = if (step == LiveFormatStep.SIBLING_TS_URL) {
+                LiveFormatLadderPolicy.siblingTsUrl(current.request.url)
+                    ?.let(current.request::withUrl) ?: current.request
+            } else {
+                current.request
+            }
+            val next = current.copy(
+                request = request,
+                summary = request.summary(),
+                evidence = LiveFormatLadderPolicy.evidenceFor(step, current.evidence),
+            )
+            val accepted = CompletableDeferred<Boolean>()
+            lane.send(LaneMessage.FormatLadderReady(gen, next, accepted))
+            if (!accepted.await()) {
+                endReopen()
+                return@launch
+            }
+            val attached = safeResult(FailurePhase.SURFACE_ATTACHMENT) { engine.attachSurface(gen, graph) }
+            // The old engine is quiet from here; the new attempt's events are real ones.
+            endReopen()
+            if (attached is PlaybackResult.Failure) {
+                fail(gen, attached.failure)
+                return@launch
+            }
+            lane.send(
+                LaneMessage.Reducer(PlaybackReducerInput.Event(PlaybackEvent.EngineStarting(gen))),
+            )
+            intentionalReleases -= engine.type
+            val started = safeResult(FailurePhase.ENGINE_START) {
+                val focus = ensureAudioFocus()
+                if (focus is PlaybackResult.Failure) return@safeResult focus
+                engine.start(
+                    PlaybackEngineStart(
+                        generation = gen,
+                        request = next.request,
+                        evidence = next.evidence,
+                        graph = graph,
+                        requirements = effective,
+                        startPaused = startPaused,
+                        startPositionMs = restorationStartPositionMs(next.request.contentType),
+                        playbackRate = machine.snapshot.playbackRate,
+                        restorationCheckpoint = null,
+                    ),
+                )
+            }
+            if (started is PlaybackResult.Failure) fail(gen, started.failure)
+        }
+    }
+
+    private fun formatLadderReady(message: LaneMessage.FormatLadderReady) {
+        if (!isCurrentGeneration(message.generation) ||
+            machine.snapshot.state != PlaybackState.STARTING_PRIMARY
+        ) {
+            message.accepted.complete(false)
+            return
+        }
+        resolved = GenerationValue(message.generation, message.resolved)
+        machine = machine.copy(
+            request = message.resolved.request,
+            evidence = message.resolved.evidence,
+            snapshot = machine.snapshot.copy(requestSummary = message.resolved.summary),
+        )
+        _snapshot.value = machine.snapshot
+        message.accepted.complete(true)
     }
 
     private fun resolveHandoff(action: PlaybackAction.ResolveHandoffRequest) {
@@ -2346,6 +2542,7 @@ class PlaybackSession(
             EvidenceProvenance.HLS_CODECS_ATTRIBUTE -> 65
             EvidenceProvenance.SEGMENT_HINT -> 60
             EvidenceProvenance.PROVIDER_DECLARED -> 50
+            EvidenceProvenance.LADDER_FORCED -> 55
             EvidenceProvenance.HTTP_MIME_HINT -> 40
             EvidenceProvenance.URL_INFERRED -> 20
             EvidenceProvenance.UNKNOWN -> 0
@@ -2497,6 +2694,11 @@ class PlaybackSession(
             val requirements: PlaybackRequirements,
             val accepted: CompletableDeferred<Boolean>,
         ) : LaneMessage
+        data class FormatLadderReady(
+            val generation: Long,
+            val resolved: ResolvedPlaybackRequest,
+            val accepted: CompletableDeferred<Boolean>,
+        ) : LaneMessage
         data class SelectionFinished(
             val generation: Long,
             val failedGraph: PlaybackGraph?,
@@ -2555,6 +2757,7 @@ class PlaybackSession(
 
     private companion object {
         const val DEFAULT_RELEASE_TIMEOUT_MS = 5_000L
+        const val FORMAT_LADDER_MEMORY = 32
         const val ABANDON_TIMEOUT_MS = 1_000L
         const val SURFACE_RECHECK_MS = 500L
         const val MAX_TRACKED_CHANNELS = 16
