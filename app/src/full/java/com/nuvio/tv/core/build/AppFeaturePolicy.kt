@@ -3,6 +3,8 @@ package com.nuvio.tv.core.build
 import com.nuvio.tv.BuildConfig
 
 object AppFeaturePolicy {
+    /** Analytics `build_flavor` super property; must match phone/Desktop values ("store" | "full"). */
+    val buildFlavor: String = "full"
     val pluginsEnabled: Boolean = true
     val addonsEnabled: Boolean = true
     val inAppUpdatesEnabled: Boolean = true

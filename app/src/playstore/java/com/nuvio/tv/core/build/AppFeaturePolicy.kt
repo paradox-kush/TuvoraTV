@@ -3,6 +3,8 @@ package com.nuvio.tv.core.build
 import com.nuvio.tv.BuildConfig
 
 object AppFeaturePolicy {
+    /** Analytics `build_flavor` super property; must match phone/Desktop values ("store" | "full"). */
+    val buildFlavor: String = "store"
     val pluginsEnabled: Boolean = false
     // Store builds hide the Stremio-style addon system: no user-installable stream
     // sources, so the listing is a pure BYO-IPTV player (Play 4.2.2 / Apple 5.2.3).
