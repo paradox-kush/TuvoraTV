@@ -3669,6 +3669,8 @@
         <item quantity="one">Pin %1$d</item>
         <item quantity="other">Pin all %1$d</item>
     </plurals>
+    <string name="iptv_guide_unpin">Unpin</string>
+    <string name="iptv_panel_unpin_sub">Stop listing this channel first.</string>
     <string name="iptv_pin_suggestion_menu_hint">MENU on this line: Not now · Stop suggesting</string>
     <string name="iptv_pin_suggestion_menu_title">Pin suggestion</string>
     <string name="iptv_pin_suggestion_not_now">Not now</string>

@@ -52,7 +52,7 @@ class XtreamLiveStore @Inject constructor(
     private val factory: ProfileDataStoreFactory,
     private val profileManager: ProfileManager,
     /** On-device play counts behind "Pin all N" (never synced). Fed from every recorded live play. */
-    private val playCounts: PinSuggestionStore,
+    private val playCounts: com.nuvio.tv.core.contracts.LivePlayRecorder,
 ) {
     private val gson = Gson()
     private val key = stringPreferencesKey("xtream_live_channels")

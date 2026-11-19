@@ -1,4 +1,4 @@
-package com.nuvio.tv.data.local
+package com.nuvio.tv.core.iptv
 
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -6,8 +6,8 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import com.nuvio.tv.core.iptv.PinSuggestionPolicy
-import com.nuvio.tv.core.iptv.PlayCountLog
+import com.nuvio.tv.core.contracts.LivePlayRecorder
+import com.nuvio.tv.data.local.ProfileDataStoreFactory
 import com.nuvio.tv.core.profile.ProfileManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -27,7 +27,7 @@ import javax.inject.Singleton
 class PinSuggestionStore @Inject constructor(
     private val factory: ProfileDataStoreFactory,
     private val profileManager: ProfileManager,
-) {
+) : LivePlayRecorder {
     private val gson = Gson()
     private val playsKey = stringPreferencesKey("live_play_counts")
     private val enabledKey = booleanPreferencesKey("suggest_pins_enabled")
@@ -44,7 +44,9 @@ class PinSuggestionStore @Inject constructor(
     }
 
     /** A live play of [channelId] by [profileId] (the profile that was watching, not whoever is active now). */
-    suspend fun recordPlay(profileId: Int, channelId: String, nowMs: Long = System.currentTimeMillis()) {
+    override suspend fun recordPlay(profileId: Int, channelId: String) = recordPlay(profileId, channelId, System.currentTimeMillis())
+
+    suspend fun recordPlay(profileId: Int, channelId: String, nowMs: Long) {
         if (profileId <= 0 || channelId.isBlank()) return
         store(profileId).edit { prefs ->
             val next = PlayCountLog.record(parse(prefs[playsKey]), channelId, nowMs)
@@ -52,8 +54,7 @@ class PinSuggestionStore @Inject constructor(
         }
     }
 
-    suspend fun recordPlay(channelId: String, nowMs: Long = System.currentTimeMillis()) =
-        recordPlay(activeProfile(), channelId, nowMs)
+    override suspend fun recordPlay(channelId: String) = recordPlay(activeProfile(), channelId, System.currentTimeMillis())
 
     suspend fun snapshot(profileId: Int = activeProfile()): Snapshot {
         val prefs = store(profileId).data.first()

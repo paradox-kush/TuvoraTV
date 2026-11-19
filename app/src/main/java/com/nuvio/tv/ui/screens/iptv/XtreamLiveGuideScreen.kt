@@ -1578,6 +1578,7 @@ fun LiveGuide(
                         GuideChannelPanelPolicy.Row.ADD_TO_MULTIVIEW -> { returnFromMenu(); viewModel.addToMultiview(channel) }
                         GuideChannelPanelPolicy.Row.MOVE_UP -> { panelFocusRow = row; viewModel.moveChannel(channel, -1) }
                         GuideChannelPanelPolicy.Row.MOVE_DOWN -> { panelFocusRow = row; viewModel.moveChannel(channel, +1) }
+                        GuideChannelPanelPolicy.Row.UNPIN -> { returnFromMenu(); viewModel.unpinChannel(channel) }
                         GuideChannelPanelPolicy.Row.FIX_GUIDE -> { returnFromMenu(); onFixGuide(account.id) }
                         GuideChannelPanelPolicy.Row.GUIDE_SIZE -> { channelMenuAsk = null; panelFocusRow = null; layoutPickerOpen = true }
                         GuideChannelPanelPolicy.Row.HIDE -> {

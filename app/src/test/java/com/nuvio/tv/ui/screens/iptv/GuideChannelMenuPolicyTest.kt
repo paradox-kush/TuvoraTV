@@ -23,8 +23,28 @@ class GuideChannelMenuPolicyTest {
 
     @Test
     fun `a pinned channel moves among the pinned and can be hidden`() {
-        assertEquals("last pinned: no move down", listOf(Action.MOVE_UP, Action.HIDE),
+        assertEquals("last pinned: no move down", listOf(Action.MOVE_UP, Action.UNPIN, Action.HIDE),
             GuideChannelMenuPolicy.menu(null, isPinned = true, indexInList = 2, listSize = 3))
+    }
+
+    @Test
+    fun `Unpin is offered for a pinned channel and not for one that is not pinned`() {
+        assertEquals(true, Action.UNPIN in GuideChannelMenuPolicy.menu(GuideSpecial.ALL, isPinned = true, indexInList = 0, listSize = 4))
+        assertEquals(false, Action.UNPIN in GuideChannelMenuPolicy.menu(GuideSpecial.ALL, isPinned = false, indexInList = 0, listSize = 4))
+        assertEquals(false, Action.UNPIN in GuideChannelMenuPolicy.menu(null, isPinned = false, indexInList = 0, listSize = 4))
+        assertEquals("Favourites keep their own Remove", false, Action.UNPIN in GuideChannelMenuPolicy.menu(GuideSpecial.FAVORITES, isPinned = true, indexInList = 0, listSize = 4))
+    }
+
+    @Test
+    fun `the channel panel lists Unpin only when the menu offers it, and unpinning keeps the cursor on the row`() {
+        fun rows(pinned: Boolean) = GuideChannelPanelPolicy.rows(
+            GuideChannelPanelPolicy.Variant.CHANNEL, favorite = false,
+            menuActions = GuideChannelMenuPolicy.menu(null, isPinned = pinned, indexInList = 0, listSize = 2),
+            noGuide = false, guideSizeHere = false,
+        )
+        assertEquals(true, GuideChannelPanelPolicy.Row.UNPIN in rows(true))
+        assertEquals(false, GuideChannelPanelPolicy.Row.UNPIN in rows(false))
+        assertEquals(true, GuideChannelMenuPolicy.focusReturnsToRow(Action.UNPIN))
     }
 
     @Test

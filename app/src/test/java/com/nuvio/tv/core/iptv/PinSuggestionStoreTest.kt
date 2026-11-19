@@ -1,10 +1,9 @@
-package com.nuvio.tv.data.local
+package com.nuvio.tv.core.iptv
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
-import com.nuvio.tv.core.iptv.PinSuggestionPolicy
-import com.nuvio.tv.core.iptv.PlayCountLog
+import com.nuvio.tv.data.local.ProfileDataStoreFactory
 import com.nuvio.tv.core.profile.ProfileManager
 import io.mockk.every
 import io.mockk.mockk

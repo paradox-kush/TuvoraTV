@@ -128,7 +128,7 @@ class XtreamSettingsViewModel @Inject constructor(
     private val detailsRequests: com.nuvio.tv.ui.screens.iptv.PlaylistDetailsRequests,
     /** B10/F14/F10 (lane G): the playlist's guide census, channel-name clean-up and manual picks. */
     private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
-    private val pinSuggestions: com.nuvio.tv.data.local.PinSuggestionStore,
+    private val pinSuggestions: com.nuvio.tv.core.iptv.PinSuggestionStore,
 ) : ViewModel() {
 
     /** Step 2: a setup code just added a playlist; the screen opens its details page once it has arrived. */

@@ -161,22 +161,23 @@ class PinSuggestionPolicyTest {
 
     @Test
     fun `Pin all pins every suggested channel with its playlist and skips rows without an identity`() {
-        val pinned = mutableListOf<Triple<String, String?, Boolean>>()
+        val batches = mutableListOf<List<PinSuggestionActions.Target>>()
         val count = PinSuggestionActions.pinAll(
             listOf(
                 PinSuggestionActions.Target("e1", "pl"),
                 PinSuggestionActions.Target("", "pl"),
                 PinSuggestionActions.Target("e2", null),
             ),
-        ) { entity, playlist, on -> pinned += Triple(entity, playlist, on) }
+        ) { batches += it }
         assertEquals("rows without an entity id cannot be pinned", 2, count)
-        assertEquals(listOf(Triple("e1", "pl", true), Triple("e2", null, true)), pinned)
+        assertEquals("one batch, so one overlay write and one push", 1, batches.size)
+        assertEquals(listOf(PinSuggestionActions.Target("e1", "pl"), PinSuggestionActions.Target("e2", null)), batches.single())
     }
 
     @Test
     fun `Pin all with nothing pins nothing`() {
         var calls = 0
-        assertEquals(0, PinSuggestionActions.pinAll(emptyList()) { _, _, _ -> calls++ })
+        assertEquals(0, PinSuggestionActions.pinAll(emptyList()) { calls++ })
         assertEquals(0, calls)
     }
 }

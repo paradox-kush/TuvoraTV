@@ -271,7 +271,7 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val overlayRepository: com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository,
     private val accountStore: com.nuvio.tv.data.local.XtreamAccountStore,
     /** On-device play counts and the suggestion's switch/snooze: what "Pin all N" is built from. */
-    private val pinSuggestions: com.nuvio.tv.data.local.PinSuggestionStore,
+    private val pinSuggestions: com.nuvio.tv.core.iptv.PinSuggestionStore,
     /** "Add to Multiview" fills this; the Multiview screen takes it. One instance app-wide (Hilt singleton). */
     private val multiviewQueue: com.nuvio.tv.core.multiview.MultiviewQueue = com.nuvio.tv.core.multiview.MultiviewQueue(),
 ) : ViewModel() {
@@ -586,9 +586,16 @@ class XtreamLiveGuideViewModel @Inject constructor(
                 playlistId = XtreamItemRegistry.parseId(it.contentId)?.accountId ?: lastOverlayAccountId,
             )
         }
-        com.nuvio.tv.core.iptv.PinSuggestionActions.pinAll(targets) { entityId, playlistId, pinned ->
-            overlayRepository.setChannelPinned(entityId, playlistId, pinned)
+        com.nuvio.tv.core.iptv.PinSuggestionActions.pinAll(targets) { batch ->
+            overlayRepository.setChannelsPinned(batch.map { it.entityId to it.playlistId }, pinned = true)
         }
+    }
+
+    /** "Unpin" in the channel options: undoes a pin (from "Pin all" or set elsewhere). */
+    fun unpinChannel(channel: GuideChannel) {
+        if (channel.entityId.isBlank()) return
+        val playlistId = XtreamItemRegistry.parseId(channel.contentId)?.accountId ?: lastOverlayAccountId
+        overlayRepository.setChannelPinned(channel.entityId, playlistId, false)
     }
 
     /** "Not now" on the line: hide it for 14 days. */

@@ -28,6 +28,7 @@ internal object GuideChannelPanelPolicy {
         ADD_TO_MULTIVIEW(Section.MULTIVIEW),
         MOVE_UP(Section.ORDER, keepsPanelOpen = true),
         MOVE_DOWN(Section.ORDER, keepsPanelOpen = true),
+        UNPIN(Section.ORDER),
         FIX_GUIDE(Section.GUIDE),
         GUIDE_SIZE(Section.GUIDE),
         HIDE(Section.TIDY),
@@ -53,6 +54,7 @@ internal object GuideChannelPanelPolicy {
                 add(Row.ADD_TO_MULTIVIEW)
                 if (GuideChannelMenuPolicy.Action.MOVE_UP in menuActions) add(Row.MOVE_UP)
                 if (GuideChannelMenuPolicy.Action.MOVE_DOWN in menuActions) add(Row.MOVE_DOWN)
+                if (GuideChannelMenuPolicy.Action.UNPIN in menuActions) add(Row.UNPIN)
                 if (noGuide) add(Row.FIX_GUIDE)
                 if (guideSizeHere) add(Row.GUIDE_SIZE)
                 // In Favorites "Remove" is the favourite row itself; Hide is offered wherever the menu offers it.

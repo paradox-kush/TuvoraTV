@@ -36,7 +36,7 @@ class XtreamLiveStoreTest {
     private val dataStoreJob: Job = SupervisorJob()
     private val dataStoreScope = CoroutineScope(dataStoreJob + Dispatchers.IO)
     private lateinit var subject: XtreamLiveStore
-    private lateinit var playCounts: PinSuggestionStore
+    private lateinit var playCounts: com.nuvio.tv.core.iptv.PinSuggestionStore
 
     @Before
     fun setUp() {
@@ -54,7 +54,7 @@ class XtreamLiveStoreTest {
         }
         val profileManager = mockk<ProfileManager>()
         every { profileManager.activeProfileId } returns activeProfileId
-        playCounts = PinSuggestionStore(factory, profileManager)
+        playCounts = com.nuvio.tv.core.iptv.PinSuggestionStore(factory, profileManager)
         subject = XtreamLiveStore(factory, profileManager, playCounts)
     }
 

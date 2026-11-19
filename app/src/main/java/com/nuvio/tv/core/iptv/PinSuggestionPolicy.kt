@@ -98,20 +98,17 @@ object PlayCountLog {
 
 /** "Pin all": the one place the suggestion turns into pins, through the overlay's existing channel pin. */
 fun interface ChannelPinner {
-    fun setChannelPinned(entityId: String, playlistId: String?, pinned: Boolean)
+    /** Pins all [targets] as ONE edit (one local write, one sync push). */
+    fun pinChannels(targets: List<PinSuggestionActions.Target>)
 }
 
 object PinSuggestionActions {
     data class Target(val entityId: String, val playlistId: String?)
 
-    /** Pins every target that has a durable identity; returns how many were pinned. */
+    /** Pins every target that has a durable identity in ONE batch; returns how many were pinned. */
     fun pinAll(targets: List<Target>, pinner: ChannelPinner): Int {
-        var pinned = 0
-        for (t in targets) {
-            if (t.entityId.isBlank()) continue
-            pinner.setChannelPinned(t.entityId, t.playlistId, true)
-            pinned++
-        }
-        return pinned
+        val pinnable = targets.filter { it.entityId.isNotBlank() }
+        if (pinnable.isNotEmpty()) pinner.pinChannels(pinnable)
+        return pinnable.size
     }
 }
