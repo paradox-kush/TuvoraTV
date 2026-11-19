@@ -86,8 +86,7 @@ internal data class ProductionPlaybackVersionFacts(
         )
 
         private const val MEDIA3_ENGINE_VERSION = "androidx-media3-1.11.0+nuvio-fork"
-        private const val LIBMPV_ENGINE_VERSION =
-            "lib-mpv-release.aar@44747a57bef59979d32ab2b28d9b582cb05e91684d53f1bdf5f120183b380a8b"
+        private const val LIBMPV_ENGINE_VERSION = "io.github.abdallahmehiz:mpv-android-lib:0.2.1"
     }
 }
 

@@ -42,6 +42,14 @@ because `io.github.peerless2012:ass-media:0.4.0` declares `media3-effect:1.8.0` 
 
 ## libmpv wrapper and native engine
 
+> **Retired 2026-11-19 (upstream sync 16).** NuvioTV now uses the stock Maven artifact
+> `io.github.abdallahmehiz:mpv-android-lib:0.2.1` like upstream, and `app/libs/lib-mpv-release.aar` was removed. The owner chose the
+> stock engine over rebuilding the fork patches on 0.2.1. What the stock engine does NOT have: the
+> `presented-video-frame-count` property (so the mpv frame-stall freeze verdict is off and first-frame proof uses
+> `vo-configured` + `PLAYBACK_RESTART`), and the affirmative surface attach/detach and core-destroy results (the
+> adapter closes detach/destroy at most once instead). Those gaps are covered by the real-device (Onn / Fire TV)
+> live checks. The section below and `libmpv-android/` are kept as history for a possible future rebuild.
+
 - Upstream base artifact: `io.github.abdallahmehiz:mpv-android-lib:0.1.12`
 - Wrapper source: `https://github.com/abdallahmehiz/mpv-android`
 - Wrapper tag/revision: `v0.1.12` / `96c3507c5fc8eedbf5fff458101cad794392eca7`

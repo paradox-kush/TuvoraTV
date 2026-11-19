@@ -551,9 +551,10 @@ val forkedMedia3Hashes = mapOf(
     "lib-extractor-release.aar" to "a4f9513a30e6e54c1bda6a1e31bb5b9fcfab5285885baa971a7958193d35f30a",
 )
 
-val forkedMpvHashes = mapOf(
-    "lib-mpv-release.aar" to "44747a57bef59979d32ab2b28d9b582cb05e91684d53f1bdf5f120183b380a8b",
-)
+// Sync 16 (2026-11-19): libmpv is the stock Maven artifact (io.github.abdallahmehiz:mpv-android-lib, resolved and
+// verified by Gradle), so there is no vendored fork AAR to pin. The patched 0.1.12 fork (presented-frame counter,
+// affirmative surface/destroy results) was retired; see playback-provenance/README.md.
+val forkedMpvHashes = emptyMap<String, String>()
 
 val verifyPlaybackEngineArtifacts by tasks.registering {
     group = "verification"
