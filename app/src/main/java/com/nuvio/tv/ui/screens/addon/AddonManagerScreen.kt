@@ -51,7 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -159,8 +159,8 @@ fun AddonManagerScreen(
     onNavigateToCatalogOrder: () -> Unit = {},
     onNavigateToCollections: () -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    val addonSyncStatus by viewModel.addonSyncStatus.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val addonSyncStatus by viewModel.addonSyncStatus.collectAsStateWithLifecycle()
     val firstAddonToggleFocusRequester = remember { FocusRequester() }
     val catalogOrderFocusRequester = remember { FocusRequester() }
     val collectionsFocusRequester = remember { FocusRequester() }
@@ -170,7 +170,7 @@ fun AddonManagerScreen(
         viewModel.experienceMode.map<ExperienceMode?, AddonExperienceModeState> {
             AddonExperienceModeState.Loaded(it)
         }
-    }.collectAsState(initial = AddonExperienceModeState.Loading)
+    }.collectAsStateWithLifecycle(initialValue = AddonExperienceModeState.Loading)
     val experienceMode = (experienceModeState as? AddonExperienceModeState.Loaded)?.mode
     if (experienceModeState is AddonExperienceModeState.Loading) {
         Box(

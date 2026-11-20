@@ -69,7 +69,7 @@ import com.nuvio.tv.core.iptv.GuideLayoutPreset
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -102,7 +102,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -204,10 +206,17 @@ fun LiveGuide(
     LaunchedEffect(account) { viewModel.setAccount(account) }
 
     // Minute tick drives the now-progress bar and rolls the timeline window at half-hour marks.
-    val nowMs by produceState(System.currentTimeMillis()) {
-        while (true) {
-            delay(60_000)
-            value = System.currentTimeMillis()
+    // Lifecycle-bound: the clock runs only while the guide is RESUMED (never in the background,
+    // never stacked), and reads the wall clock immediately on every resume so it is not stale after
+    // returning from another app. No network request here — onMinuteTick only moves the window.
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val clockLifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(clockLifecycleOwner) {
+        clockLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                nowMs = System.currentTimeMillis()
+                delay(GuideClockPolicy.delayToNextTickMs(nowMs))
+            }
         }
     }
     LaunchedEffect(nowMs) { viewModel.onMinuteTick(nowMs) }

@@ -41,7 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -141,9 +141,9 @@ fun LibraryScreen(
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit = { _, _, _ -> },
     onCloudPlaybackResolved: (CloudLibraryPlaybackInfo) -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    val watchedMovieIds by viewModel.watchedMovieIds.collectAsState()
-    val watchedSeriesIds by viewModel.watchedSeriesIds.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val watchedMovieIds by viewModel.watchedMovieIds.collectAsStateWithLifecycle()
+    val watchedSeriesIds by viewModel.watchedSeriesIds.collectAsStateWithLifecycle()
     val activityContext = LocalContext.current
     val scope = rememberCoroutineScope()
     var showDeleteConfirm by remember(uiState.showManageDialog) { mutableStateOf(false) }
@@ -151,8 +151,8 @@ fun LibraryScreen(
     // Store builds compile Debrid out, so there is no Cloud view; Servers only appears once one is connected.
     val cloudViewAvailable = AppFeaturePolicy.debridEnabled
     var selectedViewMode by rememberSaveable { mutableStateOf(LibraryViewMode.Saved) }
-    val servers by serversViewModel.servers.collectAsState()
-    val serverShelves by serversViewModel.shelves.collectAsState()
+    val servers by serversViewModel.servers.collectAsStateWithLifecycle()
+    val serverShelves by serversViewModel.shelves.collectAsStateWithLifecycle()
     val hasServers = servers.enabledConnections.isNotEmpty()
     val viewModes = LibraryViewMode.entries.filter {
         (it != LibraryViewMode.Servers || hasServers) && (it != LibraryViewMode.Cloud || cloudViewAvailable)
@@ -734,7 +734,7 @@ fun LibraryScreen(
         }
     }
 
-    val posterOptionsState by viewModel.posterOptions.state.collectAsState()
+    val posterOptionsState by viewModel.posterOptions.state.collectAsStateWithLifecycle()
     com.nuvio.tv.ui.components.posteroptions.PosterOptionsHost(
         state = posterOptionsState,
         controller = viewModel.posterOptions,
