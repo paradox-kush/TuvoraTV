@@ -98,6 +98,7 @@ import com.nuvio.tv.ui.screens.iptv.PlaylistDetailsScreen
 import com.nuvio.tv.ui.screens.iptv.PlaylistDetailsState
 import com.nuvio.tv.ui.screens.account.InputFieldKeys
 import com.nuvio.tv.ui.theme.NuvioTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -119,7 +120,15 @@ fun XtreamSettingsContent(
     val epgRegions by viewModel.epgRegions.collectAsStateWithLifecycle()
     val selectedEpgRegions by viewModel.selectedEpgRegions.collectAsStateWithLifecycle()
     val suggestPins by viewModel.suggestPins.collectAsStateWithLifecycle()
-    var playCountsCleared by remember { mutableStateOf(false) }
+    // "Clear play counts" confirms on its own row (F-8 / UX-35), exactly like phone: Clear, then Clear again.
+    var clearConfirm by remember { mutableStateOf(ClearConfirmPolicy.State()) }
+    LaunchedEffect(clearConfirm) {
+        when (clearConfirm.phase) {
+            ClearConfirmPolicy.Phase.Armed -> { delay(ClearConfirmPolicy.CONFIRM_WINDOW_MS); clearConfirm = ClearConfirmPolicy.onTimeout(clearConfirm) }
+            ClearConfirmPolicy.Phase.Cleared -> { delay(ClearConfirmPolicy.CLEARED_SHOWN_MS); clearConfirm = ClearConfirmPolicy.onTimeout(clearConfirm) }
+            ClearConfirmPolicy.Phase.Idle -> Unit
+        }
+    }
     // Step 0.3: playlists currently served by a backup server ("Using backup server N").
     val activeServers by viewModel.activeServers.collectAsStateWithLifecycle()
     // Step 2: provider-managed playlists, by key.
@@ -304,11 +313,23 @@ fun XtreamSettingsContent(
             checked = suggestPins,
             onToggle = { viewModel.setSuggestPins(!suggestPins) },
         )
+        val clearArmed = clearConfirm.phase == ClearConfirmPolicy.Phase.Armed
         SettingsActionRow(
             title = stringResource(R.string.iptv_pin_settings_clear),
-            subtitle = stringResource(R.string.iptv_pin_settings_clear_sub),
-            value = stringResource(if (playCountsCleared) R.string.iptv_pin_settings_cleared else R.string.iptv_pin_settings_clear_value),
-            onClick = { viewModel.clearPlayCounts(); playCountsCleared = true },
+            subtitle = stringResource(if (clearArmed) R.string.iptv_pin_settings_clear_confirm_sub else R.string.iptv_pin_settings_clear_sub),
+            value = stringResource(
+                when (clearConfirm.phase) {
+                    ClearConfirmPolicy.Phase.Cleared -> R.string.iptv_pin_settings_cleared
+                    else -> R.string.iptv_pin_settings_clear_value
+                },
+            ),
+            valueColor = if (clearArmed) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary,
+            onClick = {
+                val result = ClearConfirmPolicy.onPress(clearConfirm, System.currentTimeMillis())
+                clearConfirm = result.state
+                if (result.clear) viewModel.clearPlayCounts()
+            },
+            onFocusLost = { clearConfirm = ClearConfirmPolicy.onFocusLost(clearConfirm) },
         )
         Text(
             text = stringResource(R.string.iptv_pin_settings_privacy),
