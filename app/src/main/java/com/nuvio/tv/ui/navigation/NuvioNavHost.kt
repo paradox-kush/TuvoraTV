@@ -1526,7 +1526,8 @@ private fun PlaybackNavHost(
                 },
                 onNavigateToIptvPairing = { navController.navigate(Screen.IptvPairing.route) },
                 onNavigateToIptvSetupCode = { navController.navigate(Screen.IptvSetupCode.route) },
-                onNavigateToWatchParty = { navController.navigate(Screen.WatchParty.createRoute()) }
+                onNavigateToWatchParty = { navController.navigate(Screen.WatchParty.createRoute()) },
+                onNavigateToCatalogOrder = { navController.navigate(Screen.CatalogOrder.route) }
             )
         }
 
@@ -1899,6 +1900,7 @@ private fun PlaybackNavHost(
 
         composable(Screen.LayoutSettings.route) {
             LayoutSettingsScreen(
+                onNavigateToCatalogOrder = { navController.navigate(Screen.CatalogOrder.route) },
                 onBackPress = { navController.popBackStack() }
             )
         }

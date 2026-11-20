@@ -36,6 +36,7 @@ import com.nuvio.tv.ui.screens.addon.QrCodeOverlay
 @Composable
 fun LayoutSettingsScreen(
     viewModel: LayoutSettingsViewModel = hiltViewModel(),
+    onNavigateToCatalogOrder: () -> Unit = {},
     onBackPress: () -> Unit
 ) {
     BackHandler { onBackPress() }
@@ -44,7 +45,7 @@ fun LayoutSettingsScreen(
         title = stringResource(R.string.layout_title),
         subtitle = stringResource(R.string.layout_subtitle)
     ) {
-        LayoutSettingsContent(viewModel = viewModel)
+        LayoutSettingsContent(viewModel = viewModel, onNavigateToCatalogOrder = onNavigateToCatalogOrder)
     }
 }
 
@@ -52,7 +53,8 @@ fun LayoutSettingsScreen(
 fun LayoutSettingsContent(
     viewModel: LayoutSettingsViewModel = hiltViewModel(),
     initialFocusRequester: FocusRequester? = null,
-    essentialMode: Boolean = false
+    essentialMode: Boolean = false,
+    onNavigateToCatalogOrder: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val streamBadgeUiState by viewModel.streamBadgeUiState.collectAsStateWithLifecycle()
@@ -120,6 +122,7 @@ fun LayoutSettingsContent(
                                     uiState = uiState,
                                     streamBadgeUiState = streamBadgeUiState,
                                     viewModel = viewModel,
+                                    onNavigateToCatalogOrder = onNavigateToCatalogOrder,
                                     customPosterQrFocusRequester = customPosterQrFocusRequester,
                                     streamBadgeQrFocusRequester = streamBadgeQrFocusRequester
                                 )
@@ -167,12 +170,13 @@ private fun LayoutSectionContent(
     uiState: LayoutSettingsUiState,
     streamBadgeUiState: StreamBadgeSettingsUiState,
     viewModel: LayoutSettingsViewModel,
+    onNavigateToCatalogOrder: () -> Unit,
     customPosterQrFocusRequester: FocusRequester,
     streamBadgeQrFocusRequester: FocusRequester
 ) {
     val onEvent: (LayoutSettingsEvent) -> Unit = viewModel::onEvent
     when (section) {
-        LayoutSection.HOME_LAYOUT -> LayoutHomeLayoutSection(uiState, onEvent)
+        LayoutSection.HOME_LAYOUT -> LayoutHomeLayoutSection(uiState, onEvent, onNavigateToCatalogOrder)
         LayoutSection.HOME_CONTENT -> LayoutHomeContentSection(uiState, onEvent)
         LayoutSection.SIDEBAR -> LayoutSidebarSection(uiState, onEvent)
         LayoutSection.CONTINUE_WATCHING -> LayoutContinueWatchingSection(uiState, onEvent)
