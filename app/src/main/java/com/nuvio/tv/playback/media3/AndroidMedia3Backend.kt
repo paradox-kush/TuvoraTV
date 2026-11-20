@@ -135,6 +135,10 @@ internal class AndroidMedia3BackendFactory(
     /** Declared trust semantics of [sharedHttpClient]; STRICT forbids trust-all/provider exceptions. */
     private val sharedClientTlsPolicy: TlsPolicy = TlsPolicy.STRICT,
     private val playerDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    /** Gives a multiview tile its own application thread (B271); the fullscreen player stays on [playerDispatcher]. */
+    private val playerThreads: PlayerThreadFactory = HandlerPlayerThreadFactory,
+    /** Process-wide: a new player waits (bounded) for releases already in flight, tiles' above all. */
+    private val releaseLedger: PlayerReleaseLedger = PlayerReleaseLedger(),
     private val releaseController: Media3ReleaseController = ForkMedia3ReleaseController,
     private val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
     private val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
@@ -143,8 +147,26 @@ internal class AndroidMedia3BackendFactory(
 ) : Media3BackendFactory {
     private val applicationContext = context.applicationContext
 
-    override suspend fun create(plan: Media3AdapterPlan): PlaybackResult<Media3Backend> =
-        withContext(playerDispatcher) {
+    override suspend fun create(plan: Media3AdapterPlan): PlaybackResult<Media3Backend> {
+        // A budget TV cannot hold the previous player's codecs (a leaving multiview's tiles release off the
+        // main thread) while this one opens. Bounded: a release that never ends must not freeze the next channel.
+        if (!releaseLedger.awaitIdle(RELEASE_SETTLE_TIMEOUT_MS)) {
+            Log.w("Media3Backend", "player release still in flight after ${RELEASE_SETTLE_TIMEOUT_MS}ms; opening anyway")
+        }
+        val execution = PlayerThreading.select(tile, playerDispatcher, playerThreads)
+        val result = try {
+            createOn(plan, execution)
+        } catch (t: Throwable) {
+            execution.finish()
+            throw t
+        }
+        // No backend took ownership of the thread: end it here.
+        if (result !is PlaybackResult.Success) execution.finish()
+        return result
+    }
+
+    private suspend fun createOn(plan: Media3AdapterPlan, execution: PlayerExecution): PlaybackResult<Media3Backend> =
+        withContext(execution.dispatcher) {
             if (plan.request.drm?.schemeUuid == C.UUID_NIL) {
                 return@withContext failure(
                     FailureCode.DRM_UNSUPPORTED,
@@ -173,7 +195,7 @@ internal class AndroidMedia3BackendFactory(
                 return@withContext it
             }
 
-            runCatching { build(plan, applicationDns) }.fold(
+            runCatching { build(plan, applicationDns, execution) }.fold(
                 onSuccess = { PlaybackResult.Success(it) },
                 onFailure = {
                     failure(
@@ -186,7 +208,7 @@ internal class AndroidMedia3BackendFactory(
             )
         }
 
-    private fun build(plan: Media3AdapterPlan, applicationDns: Dns?): Media3Backend {
+    private fun build(plan: Media3AdapterPlan, applicationDns: Dns?, execution: PlayerExecution): Media3Backend {
         val clientBuilder = sharedHttpClient.newBuilder()
             .followRedirects(plan.request.followRedirects)
             .followSslRedirects(plan.request.followRedirects)
@@ -306,6 +328,7 @@ internal class AndroidMedia3BackendFactory(
             .setMediaCodecSelector(codecSelector)
             .setEnableDecoderFallback(plan.decoderFallback)
         val player = ExoPlayer.Builder(applicationContext, renderers)
+            .apply { execution.thread?.let { setLooper(it.looper) } }
             .setMediaSourceFactory(sourceFactory)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
@@ -329,10 +352,12 @@ internal class AndroidMedia3BackendFactory(
             mediaItem,
             callRegistry,
             byteProgress,
-            playerDispatcher,
+            execution.dispatcher,
             releaseController,
             plan,
             externalSubtitleResolver,
+            onTerminated = execution::finish,
+            releaseLedger = releaseLedger,
         )
     }
 
@@ -380,6 +405,8 @@ internal class AndroidMedia3BackendFactory(
 
     private companion object {
         const val GRACEFUL_RELEASE_TIMEOUT_MS = 1_000L
+        /** Matches the session's 5 s release barrier: waiting longer than the barrier itself proves nothing. */
+        const val RELEASE_SETTLE_TIMEOUT_MS = 5_000L
     }
 }
 
@@ -571,7 +598,7 @@ private class ContractRenderersFactory(
 }
 
 @UnstableApi
-private class AndroidMedia3Backend(
+internal class AndroidMedia3Backend(
     private val player: ExoPlayer,
     private var mediaItem: MediaItem,
     private val calls: TrackingCallRegistry,
@@ -580,19 +607,24 @@ private class AndroidMedia3Backend(
     private val releaseController: Media3ReleaseController,
     private var plan: Media3AdapterPlan,
     private val externalSubtitleResolver: ExternalSubtitleResolver,
+    /** Called once, when the backend is terminal (released or hard-aborted): ends a tile's own player thread. */
+    private val onTerminated: () -> Unit = {},
+    private val releaseLedger: PlayerReleaseLedger = PlayerReleaseLedger(),
 ) : Media3Backend {
     private val _events = MutableSharedFlow<Media3BackendEvent>(extraBufferCapacity = 64)
     override val events: Flow<Media3BackendEvent> = _events.asSharedFlow()
     private var surface: Media3SurfaceLease? = null
     private val firstAudioReported = AtomicBoolean(false)
     private val firstVideoReported = AtomicBoolean(false)
-    private var terminalSuppressed = false
+    // Read from the player's own thread (listeners) and written from callers' threads (release): a tile's
+    // player no longer shares the main thread with its callers.
+    @Volatile private var terminalSuppressed = false
     // Behind-window recoveries on the local buffer since it last played (Media3BehindWindowPolicy).
     private val behindWindow = Media3BehindWindowTracker()
-    private var released = false
-    private var playerReleased = false
+    @Volatile private var released = false
+    @Volatile private var playerReleased = false
     private val factScope = CoroutineScope(SupervisorJob() + dispatcher)
-    private var timelineJob: Job? = null
+    @Volatile private var timelineJob: Job? = null
     private var lastDebugTimelineMs = 0L
     private var frozenForTransition = false
     private var trackRevision = 0L
@@ -1063,35 +1095,50 @@ private class AndroidMedia3Backend(
 
     override suspend fun release(): PlaybackResult<Unit> {
         if (released) return PlaybackResult.Success(Unit)
-        terminalSuppressed = true
-        timelineJob?.cancel()
-        timelineJob = null
-        if (!releasePlayer()) return backendFailure(FailurePhase.RELEASE)
-        if (!calls.awaitIdle(NETWORK_RELEASE_TIMEOUT_MS)) {
-            return backendFailure(FailurePhase.RELEASE, FailureCode.NETWORK_TIMEOUT)
+        // In the ledger until this call ends, so a new player waits for these decoders (see PlayerReleaseLedger).
+        val inFlight = releaseLedger.begin()
+        try {
+            terminalSuppressed = true
+            timelineJob?.cancel()
+            timelineJob = null
+            if (!releasePlayer()) return backendFailure(FailurePhase.RELEASE)
+            if (!calls.awaitIdle(NETWORK_RELEASE_TIMEOUT_MS)) {
+                return backendFailure(FailurePhase.RELEASE, FailureCode.NETWORK_TIMEOUT)
+            }
+            markTerminal()
+            return PlaybackResult.Success(Unit)
+        } finally {
+            inFlight.end()
         }
+    }
+
+    private fun markTerminal() {
         released = true
         factScope.cancel()
-        return PlaybackResult.Success(Unit)
+        onTerminated()
     }
 
     override suspend fun hardAbort(): PlaybackResult<Unit> {
         if (released) return PlaybackResult.Success(Unit)
-        terminalSuppressed = true
-        timelineJob?.cancel()
-        timelineJob = null
-        calls.cancelAll()
-        val releasedPlayer = releasePlayer(awaitExistingRelease = true)
-        val networkReleased = calls.awaitIdle(NETWORK_HARD_ABORT_TIMEOUT_MS)
-        if (!releasedPlayer || !networkReleased) {
-            return backendFailure(
-                FailurePhase.RELEASE,
-                if (!networkReleased) FailureCode.NETWORK_TIMEOUT else FailureCode.UNKNOWN,
-            )
+        val inFlight = releaseLedger.begin()
+        try {
+            terminalSuppressed = true
+            timelineJob?.cancel()
+            timelineJob = null
+            calls.cancelAll()
+            val releasedPlayer = releasePlayer(awaitExistingRelease = true)
+            val networkReleased = calls.awaitIdle(NETWORK_HARD_ABORT_TIMEOUT_MS)
+            if (!releasedPlayer || !networkReleased) {
+                return backendFailure(
+                    FailurePhase.RELEASE,
+                    if (!networkReleased) FailureCode.NETWORK_TIMEOUT else FailureCode.UNKNOWN,
+                )
+            }
+            markTerminal()
+            return PlaybackResult.Success(Unit)
+        } finally {
+            inFlight.end()
         }
-        released = true
-        factScope.cancel()
-        return PlaybackResult.Success(Unit)
     }
 
     private fun startTimelineFacts() {
@@ -1448,7 +1495,7 @@ private class TrackingCallFactory(
     override fun newCall(request: Request): Call = registry.track(delegate.newCall(request))
 }
 
-private class TrackingCallRegistry {
+internal class TrackingCallRegistry {
     private val lock = Any()
     private val calls = mutableSetOf<Call>()
     private var idleSignal = kotlinx.coroutines.CompletableDeferred<Unit>().apply { complete(Unit) }

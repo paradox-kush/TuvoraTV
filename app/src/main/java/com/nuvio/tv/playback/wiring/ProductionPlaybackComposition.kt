@@ -150,6 +150,12 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
     private val abandonedPlayerBudget = com.nuvio.tv.playback.core.AbandonedPlayerBudget()
 
     /**
+     * One per process, like [abandonedPlayerBudget]: releases in flight across every Media3 player, so a
+     * new player waits for a leaving multiview's tile decoders (B271: tiles release off the main thread).
+     */
+    private val playerReleaseLedger = com.nuvio.tv.playback.media3.PlayerReleaseLedger()
+
+    /**
      * F13: the user's live buffer length from the legacy (user-facing) settings, read per session so
      * a change applies to the next channel. The clean preference document only imports legacy
      * settings once, so it cannot carry a setting the user keeps adjusting. Any failure means Auto.
@@ -247,6 +253,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
                     playerMemoryBudget = playerMemoryBudget,
                     applicationDnsResolver = applicationDnsResolver,
                     sharedClientTlsPolicy = TlsPolicy.STRICT,
+                    releaseLedger = playerReleaseLedger,
                     externalSubtitleResolver = host.externalSubtitleResolver,
                     tile = host.tile,
                 ),

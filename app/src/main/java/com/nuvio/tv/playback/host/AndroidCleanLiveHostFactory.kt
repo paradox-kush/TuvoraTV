@@ -108,7 +108,8 @@ internal class AndroidCleanLiveHostFactory @Inject constructor(
                 // A tile can only be Media3: no mpv surface is ever offered to it.
                 constructibleModes = tilePlan.surfaceModes ?: PRODUCTION_CONSTRUCTIBLE_SURFACE_MODES,
                 secureMedia3SurfaceViewSupported = true,
-                media3PlayerViewEnabled = BuildConfig.IS_DEBUG_BUILD && BuildConfig.LIVE_PLAYER_VIEW_PROTOTYPE,
+                // A tile's ExoPlayer lives on its own application thread (B271); PlayerView would call it from Main.
+                media3PlayerViewEnabled = input.tile == null && BuildConfig.IS_DEBUG_BUILD && BuildConfig.LIVE_PLAYER_VIEW_PROTOTYPE,
             )
         }
         val host = CleanLivePlaybackHost.create(
