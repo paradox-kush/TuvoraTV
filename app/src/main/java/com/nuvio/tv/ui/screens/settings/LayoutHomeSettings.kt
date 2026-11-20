@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Reorder
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,7 +54,8 @@ import com.nuvio.tv.ui.components.ModernLayoutPreview
 @Composable
 internal fun LayoutHomeLayoutSection(
     uiState: LayoutSettingsUiState,
-    onEvent: (LayoutSettingsEvent) -> Unit
+    onEvent: (LayoutSettingsEvent) -> Unit,
+    onNavigateToCatalogOrder: () -> Unit = {}
 ) {
     val firstHomeLayoutFocusRequester = remember { FocusRequester() }
     Row(
@@ -138,6 +140,15 @@ internal fun LayoutHomeLayoutSection(
             }
         }
     }
+
+    // Reachable on every flavor: the same screen is also entered from the Add-ons manager, which the
+    // store build hides.
+    SettingsActionRow(
+        title = stringResource(R.string.home_order_title),
+        subtitle = stringResource(R.string.home_order_subtitle),
+        onClick = onNavigateToCatalogOrder,
+        leadingIcon = Icons.Default.Reorder
+    )
 }
 
 @Composable

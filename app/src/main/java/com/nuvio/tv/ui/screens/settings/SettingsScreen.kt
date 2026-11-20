@@ -185,6 +185,7 @@ fun SettingsScreen(
     onNavigateToIptvPairing: () -> Unit = {},
     onNavigateToIptvSetupCode: () -> Unit = {},
     onNavigateToWatchParty: () -> Unit = {},
+    onNavigateToCatalogOrder: () -> Unit = {},
     profileViewModel: ProfileSettingsViewModel = hiltViewModel(),
     experienceModeViewModel: ExperienceModeSettingsViewModel = hiltViewModel(),
     partyViewModel: PartyViewModel = hiltViewModel()
@@ -676,7 +677,8 @@ fun SettingsScreen(
                                 onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
                                 onNavigateToIptvPairing = onNavigateToIptvPairing,
                                 onNavigateToIptvSetupCode = onNavigateToIptvSetupCode,
-                                onNavigateToWatchParty = onNavigateToWatchParty
+                                onNavigateToWatchParty = onNavigateToWatchParty,
+                        onNavigateToCatalogOrder = onNavigateToCatalogOrder
                             )
                         }
                     }
@@ -839,7 +841,8 @@ fun SettingsScreen(
                         onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
                         onNavigateToIptvPairing = onNavigateToIptvPairing,
                         onNavigateToIptvSetupCode = onNavigateToIptvSetupCode,
-                        onNavigateToWatchParty = onNavigateToWatchParty
+                        onNavigateToWatchParty = onNavigateToWatchParty,
+                        onNavigateToCatalogOrder = onNavigateToCatalogOrder
                     )
                 }
             }
@@ -872,7 +875,8 @@ private fun SettingsDetailPane(
     onNavigateToLicensesAttributions: () -> Unit,
     onNavigateToIptvPairing: () -> Unit,
     onNavigateToIptvSetupCode: () -> Unit,
-    onNavigateToWatchParty: () -> Unit
+    onNavigateToWatchParty: () -> Unit,
+    onNavigateToCatalogOrder: () -> Unit
 ) {
     when (selectedCategory) {
         SettingsCategory.EXPERIENCE -> EssentialAdvancedSettingsContent(
@@ -912,7 +916,8 @@ private fun SettingsDetailPane(
             } else {
                 null
             },
-            essentialMode = isEssentialMode
+            essentialMode = isEssentialMode,
+            onNavigateToCatalogOrder = onNavigateToCatalogOrder
         )
         SettingsCategory.PLAYBACK -> if (isEssentialMode) {
             EssentialPlaybackSettingsContent(

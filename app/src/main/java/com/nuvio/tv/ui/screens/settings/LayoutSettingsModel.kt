@@ -44,6 +44,13 @@ internal fun visibleLayoutSections(
         }
     }
 
+/**
+ * Where the "Reorder Home" entry lives. It is deliberately a function of the section alone: it must
+ * not depend on add-ons (the store flavor hides them) or on the experience mode, because every Home
+ * section is the person's to arrange. HOME_LAYOUT is the one section Essential mode keeps.
+ */
+internal fun LayoutSection.offersReorderHome(): Boolean = this == LayoutSection.HOME_LAYOUT
+
 internal object LayoutSettingsTestTags {
     fun section(section: LayoutSection): String = "layout_section_${section.name.lowercase()}"
 }
