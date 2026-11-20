@@ -34,7 +34,7 @@ class XtreamAccountStore @Inject constructor(
     private val deviceSources: com.nuvio.tv.core.sources.DeviceSources? = null,
 ) {
     private val gson = Gson()
-    private val accountsKey = stringPreferencesKey("xtream_accounts")
+    private val accountsKey = stringPreferencesKey(ACCOUNTS_KEY_NAME)
 
     private fun store(pid: Int = profileManager.activeProfileId.value) = factory.get(pid, FEATURE)
 
@@ -59,14 +59,19 @@ class XtreamAccountStore @Inject constructor(
             .first()
     }
 
-    /** Insert or replace by id (id = baseUrl|username). */
-    suspend fun upsert(account: XtreamAccount) {
+    /**
+     * Insert or replace by id (id = baseUrl|username). A NEW playlist is the first-run funnel's `source_added`;
+     * [via] says how it arrived (`manual`, or `setup_code` for a redeemed code).
+     */
+    suspend fun upsert(account: XtreamAccount, via: String = com.nuvio.tv.core.telemetry.FirstRunVocab.VIA_MANUAL) {
+        var added = false
         store().edit { prefs ->
             val current = parse(prefs[accountsKey]).toMutableList()
             val i = current.indexOfFirst { it.id == account.id }
-            if (i >= 0) current[i] = account else current.add(account)
+            if (i >= 0) current[i] = account else { current.add(account); added = true }
             prefs[accountsKey] = mergeXtreamAccountsJson(gson, prefs[accountsKey], current)
         }
+        if (added) com.nuvio.tv.core.telemetry.FirstRun.sourceAdded(com.nuvio.tv.core.telemetry.FirstRunVocab.kindOfPlaylist(account.sourceType), via)
         recordPending { it.recordAdd(account) }   // B24 v2: durable add intent (add-playlist path)
     }
 
@@ -141,7 +146,13 @@ class XtreamAccountStore @Inject constructor(
 
     /** Replace all accounts for the active profile (used when applying a remote pull). */
     suspend fun replaceAll(accounts: List<XtreamAccount>) {
-        store().edit { prefs -> prefs[accountsKey] = gson.toJson(accounts) }
+        var arrived: XtreamAccount? = null
+        store().edit { prefs ->
+            // A pull that brings the first playlist onto an empty device (a new device on an old account) is `sync`.
+            if (accounts.isNotEmpty() && parse(prefs[accountsKey]).isEmpty()) arrived = accounts.first()
+            prefs[accountsKey] = gson.toJson(accounts)
+        }
+        arrived?.let { com.nuvio.tv.core.telemetry.FirstRun.sourceAdded(com.nuvio.tv.core.telemetry.FirstRunVocab.kindOfPlaylist(it.sourceType), com.nuvio.tv.core.telemetry.FirstRunVocab.VIA_SYNC) }
     }
 
     /**
@@ -201,7 +212,8 @@ class XtreamAccountStore @Inject constructor(
     }
 
     companion object {
-        private const val FEATURE = "xtream_accounts"
+        internal const val FEATURE = "xtream_accounts"
+        internal const val ACCOUNTS_KEY_NAME = "xtream_accounts"
         private const val SYNC_STATE_FEATURE = "xtream_sync_state"
     }
 }

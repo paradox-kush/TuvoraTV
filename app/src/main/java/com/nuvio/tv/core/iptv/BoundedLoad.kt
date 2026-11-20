@@ -240,6 +240,11 @@ object BoundedLoad {
     }
 
     private fun reportOutcome(surface: LoadSurface, outcome: LoadOutcome<*>, durationMs: Long, extra: Map<String, Any>) {
+        // First-run funnel: BEFORE the per-surface report filter, so a quiet surface's success still counts. Settings
+        // loads (a setup-code preview, phone pairing) are not IPTV content and must not use up the one-time step.
+        if (outcome is LoadOutcome.Loaded && surface != LoadSurface.SETTINGS) {
+            com.nuvio.tv.core.telemetry.FirstRun.contentLoaded(surface.key)
+        }
         val failed = outcome is LoadOutcome.Failed
         if (!surface.reportsEveryOutcome) {
             if (!failed) return

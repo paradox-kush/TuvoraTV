@@ -30,7 +30,8 @@ class WatchedItemsPreferences @Inject constructor(
     private val profileManager: ProfileManager
 ) {
     companion object {
-        private const val FEATURE = "watched_items_preferences"
+        internal const val FEATURE = "watched_items_preferences"
+        internal const val ITEMS_KEY_NAME = "watched_items"
         private const val TAG = "WatchedItemsPrefs"
     }
 
@@ -38,7 +39,7 @@ class WatchedItemsPreferences @Inject constructor(
         factory.get(profileId, FEATURE)
 
     private val gson = Gson()
-    private val watchedItemsKey = stringSetPreferencesKey("watched_items")
+    private val watchedItemsKey = stringSetPreferencesKey(ITEMS_KEY_NAME)
     private val lastSuccessfulPushMsKey = longPreferencesKey("last_successful_watched_push_ms")
     private val deltaCursorKey = longPreferencesKey("watched_items_delta_cursor")
     private val deltaInitializedKey = booleanPreferencesKey("watched_items_delta_initialized")

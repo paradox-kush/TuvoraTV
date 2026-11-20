@@ -32,6 +32,18 @@ class TelemetryService @Inject constructor(
 
     override val supportCode: String by lazy { SupportCodeStore.get(context) }
 
+    // First-run funnel. A support code already on disk is an existing-install signal, so it is read here, at
+    // construction (Hilt builds this in super.onCreate), before anything can generate one.
+    private val firstRun = FirstRunFunnelService(
+        store = PrefsFirstRunStateStore(context),
+        nowMs = System::currentTimeMillis,
+        consentEnabled = { TelemetryHolder.consentEnabled },
+        sink = { event, props -> PostHog.capture(event = event, properties = props) },
+        supportCodeExistedAtStart = SupportCodeGenerator.isValid(
+            runCatching { context.getSharedPreferences("telemetry", Context.MODE_PRIVATE).getString("support_code", null) }.getOrNull(),
+        ),
+    ).also { FirstRun.service = it }
+
     @Volatile private var previousRun: List<DiagEntry> = emptyList()
     @Volatile private var appVersion: String = ""
     private var worker: HandlerThread? = null
@@ -66,6 +78,16 @@ class TelemetryService @Inject constructor(
     }
 
     override fun record(entry: DiagEntry) = recorder.record(entry)
+
+    /**
+     * First-run funnel start, once per process, early in Application.onCreate before anything creates user state.
+     * [otherExistingSignals] (playlists, add-ons, watch history in any profile) is asked only on the first launch
+     * of a build with the funnel. Events wait for [firstRunSdkReady].
+     */
+    fun startFirstRunFunnel(otherExistingSignals: () -> Boolean) = firstRun.start(otherExistingSignals)
+
+    /** PostHog is set up: funnel events held until now go out (consent is checked as each is sent). */
+    fun firstRunSdkReady() = firstRun.markSdkReady()
 
     private fun scheduleWrite(h: Handler) {
         h.postDelayed({

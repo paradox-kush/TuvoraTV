@@ -190,7 +190,7 @@ class DeviceSetupPlaylists @Inject constructor(
         for (p in DeviceClaimPolicy.missing(playlists, existing.mapTo(mutableSetOf()) { it.id })) {
             val account = p.toAccountOrNull() ?: continue
             if (existing.any { it.id == account.id || PlaylistKey.sameAddress(it, account) }) continue
-            accountStore.upsert(account)
+            accountStore.upsert(account, via = com.nuvio.tv.core.telemetry.FirstRunVocab.VIA_SETUP_CODE)
             existing += account
             added++
         }

@@ -24,7 +24,15 @@ class AddonPreferences @Inject constructor(
     private val profileManager: ProfileManager
 ) {
     companion object {
-        private const val FEATURE = "addon_preferences"
+        internal const val FEATURE = "addon_preferences"
+        internal const val ORDERED_URLS_KEY_NAME = "installed_addon_urls_ordered"
+        internal const val LEGACY_URLS_KEY_NAME = "installed_addon_urls"
+
+        /** The two add-ons every profile starts with; not "user installed" for the first-run funnel. */
+        internal val DEFAULT_ADDON_URLS = setOf(
+            "https://v3-cinemeta.strem.io",
+            "https://opensubtitles-v3.strem.io"
+        )
     }
 
     private fun effectiveProfileId(): Int {
@@ -44,8 +52,8 @@ class AddonPreferences @Inject constructor(
     }.distinctUntilChanged()
 
     private val gson = Gson()
-    private val orderedUrlsKey = stringPreferencesKey("installed_addon_urls_ordered")
-    private val legacyUrlsKey = stringSetPreferencesKey("installed_addon_urls")
+    private val orderedUrlsKey = stringPreferencesKey(ORDERED_URLS_KEY_NAME)
+    private val legacyUrlsKey = stringSetPreferencesKey(LEGACY_URLS_KEY_NAME)
     private val userSetNamesKey = stringPreferencesKey("addon_user_set_names")
     private val addonEnabledStatesKey = stringPreferencesKey("installed_addon_enabled_states")
     private val syncedUrlsKey = stringPreferencesKey("synced_addon_urls")
@@ -282,8 +290,5 @@ class AddonPreferences @Inject constructor(
         }
     }
 
-    private fun getDefaultAddons(): Set<String> = setOf(
-        "https://v3-cinemeta.strem.io",
-        "https://opensubtitles-v3.strem.io"
-    )
+    private fun getDefaultAddons(): Set<String> = DEFAULT_ADDON_URLS
 }

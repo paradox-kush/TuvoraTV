@@ -81,6 +81,11 @@ class ProviderSetupRepository @Inject constructor(
                 holder.clear()
                 val kind = RedeemResultPolicy.classify(r.result)
                 val inActive = profileManager.activeProfileId.value == profileIndex
+                // First-run funnel: BEFORE the pull below, which would otherwise report the same playlist as `sync`.
+                // The result does not say what kind of playlist it was, so the kind stays `unknown` (as on Mobile).
+                if (r.result.added > 0) com.nuvio.tv.core.telemetry.FirstRun.sourceAdded(
+                    com.nuvio.tv.core.telemetry.FirstRunVocab.KIND_UNKNOWN, com.nuvio.tv.core.telemetry.FirstRunVocab.VIA_SETUP_CODE,
+                )
                 // Same as Mobile: even "already in your account" pulls once, so a playlist this device has not
                 // fetched yet shows up.
                 if (inActive && kind in PULLS) runCatching { syncService.pullAndApply() }

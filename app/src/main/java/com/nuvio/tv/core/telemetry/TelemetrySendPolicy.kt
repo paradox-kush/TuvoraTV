@@ -31,6 +31,9 @@ object TelemetrySendPolicy {
         "app_uncaught_exception_ios",
     )
 
+    /** One-time funnel events: sent on purpose (a handful per install), never an error, never counted, never a trail. */
+    val explicitSendEvents: Set<String> = setOf(FirstRunFunnel.EVENT)
+
     private const val STUCK_PICTURE = "LIVE_PICTURE_STUCK"
     private const val DECODE_HEALTH = "DECODE_HEALTH_ISSUE"
 
@@ -108,6 +111,8 @@ object TelemetrySendPolicy {
                     properties["\$exception_values"].toString().contains("exited abnormally: crash"))
                     Decision(Action.COUNT, area = DiagArea.LIFECYCLE, code = "exit_crash")
                 else Decision(Action.SEND, withTrail = true, area = DiagArea.LIFECYCLE, code = "exception")
+
+            in explicitSendEvents -> Decision(Action.SEND, area = DiagArea.LIFECYCLE, code = event)
 
             in alwaysSendWithTrail -> Decision(Action.SEND, withTrail = true, area = DiagArea.LIFECYCLE, code = event)
 

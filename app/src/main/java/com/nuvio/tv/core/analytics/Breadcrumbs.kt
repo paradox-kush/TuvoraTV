@@ -55,6 +55,8 @@ object Breadcrumbs {
         // The persisted note always updates: it must reflect reality at the moment of death
         // even when the analytics event below is deduped or rate-capped.
         crashWriter?.onPlaybackStarted(kind, engine, surface)
+        // First-run funnel: before the dedupe / rate cap below, so the one-time step never loses to them.
+        com.nuvio.tv.core.telemetry.FirstRun.playback(kind, engine)
 
         // Reconnect ladders and channel zapping re-fire starts; identical back-to-back starts
         // inside the window are one viewing decision, not many.

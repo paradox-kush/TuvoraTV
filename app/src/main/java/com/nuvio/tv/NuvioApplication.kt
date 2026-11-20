@@ -83,6 +83,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var m3uIdRekeyer: com.nuvio.tv.core.iptv.M3uIdRekeyer
     @Inject lateinit var sentrySettingsDataStore: SentrySettingsDataStore
     @Inject lateinit var telemetry: com.nuvio.tv.core.telemetry.TelemetryService
+    @Inject lateinit var profileDataStoreFactory: com.nuvio.tv.data.local.ProfileDataStoreFactory
     @Inject lateinit var imagePerformancePreferences: ImagePerformancePreferences
     @Inject lateinit var simklAnimeIdPreferenceHolder: SimklAnimeIdPreferenceHolder
     @Inject lateinit var xtreamIptvSearchProvider: com.nuvio.tv.core.iptv.XtreamIptvSearchProvider
@@ -154,6 +155,11 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 ) == host
             }
         }
+        // First-run funnel: decide new vs existing install ONCE, here, before anything creates user state. Events wait
+        // for the SDK (firstRunSdkReady below); consent is checked when each is sent.
+        telemetry.startFirstRunFunnel(
+            com.nuvio.tv.core.telemetry.FirstRunExistingInstallProbe.forApp(this, profileDataStoreFactory)::hasUserState,
+        )
         // B205: a setup code redeemed with no account is claimed when a real account signs in (and at app start).
         deviceClaimCoordinator.start(analyticsConsentScope)
         // Recordings: alarm receivers and the foreground service are not injected, so they read the port here.
@@ -286,6 +292,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         } else {
             PostHog.optOut()
         }
+        // Opt state is final for this start: funnel events held since startFirstRunFunnel can go out now.
+        telemetry.firstRunSdkReady()
         analyticsConsentScope.launch {
             sentrySettingsDataStore.enabled.distinctUntilChanged().collect { enabled ->
                 telemetry.applyConsent(enabled)

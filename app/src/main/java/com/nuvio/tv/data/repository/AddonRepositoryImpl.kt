@@ -468,6 +468,7 @@ class AddonRepositoryImpl(
     override suspend fun addAddon(url: String) {
         val cleanUrl = canonicalizeUrl(url)
         if (!preferences.addAddon(cleanUrl)) return
+        com.nuvio.tv.core.telemetry.FirstRun.sourceAdded(com.nuvio.tv.core.telemetry.FirstRunVocab.KIND_ADDON, com.nuvio.tv.core.telemetry.FirstRunVocab.VIA_MANUAL)
         triggerRemoteSync()
     }
 
@@ -553,6 +554,12 @@ class AddonRepositoryImpl(
         val currentCanonical = initialLocalUrls.map { canonicalizeUrl(it) }
         if (finalList != currentCanonical) {
             preferences.setAddonOrder(finalList)
+            // First-run funnel: a pull that brings a user add-on this device did not have (the factory two do not count).
+            if (com.nuvio.tv.core.telemetry.FirstRunInstallSignals.userAddonUrls(
+                    finalList.filter { f -> currentCanonical.none { normalizeUrl(it) == normalizeUrl(f) } },
+                    com.nuvio.tv.data.local.AddonPreferences.DEFAULT_ADDON_URLS,
+                ).isNotEmpty()
+            ) com.nuvio.tv.core.telemetry.FirstRun.sourceAdded(com.nuvio.tv.core.telemetry.FirstRunVocab.KIND_ADDON, com.nuvio.tv.core.telemetry.FirstRunVocab.VIA_SYNC)
         }
 
         when {

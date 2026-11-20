@@ -280,6 +280,10 @@ class ServerRepository(
         }
         val connection = draft.copy(libraries = mergeLibraries(existing?.libraries.orEmpty(), libraries))
         store(connection, signIn.token, replacedCredential = existing?.credentialRef, local = managedBridgeId == null)
+        if (existing == null) com.nuvio.tv.core.telemetry.FirstRun.sourceAdded(
+            com.nuvio.tv.core.telemetry.FirstRunVocab.KIND_MEDIA_SERVER,
+            if (managedBridgeId == null) com.nuvio.tv.core.telemetry.FirstRunVocab.VIA_MANUAL else com.nuvio.tv.core.telemetry.FirstRunVocab.VIA_UNKNOWN,
+        )
         return connection
     }
 
@@ -409,6 +413,10 @@ class ServerRepository(
         (current.map { it.id } - usedIds - deviceOnly.map { it.id }.toSet()).forEach { setFailure(it, null) }
         pendingPush = false
         syncedKeys = keys
+        // First-run funnel: a pull that brings the first media server onto a device with none is `sync`.
+        if (current.isEmpty() && connections.isNotEmpty()) com.nuvio.tv.core.telemetry.FirstRun.sourceAdded(
+            com.nuvio.tv.core.telemetry.FirstRunVocab.KIND_MEDIA_SERVER, com.nuvio.tv.core.telemetry.FirstRunVocab.VIA_SYNC,
+        )
         if (kept == current && updatedTokens == currentTokens) {
             persist(current, currentTokens)
         } else {
