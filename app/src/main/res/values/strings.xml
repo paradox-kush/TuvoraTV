@@ -3683,6 +3683,7 @@
     <string name="iptv_pin_settings_switch_sub">When you keep returning to the same channels, offer to pin them.</string>
     <string name="iptv_pin_settings_clear">Clear play counts</string>
     <string name="iptv_pin_settings_clear_sub">Forget which channels you play most. Pins and favourites stay.</string>
+    <string name="iptv_pin_settings_clear_confirm_sub">Press OK again to forget them. Pins and favourites stay.</string>
     <string name="iptv_pin_settings_clear_value">Clear</string>
     <string name="iptv_pin_settings_cleared">Cleared</string>
     <string name="iptv_pin_settings_privacy">Play counts stay on this device. They are not synced or sent anywhere.</string>

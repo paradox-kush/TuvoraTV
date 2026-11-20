@@ -243,6 +243,23 @@ class PlaybackPolicyTest {
         }
     }
 
+    // 2026-11-19 Onn: a provider accepted the live connection and sent nothing; the screen said
+    // "tuning" for 60 s (the network read timeout) before any reconnect. Waiting for the first byte is
+    // part of the one 15 s live startup budget; VOD and catch-up keep the network timeouts.
+    @Test
+    fun `live waiting for the first byte shares the 15 s startup budget`() {
+        val network = PlaybackNetworkRequest(readTimeoutMs = 60_000)
+        fun delay(type: ContentType, elapsed: Long) = policy.watchdogDelayMs(
+            PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE, type, network, null, null, elapsed,
+        )
+        assertEquals("live, from the start", 15_000L, delay(ContentType.LIVE, 0))
+        assertEquals("live, the budget is shared", 9_600L, delay(ContentType.LIVE, 5_400))
+        assertEquals("VOD keeps the read timeout", 60_000L, delay(ContentType.VOD, 0))
+        assertEquals("catch-up keeps the read timeout", 60_000L, delay(ContentType.CATCH_UP, 0))
+        assertTrue("first byte is a live startup phase",
+            policy.isLiveStartupPhase(PlaybackPolicy.WatchdogPhase.FIRST_MEDIA_BYTE))
+    }
+
     @Test
     fun `live startup budget is engine independent and the guards and VOD budgets are unchanged`() {
         val network = PlaybackNetworkRequest(readTimeoutMs = 60_000, callTimeoutMs = 12_000)

@@ -102,7 +102,7 @@ class PlaybackPolicy(
 
     fun watchdogEnabled(): Boolean = watchdogConfiguration.enabled
 
-    /** The phases that share the one live startup budget (bytes -> tracks -> decoder -> first frame). */
+    /** The phases that share the one live startup budget (first byte -> tracks -> decoder -> first frame). */
     fun isLiveStartupPhase(phase: WatchdogPhase): Boolean = phase in LIVE_STARTUP_PHASES
 
     fun runtimeVideoWindowMs(): Long = watchdogConfiguration.runtimeVideoProgressWindowMs
@@ -122,16 +122,15 @@ class PlaybackPolicy(
         /** Time since this engine attempt started, so the three startup phases share one budget. */
         startupElapsedMs: Long = 0L,
     ): Long = if (contentType == ContentType.LIVE && phase in LIVE_STARTUP_PHASES) {
-        maxOf(
+        val remaining = maxOf(
             MIN_STARTUP_REMAINING_MS,
             watchdogConfiguration.liveStartupMs - startupElapsedMs.coerceAtLeast(0L),
         )
+        // A tighter network limit on the request still wins while waiting for the first byte.
+        if (phase == WatchdogPhase.FIRST_MEDIA_BYTE) minOf(remaining, network.firstByteLimitMs()) else remaining
     } else when (phase) {
         WatchdogPhase.WAITING_FOR_SURFACE -> watchdogConfiguration.surfaceAttachmentProgressMs
-        WatchdogPhase.FIRST_MEDIA_BYTE -> minOf(
-            network.readTimeoutMs.toLong(),
-            network.callTimeoutMs?.toLong() ?: Long.MAX_VALUE,
-        )
+        WatchdogPhase.FIRST_MEDIA_BYTE -> network.firstByteLimitMs()
         WatchdogPhase.BYTES_TO_TRACKS -> if (contentType == ContentType.LIVE) {
             watchdogConfiguration.liveBytesToTracksMs
         } else {
@@ -536,9 +535,15 @@ class PlaybackPolicy(
         graphRejection = rejection,
     )
 
+    private fun PlaybackNetworkRequest.firstByteLimitMs(): Long =
+        minOf(readTimeoutMs.toLong(), callTimeoutMs?.toLong() ?: Long.MAX_VALUE)
+
     private companion object {
         val DEFAULT_ENGINE_ORDER = listOf(EngineType.MEDIA3, EngineType.LIBMPV)
         val LIVE_STARTUP_PHASES = setOf(
+            // 2026-11-19: a live provider that accepts the connection and sends nothing is given up on
+            // within the same 15 s budget, not after the 60 s network read timeout.
+            WatchdogPhase.FIRST_MEDIA_BYTE,
             WatchdogPhase.BYTES_TO_TRACKS,
             WatchdogPhase.VIDEO_TRACKS_TO_READY,
             WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,

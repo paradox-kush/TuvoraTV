@@ -2871,6 +2871,27 @@ class PlaybackSessionTest {
         reconnectThatReallyPlaysEarnsBudgetBack(framesReported = false)
     }
 
+    // 2026-11-19 Onn: a provider that accepts the connection and sends nothing must be retried after
+    // the 15 s live startup budget, not after the 60 s network read timeout.
+    @Test
+    fun `a silent live provider is given up on after 15 s not 60 s`() = runTest {
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine()
+        val session = session(engine, policy = PlaybackPolicy(), diagnostics = PlaybackDiagnostics(diagnostics::add))
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        advanceTimeBy(14_900)
+        runCurrent()
+        assertTrue("no verdict before the budget",
+            diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        advanceTimeBy(200)
+        runCurrent()
+        assertTrue("verdict at 15 s",
+            diagnostics.any { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+        close(session)
+    }
+
     @Test
     fun `live buffering watchdog cancels after refill pause stop lifecycle exit or zap`() = runTest {
         for (action in listOf("refill", "pause", "stop", "inactive", "zap")) {
@@ -2972,11 +2993,14 @@ class PlaybackSessionTest {
 
     @Test
     fun `B178 a healthy resolution trips no stage deadline in any stage`() = runTest {
-        val session = session(engine = FakeEngine(), policy = PlaybackPolicy())
+        // The engine plays (a healthy start): no stage deadline may trip later. Since 2026-11-19 a live
+        // engine that sends nothing is given up on by the 15 s startup budget, so "healthy" must play.
+        val engine = FakeEngine { _, input, events -> events.emit(PlaybackEvent.FirstVideoFrame(input.generation)) }
+        val session = session(engine = engine, policy = PlaybackPolicy())
         session.dispatch(PlaybackCommand.SurfaceAvailable)
         session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.GUIDE))
         runCurrent()
-        // Past the pre-engine stage window but inside the engine's own 60 s read timeout.
+        // Past the pre-engine stage window.
         advanceTimeBy(PlaybackStageDeadlinePolicy.PRE_ENGINE_START_MS + 1)
         runCurrent()
         assertTrue("not failed: ${session.snapshot.value.failure}", session.snapshot.value.state != PlaybackState.FAILED)
