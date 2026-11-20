@@ -344,3 +344,13 @@ internal object MultiviewTileMenuPolicy {
     /** A grid never has fewer slots than this: one channel is the player. */
     const val MIN_SLOTS = 2
 }
+
+/**
+ * Whether the multiview screen holds the app's own screensaver off. Watching intent counts, as on the live
+ * guide (memory: screensaver black-out was fixed by holding on intent, not on momentary playback): any tile
+ * playing or still loading/reconnecting blocks it; a grid with nothing chosen, or only failed tiles, does not.
+ */
+internal object MultiviewAmbientPolicy {
+    fun blocksScreensaver(statuses: List<TileStatus>): Boolean =
+        statuses.any { it == TileStatus.PLAYING || it == TileStatus.LOADING }
+}

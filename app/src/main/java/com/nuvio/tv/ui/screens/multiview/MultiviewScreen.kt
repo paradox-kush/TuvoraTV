@@ -93,6 +93,11 @@ internal fun MultiviewScreen(
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { controller.onResume() }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { controller.onStop() }
 
+    // The app's own screensaver must not start over tiles someone is watching (2026-11-19 Onn).
+    com.nuvio.tv.ui.screens.ambient.AmbientPlaybackEffect(
+        active = com.nuvio.tv.core.multiview.MultiviewAmbientPolicy.blocksScreensaver(state.tiles.map { it.status }),
+    )
+
     // The player owns the screen: chrome outside this composable (update banner) stands down.
     DisposableEffect(Unit) {
         com.nuvio.tv.updater.ImmersivePlaybackGate.setImmersive(true)

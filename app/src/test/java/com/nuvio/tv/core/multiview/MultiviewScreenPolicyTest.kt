@@ -346,4 +346,18 @@ class MultiviewScreenPolicyTest {
         assertTrue("fresh press", panel.admit(isKeyDown = true, repeatCount = 0))
         assertTrue("its KeyUp", panel.admit(isKeyDown = false, repeatCount = 0))
     }
+
+    // 2026-11-19 Onn: the app's own screensaver (poster slides) started over playing multiview tiles,
+    // because only the live guide and the live player held it off. Watching intent, not momentary
+    // playback, is what counts: a tile that is loading or reconnecting still means "I'm watching".
+    @Test
+    fun `multiview holds the screensaver off while any tile is watched`() {
+        fun blocks(vararg s: TileStatus) = MultiviewAmbientPolicy.blocksScreensaver(s.toList())
+        assertTrue("playing", blocks(TileStatus.PLAYING))
+        assertTrue("loading or reconnecting", blocks(TileStatus.LOADING, TileStatus.EMPTY))
+        assertTrue("one failed, one playing", blocks(TileStatus.FAILED, TileStatus.PLAYING))
+        assertFalse("nothing chosen yet", blocks(TileStatus.EMPTY, TileStatus.EMPTY))
+        assertFalse("no tiles", blocks())
+        assertFalse("every tile failed: nobody is watching a picture", blocks(TileStatus.FAILED, TileStatus.FAILED))
+    }
 }
