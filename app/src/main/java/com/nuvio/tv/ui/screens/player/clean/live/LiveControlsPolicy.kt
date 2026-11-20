@@ -44,6 +44,8 @@ internal object LiveControlsPolicy {
         Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight,
         Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
     )
+    fun isOkKey(key: Key): Boolean = key == Key.DirectionCenter || key == Key.Enter || key == Key.NumPadEnter
+
     private val media = setOf(Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause)
     private val channelKeys = setOf(Key.ChannelUp, Key.ChannelDown, Key.LastChannel)
 
@@ -65,8 +67,15 @@ internal object LiveControlsPolicy {
         zapReveal: Boolean = false,
         /** Time-shifted (live pause / rewind): the saved window can be scrubbed. */
         scrubbable: Boolean = false,
+        /**
+         * An OK press just brought the controls up and its KeyUp has not arrived. The controls now hold
+         * focus, so that KeyUp would land on a button (or the locked channel row) and click it: the
+         * press that showed the controls also activated whatever sat under them.
+         */
+        okUpOwed: Boolean = false,
     ): KeyAction {
         if (panelOpen) return KeyAction.PASS
+        if (okUpOwed && !isKeyDown && isOkKey(key)) return KeyAction.CONSUME
         val ours = key in directional || key in media || key in channelKeys || key == Key.Menu
         if (!ours) return KeyAction.PASS
         // Media and channel keys mean the same thing whether or not the controls are up.
