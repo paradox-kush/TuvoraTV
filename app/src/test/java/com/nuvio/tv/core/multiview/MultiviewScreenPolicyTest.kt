@@ -330,4 +330,20 @@ class MultiviewScreenPolicyTest {
         val encoded = MultiviewGridCodec.encode(SavedGrid(MultiviewLayout.SIDE_BY_SIDE, listOf("xtream:acc:live:7", null)))
         assertEquals("v2;SIDE_BY_SIDE;xtream:acc:live:7;", encoded)
     }
+
+    @Test
+    fun `a held OK that opens the tile menu never runs the menu's first row`() {
+        // Tile side: down, then repeats -> LONG_PRESS opens the menu.
+        val tile = CenterPressTracker()
+        assertEquals(CenterPressTracker.Result.NONE, tile.onKeyDown(0))
+        assertEquals(CenterPressTracker.Result.LONG_PRESS, tile.onKeyDown(1))
+        // Panel side: the rest of that same press (repeats, then the KeyUp) is swallowed...
+        val panel = com.nuvio.tv.ui.screens.iptv.PanelKeyGate()
+        assertFalse("repeat", panel.admit(isKeyDown = true, repeatCount = 2))
+        assertFalse("repeat", panel.admit(isKeyDown = true, repeatCount = 5))
+        assertFalse("KeyUp of the opening press", panel.admit(isKeyDown = false, repeatCount = 0))
+        // ...and a fresh press afterwards works.
+        assertTrue("fresh press", panel.admit(isKeyDown = true, repeatCount = 0))
+        assertTrue("its KeyUp", panel.admit(isKeyDown = false, repeatCount = 0))
+    }
 }
