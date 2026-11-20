@@ -76,7 +76,7 @@ private const val SidebarItemFocusScale = 1.1f
 // the header. Both nudges are now real layout: header inset via padding, no upward pull on the list,
 // and the gap below the header exceeds the focus-scale overhang of the first pill.
 private val SidebarHeaderTopInset = NuvioTheme.spacing.sm
-private val SidebarHeaderToListGap = NuvioTheme.spacing.md
+private val SidebarHeaderToListGap = NuvioTheme.spacing.md + NuvioTheme.spacing.xs
 
 private val SidebarProfileContentGap = NuvioComponents.tokens.sidebar.contentGap + NuvioTheme.spacing.xs
 
@@ -204,7 +204,9 @@ internal fun ModernSidebarBlurPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
-            verticalArrangement = Arrangement.Center,
+            // Top, not Center: a list taller than the column then overflows at the bottom instead of riding
+            // up into the profile header (UX404: the focused first pill touched the header on the Onn).
+            verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Column(
