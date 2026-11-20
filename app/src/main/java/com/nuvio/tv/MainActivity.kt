@@ -1763,12 +1763,15 @@ private fun LegacySidebarScaffold(
                         }
                     }
 
+                    // UX404: the list is centred in the space BELOW the profile header (30dp inset + one item
+                    // + a gap), never in the whole rail, so a full list can no longer ride up into the header.
+                    // 7 items at 6dp spacing fit the 540dp screen with ~20dp to spare on each side.
                     Column(
                         modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .offset(y = 28.dp)
-                            .fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                            .align(Alignment.TopStart)
+                            .fillMaxSize()
+                            .padding(top = 30.dp + sidebarTokens.itemHeight + 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
                         horizontalAlignment = Alignment.Start
                     ) {
                         drawerItems.forEach { item ->
