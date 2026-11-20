@@ -211,6 +211,7 @@ internal fun UpdateBanner(
                     onClick = {
                         when {
                             state.isDownloading -> Unit
+                            state.isInstalling -> Unit
                             state.downloadedApkPath != null -> onInstall()
                             else -> onDownload()
                         }
@@ -230,6 +231,7 @@ internal fun UpdateBanner(
                     Text(
                         text = when {
                             state.isDownloading -> stringResource(R.string.update_downloading_ellipsis)
+                            state.isInstalling -> stringResource(R.string.update_opening_installer)
                             state.downloadedApkPath != null -> stringResource(R.string.update_install)
                             state.errorMessage != null -> stringResource(R.string.action_retry)
                             else -> stringResource(R.string.update_download)

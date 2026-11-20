@@ -98,6 +98,12 @@ class UpdateJobService : JobService() {
         if (!VersionUtils.isRemoteNewer(update.tag, BuildConfig.VERSION_NAME)) return
         if (update.tag == preferences.ignoredTag.first()) return
 
+        // B274: a 58 MB in-process download competes with the player for network and flash on small boxes, and the
+        // banner is hidden over it anyway. Wait for the player to go; a stopped job is rescheduled by the system.
+        if (BackgroundDownloadGatePolicy.shouldDefer(ImmersivePlaybackGate.isActive.value)) {
+            Log.d(TAG, "Player on screen, holding the ${update.tag} download")
+            ImmersivePlaybackGate.isActive.first { !BackgroundDownloadGatePolicy.shouldDefer(it) }
+        }
         downloadStore.download(update).getOrThrow()
         Log.d(TAG, "Downloaded ${update.tag} in the background")
         if (autoInstallEnabled) scheduleIdleInstall(applicationContext)

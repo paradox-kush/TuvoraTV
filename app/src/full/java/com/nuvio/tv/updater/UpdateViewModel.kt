@@ -17,8 +17,11 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -46,7 +49,9 @@ data class UpdateUiState(
     val optimizeDuringInstall: Boolean = true,
     val optimizeDuringInstallSupported: Boolean = ApkInstaller.supportsDexMetadata,
     /** Release installed automatically since the last launch, shown in the banner until dismissed. */
-    val installedUpdate: AppUpdate? = null
+    val installedUpdate: AppUpdate? = null,
+    /** Install pressed and the system installer is not on screen yet; the button says so and ignores presses. */
+    val isInstalling: Boolean = false
 )
 
 @HiltViewModel
@@ -57,8 +62,33 @@ class UpdateViewModel @Inject constructor(
     private val downloadStore: UpdateDownloadStore
 ) : ViewModel() {
 
+    // What the view model itself decided (checks, settings, dialogs). Download state is NOT kept here: the shared
+    // store owns it, so a background download shows up in the banner (B274).
     private val _uiState = MutableStateFlow(UpdateUiState())
-    val uiState: StateFlow<UpdateUiState> = _uiState.asStateFlow()
+    private val manualDownloadPending = MutableStateFlow(false)
+
+    private fun resolve(base: UpdateUiState, download: UpdateDownloadState, manualPending: Boolean): UpdateUiState {
+        val resolved = UpdateDownloadUiPolicy.resolve(
+            updateTag = base.update?.tag,
+            download = download,
+            manualPending = manualPending,
+            knownApkPath = base.downloadedApkPath,
+            knownError = base.errorMessage
+        )
+        return base.copy(
+            isDownloading = resolved.isDownloading,
+            downloadProgress = resolved.downloadProgress,
+            downloadedApkPath = resolved.downloadedApkPath,
+            errorMessage = resolved.errorMessage
+        )
+    }
+
+    private fun currentState(): UpdateUiState =
+        resolve(_uiState.value, downloadStore.state.value, manualDownloadPending.value)
+
+    val uiState: StateFlow<UpdateUiState> =
+        combine(_uiState, downloadStore.state, manualDownloadPending, ::resolve)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, currentState())
     private var updateCheckJob: Job? = null
 
     init {
@@ -265,45 +295,29 @@ class UpdateViewModel @Inject constructor(
     }
 
     fun downloadUpdate() {
-        val update = _uiState.value.update ?: return
+        val current = currentState()
+        val update = current.update ?: return
+        // Already coming down (the background job, or an earlier press): never start a second download.
+        if (current.isDownloading) return
 
+        manualDownloadPending.value = true
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isDownloading = true,
-                    downloadProgress = 0f,
-                    errorMessage = null
-                )
-            }
-
-            val result = withContext(Dispatchers.IO) {
-                downloadStore.download(update) { downloaded, total ->
-                    val progress = if (total != null && total > 0) {
-                        (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f)
-                    } else {
-                        null
-                    }
-                    _uiState.update { it.copy(downloadProgress = progress) }
-                }
+            _uiState.update { it.copy(errorMessage = null) }
+            val result = try {
+                // Progress comes from the store's own state, so the view model keeps no per-read callback.
+                withContext(Dispatchers.IO) { downloadStore.download(update) }
+            } finally {
+                manualDownloadPending.value = false
             }
 
             result
                 .onSuccess { file ->
-                    _uiState.update {
-                        it.copy(
-                            isDownloading = false,
-                            downloadProgress = null,
-                            downloadedApkPath = file.absolutePath,
-                            errorMessage = null
-                        )
-                    }
+                    _uiState.update { it.copy(downloadedApkPath = file.absolutePath, errorMessage = null) }
                     installUpdateOrRequestPermission()
                 }
                 .onFailure { error ->
                     _uiState.update {
                         it.copy(
-                            isDownloading = false,
-                            downloadProgress = null,
                             downloadedApkPath = null,
                             errorMessage = error.message ?: context.getString(R.string.update_error_download_failed),
                             showBanner = true
@@ -314,7 +328,8 @@ class UpdateViewModel @Inject constructor(
     }
 
     fun installUpdateOrRequestPermission() {
-        val apkPath = _uiState.value.downloadedApkPath ?: return
+        if (!InstallPressPolicy.shouldStart(_uiState.value.isInstalling)) return
+        val apkPath = currentState().downloadedApkPath ?: return
         val apkFile = File(apkPath)
         if (!apkFile.exists()) {
             _uiState.update {
@@ -331,22 +346,27 @@ class UpdateViewModel @Inject constructor(
             return
         }
 
-        _uiState.update { it.copy(showUnknownSourcesDialog = false) }
+        // Feedback first: the system installer can take seconds to appear on a loaded box, and a button that seems to
+        // do nothing invites a second press.
+        _uiState.update { it.copy(showUnknownSourcesDialog = false, isInstalling = true) }
         // Without dex metadata a session install gains nothing over the system installer, whose screen stays up
         // while the app is closed for the install and offers to open it again.
         val useSystemInstaller = !ApkInstaller.supportsDexMetadata || !_uiState.value.optimizeDuringInstall
         viewModelScope.launch(Dispatchers.IO) {
-            if (useSystemInstaller) {
+            val launched = if (useSystemInstaller) {
                 runCatching { ApkInstaller.launchSystemInstaller(context, apkFile) }
                     .onFailure { error -> Log.w(TAG, "System installer failed", error) }
-                return@launch
+                    .isSuccess
+            } else {
+                runCatching { ApkInstaller.install(context, apkFile, background = false) }
+                    .onFailure { Log.w(TAG, "Session install failed, falling back to the system installer", it) }
+                    .recoverCatching { ApkInstaller.launchSystemInstaller(context, apkFile) }
+                    .onFailure { error -> Log.w(TAG, "System installer failed", error) }
+                    .isSuccess
             }
-            runCatching { ApkInstaller.install(context, apkFile, background = false) }
-                .onFailure {
-                    Log.w(TAG, "Session install failed, falling back to the system installer", it)
-                    runCatching { ApkInstaller.launchSystemInstaller(context, apkFile) }
-                        .onFailure { error -> Log.w(TAG, "System installer failed", error) }
-                }
+            // Keep saying "Opening installer..." while the system takes over; free the button if nothing launched.
+            if (launched) delay(InstallPressPolicy.BUSY_HOLD_MS)
+            _uiState.update { it.copy(isInstalling = false) }
         }
     }
 

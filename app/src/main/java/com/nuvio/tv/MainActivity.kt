@@ -1278,19 +1278,12 @@ open class MainActivity : ComponentActivity() {
                     }
 
                     val updateViewModel: UpdateViewModel = hiltViewModel(this@MainActivity)
-                    val updateState by updateViewModel.uiState.collectAsState()
-                    val updateBannerState = updateState.copy(
-                        showBanner = updateState.showBanner && currentRoute?.startsWith("player/") != true
-                    )
 
+                    // The update state is read inside UpdateBannerHost, not here, so download progress never
+                    // recomposes this root scope (B274).
                     UpdateBannerHost(
-                        state = updateBannerState,
-                        onDismissBanner = updateViewModel::dismissBanner,
-                        onDownload = updateViewModel::downloadUpdate,
-                        onInstall = updateViewModel::installUpdateOrRequestPermission,
-                        onDismissUnknownSources = updateViewModel::dismissUnknownSourcesDialog,
-                        onOpenUnknownSources = updateViewModel::openUnknownSourcesSettings,
-                        onFeedbackShown = updateViewModel::consumeFeedbackMessage
+                        viewModel = updateViewModel,
+                        playerRouteActive = currentRoute?.startsWith("player/") == true
                     ) {
                         val handleSwitchProfile = {
                             startupSession++

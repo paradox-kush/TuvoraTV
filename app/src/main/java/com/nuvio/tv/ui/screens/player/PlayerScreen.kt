@@ -232,6 +232,11 @@ fun PlayerScreen(
     val effectiveAutoplayEnabled by viewModel.effectiveAutoplayEnabled.collectAsState(initial = false)
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
+    // B274: the VOD player owns the screen too; the in-process background update download waits on this gate.
+    DisposableEffect(Unit) {
+        com.nuvio.tv.updater.ImmersivePlaybackGate.setImmersive(true)
+        onDispose { com.nuvio.tv.updater.ImmersivePlaybackGate.setImmersive(false) }
+    }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val containerFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
