@@ -406,8 +406,10 @@ class PlaybackPolicy(
                 it.outputProfile != GraphOutputProfile.MPV_RENDER ||
                     requirements.gpuRenderingAllowed && it.surfaceMode == SurfaceMode.GPU_RENDER
             },
+            // Live always keeps the direct output (owner decision 2026-11-19): on a budget box the GPU
+            // render path stutters at 4K, and subtitles are best-effort on live.
             GraphRejectionReason.SUBTITLE_FIDELITY to {
-                !(it.outputProfile == GraphOutputProfile.MPV_DIRECT &&
+                requirements.liveContent || !(it.outputProfile == GraphOutputProfile.MPV_DIRECT &&
                     requirements.subtitlesEnabled &&
                     requirements.subtitleFidelity == SubtitleFidelity.FULL)
             },

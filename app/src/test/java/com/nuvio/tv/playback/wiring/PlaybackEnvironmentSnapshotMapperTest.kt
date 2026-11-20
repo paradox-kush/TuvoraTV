@@ -212,6 +212,27 @@ class PlaybackEnvironmentSnapshotMapperTest {
         )
     }
 
+    // Owner decision 2026-11-19: live always plays on mpv's direct output (4K through the GPU render
+    // path stutters on budget boxes). A RENDER setting, chosen or derived from subtitle fidelity, keeps
+    // the render surface as a fallback for live but cannot remove direct. Non-live still honours it.
+    @Test
+    fun `live keeps the direct mpv surface even when the mpv output setting is render`() {
+        val live = map(
+            preferences = resolvedPreferences(mpvOutput = MpvOutputPreference.RENDER),
+            profile = SessionProfile.FULLSCREEN,
+            liveContent = true,
+        )
+        val vod = map(
+            preferences = resolvedPreferences(mpvOutput = MpvOutputPreference.RENDER),
+            profile = SessionProfile.FULLSCREEN,
+            liveContent = false,
+        )
+
+        assertTrue(SurfaceMode.NATIVE_EMBED in live.allowedSurfaceModes)
+        assertTrue(SurfaceMode.GPU_RENDER in live.allowedSurfaceModes)
+        assertFalse(SurfaceMode.NATIVE_EMBED in vod.allowedSurfaceModes)
+    }
+
     @Test
     fun `native embed and GPU surfaces require affirmative runtime proof`() {
         val mapped = map(
@@ -252,6 +273,7 @@ class PlaybackEnvironmentSnapshotMapperTest {
         resourceBudget: ResourceBudget = ResourceBudget(),
         previewViewport: VideoDimensions? = null,
         secureOutputRequired: Boolean = false,
+        liveContent: Boolean = false,
     ) = PlaybackEnvironmentSnapshotMapper.map(
         PlaybackEnvironmentMappingInput(
             preferences = preferences,
@@ -260,6 +282,7 @@ class PlaybackEnvironmentSnapshotMapperTest {
             resourceBudget = resourceBudget,
             previewViewport = previewViewport,
             secureOutputRequired = secureOutputRequired,
+            liveContent = liveContent,
         ),
     )
 

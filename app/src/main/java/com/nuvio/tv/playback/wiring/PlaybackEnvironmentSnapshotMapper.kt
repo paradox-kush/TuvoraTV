@@ -22,6 +22,11 @@ internal data class PlaybackEnvironmentMappingInput(
     val baseAllowedSurfaceModes: Set<SurfaceMode> = SurfaceMode.entries.toSet(),
     /** Supplied by request/DRM evidence. This mapper never infers secure output from device identity. */
     val secureOutputRequired: Boolean,
+    /**
+     * Live content always keeps mpv's direct output (owner decision 2026-11-19): a RENDER setting,
+     * chosen or derived from subtitle fidelity, must not force 4K frames through the GPU copy path.
+     */
+    val liveContent: Boolean = false,
 )
 
 /** Pure WP3 wiring from resolved intent and observed Android facts to the core environment contract. */
@@ -44,7 +49,8 @@ internal object PlaybackEnvironmentSnapshotMapper {
             when (input.preferences.effective.expert.mpvOutput) {
                 MpvOutputPreference.AUTO -> LIBMPV_SURFACES
                 MpvOutputPreference.DIRECT -> setOf(SurfaceMode.NATIVE_EMBED)
-                MpvOutputPreference.RENDER -> setOf(SurfaceMode.GPU_RENDER)
+                // Live: render stays as the fallback; direct is ranked first by the selection policy.
+                MpvOutputPreference.RENDER -> if (input.liveContent) LIBMPV_SURFACES else setOf(SurfaceMode.GPU_RENDER)
             },
         )
         var allowedSurfaces = if (explicitWithoutFallback) {

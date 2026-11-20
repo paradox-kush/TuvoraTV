@@ -506,6 +506,28 @@ class PlaybackPolicyTest {
         assertEquals(mpvDirect, selection.selectedGraph())
     }
 
+    // 2026-11-19 Onn, stock mpv 0.2.1: a 4K HEVC live channel stuttered on mpv because FULL subtitle
+    // fidelity removed the direct output and left only the GPU render path, which copies every 4K frame
+    // through OpenGL. Owner decision: live always plays on direct; subtitles are best-effort on live.
+    @Test
+    fun `live primary keeps direct mpv output even with full subtitle fidelity`() {
+        val selection = policy.selectPrimary(
+            PlaybackPolicy.SelectionInput(
+                requirements(
+                    profile = SessionProfile.FULLSCREEN,
+                    preferredEngineOrder = listOf(EngineType.LIBMPV),
+                    eligibleEngines = setOf(EngineType.LIBMPV),
+                    subtitlesEnabled = true,
+                    subtitleFidelity = SubtitleFidelity.FULL,
+                    liveContent = true,
+                ),
+                listOf(mpvRender, mpvDirect),
+            ),
+        )
+
+        assertEquals(mpvDirect, selection.selectedGraph())
+    }
+
     @Test
     fun `full subtitle fidelity never empties primary selection`() {
         val selection = policy.selectPrimary(

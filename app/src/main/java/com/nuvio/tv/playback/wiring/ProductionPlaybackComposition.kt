@@ -473,6 +473,7 @@ private class ProductionPlaybackEnvironmentProvider(
             baseEligibleEngines = eligibleEngines(android.capabilities.surfaces),
             baseAllowedSurfaceModes = supportedSurfaceModes(android.capabilities.surfaces),
             secureOutputRequired = input.requestSummary.secureOutputRequired,
+            liveContent = input.requestSummary.contentType == com.nuvio.tv.playback.core.ContentType.LIVE,
         ),
     )
 
