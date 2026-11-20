@@ -832,6 +832,7 @@ internal fun SettingsActionRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onFocused: () -> Unit = {},
+    onFocusLost: () -> Unit = {},
     enabled: Boolean = true,
     trailingIcon: ImageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
     titleTrailingIcon: ImageVector? = null,
@@ -858,7 +859,7 @@ internal fun SettingsActionRow(
                 val nowFocused = state.isFocused
                 if (isFocused != nowFocused) {
                     isFocused = nowFocused
-                    if (nowFocused) onFocused()
+                    if (nowFocused) onFocused() else onFocusLost()
                 }
             },
         colors = settingsRowColors(),
