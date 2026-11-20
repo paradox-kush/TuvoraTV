@@ -13,7 +13,7 @@ import org.json.JSONObject
 object DiagTrailPolicy {
     const val MAX_STRING = 40
     // Wide enough for a freeze event (fields from the event, the failure and the freeze) to keep every one.
-    const val MAX_FIELDS = 16
+    const val MAX_FIELDS = 24
     const val MAX_TRAIL_BYTES = 12 * 1024
 
     val ALLOWED_FIELDS: Set<String> = setOf(
@@ -30,6 +30,11 @@ object DiagTrailPolicy {
         "freeze_kind", "ladder_rung", "decoder", "build_id", "session_instance",
         // B262: which live format re-open ran on the same engine and whether it reached a first frame.
         "format_step", "format_played",
+        // Decode health (DECODE_HEALTH_ISSUE) and the stream shape on live failures (B265): closed codes and counts.
+        "issue", "fault", "container", "audio_codec", "audio_channels", "audio_sample_rate",
+        "video_codec", "video_height", "video_fps", "hdr", "decode_mode", "av_offset_bucket",
+        "seconds_in_bucket", "frames_dropped", "underruns", "sink_errors", "tile_count",
+        "stream_fps", "stream_audio_codec", "engine_at_start", "b_frames", "reorder_depth",
     )
 
     private val identifier = Regex("^[A-Za-z0-9_:-]{1,$MAX_STRING}$")

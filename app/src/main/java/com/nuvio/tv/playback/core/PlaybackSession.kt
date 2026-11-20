@@ -39,7 +39,7 @@ class PlaybackSession(
     private val engineRegistry: PlaybackEngineRegistry,
     private val outputController: PlaybackOutputController,
     private val clock: PlaybackClock,
-    private val diagnostics: PlaybackDiagnostics,
+    diagnostics: PlaybackDiagnostics,
     private val lifecycle: PlaybackLifecyclePort? = null,
     private val audioFocus: AudioFocusPort = NoopAudioFocusPort,
     private val providerPlaybackResolver: ProviderPlaybackResolver? = null,
@@ -48,7 +48,15 @@ class PlaybackSession(
     private val releaseTimeoutMs: Long = DEFAULT_RELEASE_TIMEOUT_MS,
     /** Process-wide allowance to drop a player that cannot shut down; see [AbandonedPlayerBudget]. */
     private val abandonedPlayerBudget: AbandonedPlayerBudget = AbandonedPlayerBudget(),
+    /** How this session takes part in decode-health reporting (a multiview tile shares its screen's cap). */
+    private val decodeHealth: DecodeHealthContext = DecodeHealthContext(),
 ) {
+    /**
+     * B265: live failure diagnostics carry the stream's shape (bucketed codes, never a URL or host) and
+     * the engine the tune started on, added here once instead of at each of the call sites.
+     */
+    private val diagnostics: PlaybackDiagnostics = shapeEnriching(diagnostics)
+
     init {
         require(releaseTimeoutMs > 0) { "Release timeout must be positive" }
     }
@@ -98,6 +106,14 @@ class PlaybackSession(
     private var startupBudgetExpiredAttempt: Long? = null
     private var runtimeMetricsUnavailableAttempt: Long? = null
     private val decoderStableIds = mutableMapOf<Pair<Long, EngineType>, String>()
+
+    // Decode health (reporting only). The policy is touched from the lane and, for totals, from the host.
+    private val decodePolicy = DecodeHealthPolicy(decodeHealth.budget, dedupePerSession = decodeHealth.tile)
+    @Volatile private var audioAudible: Boolean = decodeHealth.startsAudible
+    @Volatile private var decodeFormatFacts = DecodeFormatFacts()
+    @Volatile private var decodeVideoMime: String? = null
+    @Volatile private var engineAtStart: EngineType? = null
+    private var engineAtStartGeneration: Long = -1L
     private val recordedCompatibilityOutcomes = mutableSetOf<CompatibilityRecordingKey>()
     private val liveReconnectAttempts = ArrayDeque<Long>()
     /** When live playback last became real (playing, not buffering, not paused); null while it is not. */
@@ -185,7 +201,9 @@ class PlaybackSession(
                             if (normalized is PlaybackEvent.Failed) {
                                 // Engine-raised errors were never recorded: most failure and
                                 // handoff causes reached telemetry without a code.
-                                diagnostics.record(
+                                // `this@PlaybackSession`: inside init the constructor parameter would
+                                // shadow the shape-enriching wrapper.
+                                this@PlaybackSession.diagnostics.record(
                                     PlaybackDiagnosticEvent(
                                         generation = normalized.generation,
                                         code = PlaybackDiagnosticCode.ENGINE_REPORTED_FAILURE,
@@ -194,8 +212,13 @@ class PlaybackSession(
                                     ),
                                 )
                             }
-                            engineEvents.emit(normalized)
-                            lane.send(LaneMessage.Reducer(PlaybackReducerInput.Event(normalized)))
+                            if (normalized is PlaybackEvent.DecodeSignalObserved) {
+                                // Reporting only: never the reducer, never the public events flow.
+                                lane.send(LaneMessage.DecodeSignalReceived(normalized.generation, normalized.signal))
+                            } else {
+                                engineEvents.emit(normalized)
+                                lane.send(LaneMessage.Reducer(PlaybackReducerInput.Event(normalized)))
+                            }
                         }
                     }
                 }
@@ -306,6 +329,7 @@ class PlaybackSession(
                 message.accepted.complete(Unit)
             }
             is LaneMessage.AudioFocusChanged -> audioFocusChanged(message.event)
+            is LaneMessage.DecodeSignalReceived -> decodeSignalReceived(message)
         }
     }
 
@@ -387,6 +411,7 @@ class PlaybackSession(
             engineAttemptStartedAtEpochMs = clock.nowEpochMs()
             engineAttemptGeneration = engineStarting.generation
             runtimeMetricsUnavailableAttempt = null
+            decodePolicy.startAttempt()
         }
         machine = transition.state
         trackReconnectProof(before)
@@ -397,6 +422,9 @@ class PlaybackSession(
         if (before.snapshot.generation != transition.state.snapshot.generation) {
             val activeGeneration = transition.state.snapshot.generation
             decoderStableIds.keys.removeAll { (generation, _) -> generation != activeGeneration }
+            decodePolicy.startTune()
+            decodeFormatFacts = DecodeFormatFacts()
+            decodeVideoMime = null
             recordedCompatibilityOutcomes.removeAll { it.generation != activeGeneration }
         }
         _snapshot.value = transition.state.snapshot
@@ -418,6 +446,7 @@ class PlaybackSession(
         when (event) {
             is PlaybackEvent.EngineStarting -> decoderStableIds.remove(key)
             is PlaybackEvent.VideoDecoderInitialized -> decoderStableIds[key] = event.decoderName
+            is PlaybackEvent.VideoInputFormatChanged -> decodeVideoMime = event.sampleMimeType
             else -> Unit
         }
     }
@@ -545,7 +574,10 @@ class PlaybackSession(
             is PlaybackAction.SeekTo -> seekTo(action)
             is PlaybackAction.SetPlaybackRate -> setPlaybackRate(action)
             is PlaybackAction.SetAudioEnabled -> engineControl(action.generation) { engine ->
-                engine.setAudioEnabled(action.generation, action.enabled)
+                val result = engine.setAudioEnabled(action.generation, action.enabled)
+                // Decode health: a muted tile's silence is by design, never AUDIO_NOT_PLAYING.
+                if (result is PlaybackResult.Success) audioAudible = action.enabled
+                result
             }
             is PlaybackAction.SetLiveCacheBudget -> engineControl(action.generation) { engine ->
                 engine.setLiveCacheBudget(action.generation, action.maxBytes, action.maxBackBytes, action.cacheSecs)
@@ -1146,6 +1178,10 @@ class PlaybackSession(
         val resolvedRequest = applyRememberedFormatStep(action.generation, action.graph, resolvedBefore)
         activeGraph = action.graph
         activeGraphGeneration = action.generation
+        if (engineAtStartGeneration != action.generation) {
+            engineAtStartGeneration = action.generation
+            engineAtStart = action.graph.engine
+        }
         generationScope(action.generation).launch {
             intentionalReleases -= engine.type
             val output = requestPlaybackOutput(
@@ -2226,6 +2262,7 @@ class PlaybackSession(
         watchdogArm = null
         watchdogJob = null
         val live = machine.request?.contentType == ContentType.LIVE
+        if (live) decodeWindowFinished(message)
         val advanced = if (message.before == null || message.after == null) {
             null
         } else {
@@ -2342,6 +2379,135 @@ class PlaybackSession(
             PlaybackPolicy.WatchdogPhase.RUNTIME_VIDEO_PROGRESS,
             FreezeDecision(kind, action),
             terminal = channelFreezeBudgetExhausted(),
+        )
+    }
+
+    // ---- Decode health (reporting only; never changes playback) ----
+
+    private suspend fun decodeSignalReceived(message: LaneMessage.DecodeSignalReceived) {
+        if (message.generation != machine.snapshot.generation) return
+        if (machine.request?.contentType != ContentType.LIVE) return
+        val signal = message.signal
+        if (signal is DecodeSignal.FormatFacts) {
+            decodeFormatFacts = decodeFormatFacts.merge(signal)
+            decodePolicy.observeFrameType(machine.snapshot.tracks.hasVideoTrack, decodeFormatFacts.reorderDepth)
+            return
+        }
+        decodePolicy.onSignal(signal, clock.nowEpochMs(), currentShape())?.let(::emitDecodeHealth)
+    }
+
+    private fun decodeWindowFinished(message: LaneMessage.RuntimeWindowFinished) {
+        val before = message.before
+        val after = message.after
+        if (before == null || after == null) return
+        val snapshot = machine.snapshot
+        decodePolicy.observeFrameType(snapshot.tracks.hasVideoTrack, decodeFormatFacts.reorderDepth)
+        val lost = sumDeltas(
+            delta(before.videoFramesDropped, after.videoFramesDropped),
+            delta(before.videoFramesSkipped, after.videoFramesSkipped),
+        )
+        // Media3 reports its drops as they happen (DroppedFrames); only libmpv's counters feed the totals here.
+        if (activeGraph?.engine == EngineType.LIBMPV && lost != null) decodePolicy.addDroppedFrames(lost)
+        val window = DecodeWindow(
+            windowMs = policy.runtimeVideoWindowMs(),
+            playing = snapshot.state == PlaybackState.PLAYING && !machine.paused,
+            hasAudioTrack = snapshot.tracks.audioTrackCount > 0,
+            audible = audioAudible,
+            videoRenderedDelta = delta(before.videoFramesRendered, after.videoFramesRendered),
+            videoLostDelta = lost,
+            audioProgressDelta = delta(before.audioBuffersRendered, after.audioBuffersRendered),
+        )
+        decodePolicy.onWindow(window, currentShape()).forEach(::emitDecodeHealth)
+    }
+
+    private fun delta(before: Long?, after: Long?): Long? =
+        if (before == null || after == null) null else (after - before).coerceAtLeast(0L)
+
+    private fun sumDeltas(a: Long?, b: Long?): Long? = if (a == null && b == null) null else (a ?: 0L) + (b ?: 0L)
+
+    private fun emitDecodeHealth(report: DecodeHealthReport) {
+        val snapshot = machine.snapshot
+        val surface = when {
+            decodeHealth.tile -> DecodeSurface.MULTIVIEW_TILE
+            snapshot.profile == SessionProfile.GUIDE -> DecodeSurface.GUIDE_PREVIEW
+            else -> DecodeSurface.FULLSCREEN
+        }
+        diagnostics.record(
+            PlaybackDiagnosticEvent(
+                generation = snapshot.generation,
+                code = PlaybackDiagnosticCode.DECODE_HEALTH_ISSUE,
+                engine = activeGraph?.engine,
+                outputProfile = activeGraph?.outputProfile,
+                decodeHealth = report.copy(
+                    surface = surface,
+                    tileCount = if (decodeHealth.tile) decodeHealth.tileCount().takeIf { it > 0 } else null,
+                ),
+            ),
+        )
+    }
+
+    /** Per-session decode-health totals for the `clean_playback_session` summary. Safe from any thread. */
+    fun decodeHealthTotals(): DecodeHealthTotals = decodePolicy.totals()
+
+    /** The stream's shape from evidence plus what the engine reported; bucketed codes only. */
+    private fun currentShape(): DecodeStreamShape {
+        val snapshot = machine.snapshot
+        val codes = StreamFactCodes.from(machine.evidence)
+        val facts = decodeFormatFacts
+        val catalog = snapshot.trackCatalog
+        val audioTrack = catalog.audio.firstOrNull { it.id == catalog.selectedAudioTrackId } ?: catalog.audio.firstOrNull()
+        val height = snapshot.tracks.videoDimensions?.height ?: snapshot.videoOutputFacts.dimensions?.height
+        val graph = activeGraph
+        return DecodeStreamShape(
+            container = codes.container,
+            videoCodec = DecodeStreamShape.videoCodecCode(decodeVideoMime) ?: codes.codec,
+            videoHeight = height?.let(StreamFactCodes::heightCode) ?: codes.height,
+            videoFps = snapshot.videoOutputFacts.frameRate,
+            hdr = facts.hdr ?: codes.hdr,
+            audioCodec = DecodeStreamShape.audioCodecWire(
+                facts.audioCodec ?: audioTrack?.codec ?: audioTrack?.mimeType ?: machine.evidence?.audioCodec?.value
+                    ?.takeIf { it != AudioCodec.UNKNOWN }?.name,
+            ),
+            audioChannels = facts.audioChannels ?: audioTrack?.channelCount,
+            audioSampleRate = facts.audioSampleRate ?: audioTrack?.sampleRate,
+            decoder = graph?.let { decoderStableIds[snapshot.generation to it.engine] },
+            decoderMode = graph?.decoderMode,
+            hasVideo = snapshot.tracks.hasVideoTrack,
+            reorderDepth = facts.reorderDepth,
+        )
+    }
+
+    private fun shapeEnriching(delegate: PlaybackDiagnostics) = PlaybackDiagnostics { event ->
+        delegate.record(withStreamShape(event))
+    }
+
+    private fun withStreamShape(event: PlaybackDiagnosticEvent): PlaybackDiagnosticEvent {
+        if (event.code !in STREAM_SHAPE_CODES || event.stream != null) return event
+        if (event.generation != machine.snapshot.generation) return event
+        if (machine.request?.contentType != ContentType.LIVE) return event
+        // Telemetry enrichment must never break a failure report (this can run off the lane).
+        return runCatching {
+            event.copy(
+                stream = currentShape().takeUnless { it.isEmpty },
+                engineAtStart = engineAtStart.takeIf { engineAtStartGeneration == event.generation },
+            )
+        }.getOrDefault(event)
+    }
+
+    /** Merged engine format facts for one tune; a null field keeps the earlier value. */
+    private data class DecodeFormatFacts(
+        val audioCodec: String? = null,
+        val audioChannels: Int? = null,
+        val audioSampleRate: Int? = null,
+        val hdr: StreamHdrCode? = null,
+        val reorderDepth: Int? = null,
+    ) {
+        fun merge(update: DecodeSignal.FormatFacts) = DecodeFormatFacts(
+            audioCodec = update.audioCodec ?: audioCodec,
+            audioChannels = update.audioChannels ?: audioChannels,
+            audioSampleRate = update.audioSampleRate ?: audioSampleRate,
+            hdr = update.hdr ?: hdr,
+            reorderDepth = update.reorderDepth ?: reorderDepth,
         )
     }
 
@@ -2891,6 +3057,7 @@ class PlaybackSession(
             val accepted: CompletableDeferred<Unit>,
         ) : LaneMessage
         data class AudioFocusChanged(val event: AudioFocusEvent) : LaneMessage
+        data class DecodeSignalReceived(val generation: Long, val signal: DecodeSignal) : LaneMessage
     }
 
     private companion object {
@@ -2899,6 +3066,16 @@ class PlaybackSession(
         const val ABANDON_TIMEOUT_MS = 1_000L
         const val SURFACE_RECHECK_MS = 500L
         const val MAX_TRACKED_CHANNELS = 16
+        /** B265: the live failure diagnostics that carry the stream shape. */
+        val STREAM_SHAPE_CODES = setOf(
+            PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,
+            PlaybackDiagnosticCode.ENGINE_REPORTED_FAILURE,
+            PlaybackDiagnosticCode.WATCHDOG_EXPIRED,
+            PlaybackDiagnosticCode.LIVE_PICTURE_STUCK,
+            PlaybackDiagnosticCode.LIVE_RECONNECT_ATTEMPT,
+            PlaybackDiagnosticCode.LIVE_FORMAT_LADDER_STEP,
+            PlaybackDiagnosticCode.LIVE_FORMAT_LADDER_RESULT,
+        )
         val NONFATAL_OUTPUT_STATUSES = setOf(
             PlaybackOutputStatus.UNSUPPORTED,
             PlaybackOutputStatus.NO_COMPATIBLE_MODE,

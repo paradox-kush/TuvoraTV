@@ -225,6 +225,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
             ),
             policy = PlaybackPolicy(),
             abandonedPlayerBudget = abandonedPlayerBudget,
+            decodeHealth = com.nuvio.tv.playback.core.DecodeHealthContext.forTile(host.tile),
         )
         // The actor lane preserves this command before any Tune/Zap sent through the returned owner.
         session.dispatch(bootstrap.initialCommand())

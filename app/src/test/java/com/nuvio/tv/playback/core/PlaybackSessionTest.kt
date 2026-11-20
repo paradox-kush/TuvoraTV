@@ -3704,6 +3704,161 @@ class PlaybackSessionTest {
         close(session)
     }
 
+
+    // ---- Decode health (reporting only) ----
+
+    private suspend fun TestScope.startLiveForDecodeHealth(engine: FakeEngine, session: PlaybackSession) {
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        // runCurrent, not advanceUntilIdle: virtual time must not run past the startup watchdogs.
+        runCurrent()
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+    }
+
+    @Test
+    fun `a sink discontinuity is reported once as decode health with engine and surface`() = runTest {
+        val engine = FakeEngine()
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val session = session(engine, diagnostics = PlaybackDiagnostics(diagnostics::add))
+        startLiveForDecodeHealth(engine, session)
+
+        engine.emit(PlaybackEvent.DecodeSignalObserved(1, DecodeSignal.AudioSinkDiscontinuity()))
+        engine.emit(PlaybackEvent.DecodeSignalObserved(1, DecodeSignal.AudioSinkDiscontinuity()))
+        advanceUntilIdle()
+
+        val reports = diagnostics.filter { it.code == PlaybackDiagnosticCode.DECODE_HEALTH_ISSUE }
+        assertEquals("once per issue and tune", 1, reports.size)
+        val report = reports.single().decodeHealth!!
+        assertEquals(DecodeIssue.AUDIO_TIMESTAMP_FAULT, report.issue)
+        assertEquals(DecodeFault.SINK_DISCONTINUITY, report.fault)
+        assertEquals(DecodeSurface.FULLSCREEN, report.surface)
+        assertEquals(engine.type, reports.single().engine)
+        assertEquals("both are counted for the summary", 2, session.decodeHealthTotals().sinkErrors)
+        assertEquals(1, session.decodeHealthTotals().issueCount)
+        close(session)
+    }
+
+    @Test
+    fun `a decode signal from another generation is ignored`() = runTest {
+        val engine = FakeEngine()
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val session = session(engine, diagnostics = PlaybackDiagnostics(diagnostics::add))
+        startLiveForDecodeHealth(engine, session)
+
+        engine.emit(PlaybackEvent.DecodeSignalObserved(99, DecodeSignal.VideoDecoderError()))
+        advanceUntilIdle()
+
+        assertTrue(diagnostics.none { it.code == PlaybackDiagnosticCode.DECODE_HEALTH_ISSUE })
+        close(session)
+    }
+
+    @Test
+    fun `a decode signal never reaches the reducer or the public events flow`() = runTest {
+        val engine = FakeEngine()
+        val session = session(engine)
+        val seen = mutableListOf<PlaybackEvent>()
+        val job = launch { session.events.collect { seen += it } }
+        startLiveForDecodeHealth(engine, session)
+
+        engine.emit(PlaybackEvent.DecodeSignalObserved(1, DecodeSignal.VideoDecoderError()))
+        advanceUntilIdle()
+
+        assertTrue(seen.none { it is PlaybackEvent.DecodeSignalObserved })
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        job.cancel()
+        close(session)
+    }
+
+    @Test
+    fun `a tile reports its surface and tile count and shares the screen cap`() = runTest {
+        val budget = DecodeHealthBudget()
+        val link = DecodeHealthTileLink(budget, tileCount = { 4 })
+        val engine = FakeEngine()
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val session = session(
+            engine,
+            diagnostics = PlaybackDiagnostics(diagnostics::add),
+            decodeHealth = DecodeHealthContext.forTile(TileHostConfig(bufferBytes = 1, decodeHealth = link)),
+        )
+        startLiveForDecodeHealth(engine, session)
+
+        engine.emit(PlaybackEvent.DecodeSignalObserved(1, DecodeSignal.VideoDecoderError()))
+        advanceUntilIdle()
+
+        val report = diagnostics.single { it.code == PlaybackDiagnosticCode.DECODE_HEALTH_ISSUE }.decodeHealth!!
+        assertEquals(DecodeSurface.MULTIVIEW_TILE, report.surface)
+        assertEquals(4, report.tileCount)
+        assertEquals("the screen's budget was used", 1, budget.used())
+        close(session)
+    }
+
+    @Test
+    fun `silent audio on the audible session is reported and on a muted tile it is not`() = runTest {
+        suspend fun TestScope.silentAudioIssues(context: DecodeHealthContext): List<DecodeIssue> {
+            val engine = FakeEngine()
+            val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+            val session = session(
+                engine,
+                policy = PlaybackPolicy(),
+                diagnostics = PlaybackDiagnostics(diagnostics::add),
+                decodeHealth = context,
+            )
+            engine.videoFramesRendered = 10
+            engine.audioBuffersRendered = 0
+            engine.videoMoving = true
+            engine.audioMoving = false
+            startLiveForDecodeHealth(engine, session)
+            runFor(30_000)
+            val issues = diagnostics.mapNotNull { it.decodeHealth?.issue }
+            close(session)
+            return issues
+        }
+
+        assertEquals(listOf(DecodeIssue.AUDIO_NOT_PLAYING), silentAudioIssues(DecodeHealthContext()))
+        assertEquals(
+            "a muted tile's silence is by design",
+            emptyList<DecodeIssue>(),
+            silentAudioIssues(DecodeHealthContext(tile = true, startsAudible = false)),
+        )
+    }
+
+    @Test
+    fun `live failure diagnostics carry the stream shape and the engine the tune started on`() = runTest {
+        val raised = PlaybackFailure(
+            FailureCode.DEMUX_FAILED,
+            FailureDomain.DEMUX,
+            FailurePhase.PLAYBACK,
+            Retryability.HANDOFF_ELIGIBLE,
+            deterministic = true,
+        )
+        val engine = FakeEngine()
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val session = session(engine, diagnostics = PlaybackDiagnostics(diagnostics::add))
+        startLiveForDecodeHealth(engine, session)
+        engine.emit(PlaybackEvent.VideoInputFormatChanged(1, "video/hevc"))
+        engine.emit(
+            PlaybackEvent.DecodeSignalObserved(
+                1,
+                DecodeSignal.FormatFacts(audioCodec = "audio/eac3", audioChannels = 6, audioSampleRate = 48_000, hdr = StreamHdrCode.HDR10),
+            ),
+        )
+        advanceUntilIdle()
+
+        engine.emit(PlaybackEvent.Failed(1, raised))
+        advanceUntilIdle()
+
+        val recorded = diagnostics.first { it.code == PlaybackDiagnosticCode.ENGINE_REPORTED_FAILURE }
+        val shape = recorded.stream!!
+        assertEquals(StreamCodecCode.HEVC, shape.videoCodec)
+        assertEquals("eac3", shape.audioCodec)
+        assertEquals(6, shape.audioChannels)
+        assertEquals(StreamHdrCode.HDR10, shape.hdr)
+        assertEquals(EngineType.MEDIA3, recorded.engineAtStart)
+        close(session)
+    }
+
     private fun TestScope.session(
         engine: FakeEngine,
         otherEngine: FakeEngine? = null,
@@ -3728,6 +3883,7 @@ class PlaybackSessionTest {
         audioFocus: AudioFocusPort = NoopAudioFocusPort,
         clock: PlaybackClock = TestClock,
         abandonedPlayerBudget: AbandonedPlayerBudget = AbandonedPlayerBudget(),
+        decodeHealth: DecodeHealthContext = DecodeHealthContext(),
     ) = PlaybackSession(
         parentScope = this,
         requestResolver = requestResolver,
@@ -3755,6 +3911,7 @@ class PlaybackSessionTest {
         policy = policy,
         releaseTimeoutMs = releaseTimeoutMs,
         abandonedPlayerBudget = abandonedPlayerBudget,
+        decodeHealth = decodeHealth,
     )
 
     private suspend fun close(session: PlaybackSession) {

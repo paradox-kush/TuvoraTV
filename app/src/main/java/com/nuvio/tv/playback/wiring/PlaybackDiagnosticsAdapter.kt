@@ -3,6 +3,8 @@ package com.nuvio.tv.playback.wiring
 import android.os.Build
 import android.util.Log
 import com.nuvio.tv.BuildConfig
+import com.nuvio.tv.playback.core.DecodeStreamShape
+import com.nuvio.tv.playback.core.DecoderMode
 import com.nuvio.tv.playback.core.PlaybackDiagnosticEvent
 import com.nuvio.tv.playback.core.PlaybackDiagnostics
 import com.nuvio.tv.playback.core.PlaybackDiagnosticCode
@@ -46,6 +48,43 @@ object PlaybackDiagnosticFormatter {
             freeze.decoder?.let(::identifier)?.let { properties["decoder"] = it }
             buildId?.let(::identifier)?.let { properties["build_id"] = it }
             identifier(freeze.sessionInstance)?.let { properties["session_instance"] = it }
+        }
+        event.engineAtStart?.let { properties["engine_at_start"] = it.name }
+        event.stream?.let { shape ->
+            // B265: short codes only, so a failure says what kind of stream failed. Never a URL or host.
+            shape.videoCodec?.let { properties["stream_codec"] = it.wire }
+            shape.container?.let { properties["stream_container"] = it.wire }
+            shape.videoHeight?.let { properties["stream_height"] = it.wire }
+            shape.hdr?.let { properties["stream_hdr"] = it.wire }
+            shape.fpsBucket()?.let { properties["stream_fps"] = it }
+            shape.audioCodec?.let(::identifier)?.let { properties["stream_audio_codec"] = it }
+        }
+        event.decodeHealth?.let { report ->
+            // Closed enums, identifier-safe codes and counts only. Never `code`, `state`, `url` or `token`
+            // as a name (PostHogPrivacy redacts them), never a host, channel name or message.
+            properties["issue"] = report.issue.name
+            report.fault?.let { properties["fault"] = it.name }
+            val shape = report.shape
+            shape.container?.let { properties["container"] = it.wire }
+            shape.audioCodec?.let(::identifier)?.let { properties["audio_codec"] = it }
+            shape.audioChannels?.let { properties["audio_channels"] = it }
+            shape.audioSampleRate?.let { properties["audio_sample_rate"] = it }
+            shape.videoCodec?.let { properties["video_codec"] = it.wire }
+            shape.videoHeight?.let { properties["video_height"] = it.wire }
+            shape.fpsBucket()?.let { properties["video_fps"] = it }
+            shape.hdr?.let { properties["hdr"] = it.wire }
+            shape.decoder?.let(::identifier)?.let { properties["decoder"] = it }
+            shape.decoderMode?.let { properties["decode_mode"] = if (it == DecoderMode.HARDWARE) "hw" else "sw" }
+            shape.bFrames()?.let { properties["b_frames"] = it }
+            if (shape.hasVideo) shape.reorderDepth?.takeIf { it in 0..DecodeStreamShape.MAX_REORDER_DEPTH }
+                ?.let { properties["reorder_depth"] = it }
+            report.avOffsetBucket?.let { properties["av_offset_bucket"] = it }
+            report.secondsInBucket?.let { properties["seconds_in_bucket"] = it }
+            properties["frames_dropped"] = report.framesDropped
+            properties["underruns"] = report.underruns
+            properties["sink_errors"] = report.sinkErrors
+            report.surface?.let { properties["surface"] = it.wire }
+            report.tileCount?.takeIf { it > 0 }?.let { properties["tile_count"] = it }
         }
         event.failure?.let { failure ->
             properties["failure_code"] = failure.code.name

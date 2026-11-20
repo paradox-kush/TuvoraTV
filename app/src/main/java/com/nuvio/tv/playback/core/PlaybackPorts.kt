@@ -317,6 +317,12 @@ enum class PlaybackDiagnosticCode {
 
     /** B262: how that re-open ended: it produced a first frame, or it failed and the usual path went on. */
     LIVE_FORMAT_LADDER_RESULT,
+
+    /**
+     * A live stream showed a decode problem (timestamp fault, silent audio, frozen picture, decoder error,
+     * drop or underrun burst, slow decoder init). Reporting only; see [DecodeHealthPolicy].
+     */
+    DECODE_HEALTH_ISSUE,
 }
 
 /**
@@ -356,6 +362,12 @@ data class PlaybackDiagnosticEvent(
     val formatStep: String? = null,
     /** B262: on LIVE_FORMAT_LADDER_RESULT, whether the re-open reached a first frame. */
     val formatPlayed: Boolean? = null,
+    /** B265: the stream's shape (bucketed codes, never a URL or host), attached to live failure diagnostics. */
+    val stream: DecodeStreamShape? = null,
+    /** B265: the engine the tune started on, so a hand-off does not hide which engine failed first. */
+    val engineAtStart: EngineType? = null,
+    /** Set on [PlaybackDiagnosticCode.DECODE_HEALTH_ISSUE]. */
+    val decodeHealth: DecodeHealthReport? = null,
 )
 
 fun interface PlaybackDiagnostics {

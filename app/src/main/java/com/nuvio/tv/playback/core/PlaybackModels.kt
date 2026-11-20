@@ -862,7 +862,7 @@ data class StreamFactCodes(
             }
 
         /** Buckets tolerate encoder padding (1088, 704): sd < 700 <= hd < 1000 <= fhd < 1800 <= uhd. */
-        private fun heightCode(height: Int): StreamHeightCode = when {
+        fun heightCode(height: Int): StreamHeightCode = when {
             height >= 1800 -> StreamHeightCode.UHD
             height >= 1000 -> StreamHeightCode.FHD
             height >= 700 -> StreamHeightCode.HD
@@ -1044,6 +1044,14 @@ sealed interface PlaybackEvent {
     data class FirstVideoFrame(override val generation: Long) : PlaybackEvent
     data class BufferingStarted(override val generation: Long) : PlaybackEvent
     data class BufferingEnded(override val generation: Long) : PlaybackEvent
+    /**
+     * A decode-health fact from the engine (sink discontinuity, codec error, underrun, drop...). The
+     * session routes it to [DecodeHealthPolicy] and never to the reducer: it cannot drive recovery.
+     */
+    data class DecodeSignalObserved(
+        override val generation: Long,
+        val signal: DecodeSignal,
+    ) : PlaybackEvent
     /** Passive adapter facts for diagnostics; they never drive recovery or policy. */
     data class EngineStateObserved(
         override val generation: Long,

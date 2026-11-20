@@ -32,6 +32,7 @@ object TelemetrySendPolicy {
     )
 
     private const val STUCK_PICTURE = "LIVE_PICTURE_STUCK"
+    private const val DECODE_HEALTH = "DECODE_HEALTH_ISSUE"
 
     private fun number(v: Any?): Int = (v as? Number)?.toInt() ?: 0
 
@@ -45,7 +46,11 @@ object TelemetrySendPolicy {
 
             "clean_playback_diagnostic" -> {
                 val failure = properties["failure_code"] as? String
-                if ((properties["diagnostic_code"] as? String) == STUCK_PICTURE) {
+                if ((properties["diagnostic_code"] as? String) == DECODE_HEALTH) {
+                    // Reporting only, no failure_code: the policy already caps it (once per issue and tune,
+                    // at most 5 per session), so every one that reaches the gate is sent with the trail.
+                    Decision(Action.SEND, withTrail = true, area = DiagArea.PLAYBACK, code = DECODE_HEALTH)
+                } else if ((properties["diagnostic_code"] as? String) == STUCK_PICTURE) {
                     // libmpv shows a stuck picture while audio plays: no failure_code, but it is the
                     // only sign that the last rung of the freeze ladder did not help.
                     Decision(

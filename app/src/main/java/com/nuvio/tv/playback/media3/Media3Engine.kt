@@ -62,6 +62,8 @@ internal sealed interface Media3BackendEvent {
         val height: Int,
         val pixelWidthHeightRatio: Float = 1f,
     ) : Media3BackendEvent
+    /** A decode-health fact for the session's reporting; never drives recovery. */
+    data class DecodeHealth(val signal: com.nuvio.tv.playback.core.DecodeSignal) : Media3BackendEvent
     data object Ended : Media3BackendEvent
     data class Failed(val failure: PlaybackFailure) : Media3BackendEvent
 }
@@ -573,6 +575,7 @@ class Media3Engine internal constructor(
                 PlaybackEvent.VideoFrameRateChanged(generation, event.frameRate)
             is Media3BackendEvent.VideoSizeChanged ->
                 PlaybackEvent.VideoSizeChanged(generation, event.width, event.height, event.pixelWidthHeightRatio)
+            is Media3BackendEvent.DecodeHealth -> PlaybackEvent.DecodeSignalObserved(generation, event.signal)
             Media3BackendEvent.Ended -> PlaybackEvent.PlaybackEnded(generation, PlaybackEndReason.EOF)
             is Media3BackendEvent.Failed -> PlaybackEvent.Failed(generation, event.failure)
         }

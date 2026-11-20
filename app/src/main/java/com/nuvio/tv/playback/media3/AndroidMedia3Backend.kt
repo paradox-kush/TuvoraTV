@@ -39,6 +39,10 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.TsExtractor
 import com.nuvio.tv.playback.core.AudioMode
+import com.nuvio.tv.playback.core.DecodeSignal
+import com.nuvio.tv.playback.core.DecodeStreamShape
+import com.nuvio.tv.playback.core.DecodeSignalCoalescer
+import com.nuvio.tv.playback.core.StreamHdrCode
 import com.nuvio.tv.playback.core.ApplicationDnsKey
 import com.nuvio.tv.playback.core.DecoderMode
 import com.nuvio.tv.playback.core.DnsPolicy
@@ -600,6 +604,17 @@ private class AndroidMedia3Backend(
         awaitRelease = { releaseController.awaitReleaseWithProof(player) },
     )
 
+    // Decode health: a repeating fault is coalesced so it cannot flood the events flow.
+    private val sinkCoalescer = DecodeSignalCoalescer()
+    private val audioCodecCoalescer = DecodeSignalCoalescer()
+    private val videoCodecCoalescer = DecodeSignalCoalescer()
+
+    private fun nowMs(): Long = android.os.SystemClock.elapsedRealtime()
+
+    private fun emitDecode(signal: DecodeSignal) {
+        _events.tryEmit(Media3BackendEvent.DecodeHealth(signal))
+    }
+
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             when (playbackState) {
@@ -687,6 +702,39 @@ private class AndroidMedia3Backend(
             if (BuildConfig.IS_DEBUG_BUILD) {
                 Log.d("CleanMedia3Audio", "decoder=$decoderName initMs=$initializationDurationMs")
             }
+            emitDecode(DecodeSignal.DecoderInitialized(video = false, durationMs = initializationDurationMs))
+        }
+
+        override fun onAudioSinkError(
+            eventTime: AnalyticsListener.EventTime,
+            audioSinkError: Exception,
+        ) {
+            val count = sinkCoalescer.offer(nowMs()) ?: return
+            emitDecode(media3AudioSinkSignal(audioSinkError, count))
+        }
+
+        override fun onAudioCodecError(
+            eventTime: AnalyticsListener.EventTime,
+            audioCodecError: Exception,
+        ) {
+            val count = audioCodecCoalescer.offer(nowMs()) ?: return
+            emitDecode(DecodeSignal.AudioDecoderError(count))
+        }
+
+        override fun onVideoCodecError(
+            eventTime: AnalyticsListener.EventTime,
+            videoCodecError: Exception,
+        ) {
+            val count = videoCodecCoalescer.offer(nowMs()) ?: return
+            emitDecode(DecodeSignal.VideoDecoderError(count))
+        }
+
+        override fun onAudioInputFormatChanged(
+            eventTime: AnalyticsListener.EventTime,
+            format: Format,
+            decoderReuseEvaluation: DecoderReuseEvaluation?,
+        ) {
+            emitDecode(media3AudioFormatFacts(format))
         }
 
         override fun onAudioUnderrun(
@@ -700,6 +748,7 @@ private class AndroidMedia3Backend(
                     "sinceFeedMs=$elapsedSinceLastFeedMs state=${player.playbackState} " +
                     "bufferedMs=${player.totalBufferedDuration}")
             }
+            emitDecode(DecodeSignal.AudioUnderrun())
         }
 
         override fun onDroppedVideoFrames(
@@ -710,6 +759,7 @@ private class AndroidMedia3Backend(
             if (BuildConfig.IS_DEBUG_BUILD) {
                 Log.d("CleanMedia3Audio", "videoDropped=$droppedFrames intervalMs=$elapsedMs")
             }
+            emitDecode(DecodeSignal.DroppedFrames(droppedFrames))
         }
 
         override fun onVideoDecoderInitialized(
@@ -719,6 +769,7 @@ private class AndroidMedia3Backend(
             initializationDurationMs: Long,
         ) {
             _events.tryEmit(Media3BackendEvent.VideoDecoderInitialized(decoderName))
+            emitDecode(DecodeSignal.DecoderInitialized(video = true, durationMs = initializationDurationMs))
         }
 
         override fun onVideoInputFormatChanged(
@@ -727,6 +778,9 @@ private class AndroidMedia3Backend(
             decoderReuseEvaluation: DecoderReuseEvaluation?,
         ) {
             media3VideoFormatFacts(format).forEach { _events.tryEmit(it) }
+            val hdr = media3Hdr(format)
+            val reorder = media3ReorderDepth(format)
+            if (hdr != null || reorder != null) emitDecode(DecodeSignal.FormatFacts(hdr = hdr, reorderDepth = reorder))
         }
 
         override fun onAudioPositionAdvancing(
@@ -1297,6 +1351,39 @@ internal fun media3SourceReplacementCompatible(
     previous: Media3AdapterPlan,
     next: Media3AdapterPlan,
 ): Boolean = previous.copy(request = previous.request.copy(url = next.request.url)) == next
+
+/**
+ * Classifies an audio sink error: an `UnexpectedDiscontinuityException` means the stream's audio clock
+ * jumped under the sink (the timestamp fault); anything else is a sink init or write error.
+ */
+internal fun media3AudioSinkSignal(error: Exception, count: Int): DecodeSignal =
+    if (error is AudioSink.UnexpectedDiscontinuityException) {
+        DecodeSignal.AudioSinkDiscontinuity(count)
+    } else {
+        DecodeSignal.AudioSinkError(count)
+    }
+
+/** Audio codec, channels and rate of the selected audio input format; short identifiers and numbers only. */
+internal fun media3AudioFormatFacts(format: Format): DecodeSignal.FormatFacts = DecodeSignal.FormatFacts(
+    audioCodec = format.sampleMimeType,
+    audioChannels = format.channelCount.takeIf { it > 0 },
+    audioSampleRate = format.sampleRate.takeIf { it > 0 },
+)
+
+/**
+ * Reorder depth from the video format (`Format.maxNumReorderSamples`, which the extractor's H.264 / H.265
+ * readers fill from the SPS max_num_reorder_frames). 0 means no B-frames; null when the format does not say.
+ */
+internal fun media3ReorderDepth(format: Format): Int? =
+    format.maxNumReorderSamples.takeIf { it in 0..DecodeStreamShape.MAX_REORDER_DEPTH }
+
+/** HDR class from the video format's colour transfer; null when the format does not say (never guesses SDR). */
+internal fun media3Hdr(format: Format): StreamHdrCode? = when (format.colorInfo?.colorTransfer) {
+    C.COLOR_TRANSFER_ST2084 -> StreamHdrCode.HDR10
+    C.COLOR_TRANSFER_HLG -> StreamHdrCode.HLG
+    C.COLOR_TRANSFER_SDR, C.COLOR_TRANSFER_GAMMA_2_2 -> StreamHdrCode.SDR
+    else -> null
+}
 
 /** Extracts only facts carried by Media3's selected video input format. */
 internal fun media3VideoFormatFacts(format: Format): List<Media3BackendEvent> = buildList {

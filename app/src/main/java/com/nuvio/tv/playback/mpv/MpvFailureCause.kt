@@ -29,8 +29,13 @@ internal object MpvFailureCause {
      * is where URLContext protocols (http, tcp, tls) log, and their warn/error lines carry at most a
      * status, an error string or a hostname — never a path or query. `ffmpeg/demuxer` (HLS segment
      * URLs), `stream` and `cplayer` (full URLs) stay off.
+     *
+     * Decode health: `ad` (audio decoder), `vd` (video decoder) and `ao` (audio output) are on at warn so
+     * a decoder error can be classified in a release build (MpvDecodeHealth). These modules print codec
+     * and device names, never a URL; only the module and level are read, the text is never kept.
      */
-    const val MSG_LEVEL = "all=no,ffmpeg=warn,ffmpeg/demuxer=no,ffmpeg/video=no,ffmpeg/audio=no"
+    const val MSG_LEVEL = "all=no,ffmpeg=warn,ffmpeg/demuxer=no,ffmpeg/video=no,ffmpeg/audio=no," +
+        "ad=warn,vd=warn,ao=warn"
 
     /** mpv client.h: MPV_LOG_LEVEL_WARN. Lower numbers are more severe. */
     private const val LOG_LEVEL_WARN = 30

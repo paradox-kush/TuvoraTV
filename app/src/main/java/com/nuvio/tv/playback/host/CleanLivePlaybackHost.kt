@@ -216,6 +216,7 @@ internal class CleanLivePlaybackHost private constructor(
             hostJob.cancel()
             val summary = synchronized(quality) {
                 quality.observe(controller.snapshot.value)
+                runCatching { quality.observeDecodeHealth(controller.decodeHealthTotals()) }
                 quality.finish()
             }
             // Telemetry must never break release.

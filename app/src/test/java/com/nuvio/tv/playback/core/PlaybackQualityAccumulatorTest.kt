@@ -127,6 +127,43 @@ class PlaybackQualityAccumulatorTest {
     }
 
     @Test
+    fun `decode health totals join the session summary as numbers and codes`() {
+        observe(generation = 1, state = PlaybackState.PLAYING, playing = true, firstFrame = true)
+        advance(1_000)
+        accumulator.observeDecodeHealth(
+            DecodeHealthTotals(
+                framesDropped = 42,
+                underruns = 3,
+                sinkErrors = 7,
+                issues = mapOf(DecodeIssue.AUDIO_TIMESTAMP_FAULT to 2, DecodeIssue.VIDEO_DROP_BURST to 1),
+                bFramesYes = 4,
+                bFramesNo = 2,
+                bFramesUnknown = 1,
+            ),
+        )
+        val properties = accumulator.finish().toProperties()
+
+        assertEquals(3, properties["decode_issues"])
+        assertEquals("AUDIO_TIMESTAMP_FAULT:2,VIDEO_DROP_BURST:1", properties["decode_issue_codes"])
+        assertEquals(42L, properties["decode_frames_dropped"])
+        assertEquals(3, properties["decode_underruns"])
+        assertEquals(7, properties["decode_sink_errors"])
+        assertEquals(4, properties["b_frames_yes"])
+        assertEquals(2, properties["b_frames_no"])
+        assertEquals(1, properties["b_frames_unknown"])
+        assertFalse(properties.keys.any { it == "code" || it == "state" || it == "url" || it == "token" })
+    }
+
+    @Test
+    fun `a session with no decode health data reports zeros`() {
+        observe(generation = 1, state = PlaybackState.PLAYING, playing = true, firstFrame = true)
+        advance(1_000)
+        val properties = accumulator.finish().toProperties()
+        assertEquals(0, properties["decode_issues"])
+        assertEquals("", properties["decode_issue_codes"])
+    }
+
+    @Test
     fun `an empty session reports nothing`() {
         assertNull(PlaybackQualityAccumulator(now = { 0L }).finish().takeIf { it.views > 0 })
     }

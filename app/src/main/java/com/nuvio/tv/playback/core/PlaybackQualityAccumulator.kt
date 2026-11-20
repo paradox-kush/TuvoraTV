@@ -28,6 +28,8 @@ class PlaybackQualityAccumulator(private val now: () -> Long) {
     private val resolutionMs = LongArray(RESOLUTION_CLASSES)
     private val failureCodes = linkedMapOf<FailureCode, Int>()
 
+    private var decodeHealth = DecodeHealthTotals.NONE
+
     private var previous: PlaybackSnapshot? = null
     private var previousAt = 0L
     private var viewGeneration: Long? = null
@@ -79,6 +81,11 @@ class PlaybackQualityAccumulator(private val now: () -> Long) {
         previousAt = at
     }
 
+    /** Decode-health totals for the session so far (cumulative; the latest call wins). */
+    fun observeDecodeHealth(totals: DecodeHealthTotals) {
+        decodeHealth = totals
+    }
+
     fun finish(): PlaybackQualitySummary {
         val at = now()
         attributeElapsed(at)
@@ -106,6 +113,14 @@ class PlaybackQualityAccumulator(private val now: () -> Long) {
                 .sortedByDescending { it.value }
                 .take(MAX_FAILURE_CODES)
                 .joinToString(",") { "${it.key.name}:${it.value}" },
+            decodeIssues = decodeHealth.issueCount,
+            decodeIssueCodes = decodeHealth.issueCodes(),
+            decodeFramesDropped = decodeHealth.framesDropped,
+            decodeUnderruns = decodeHealth.underruns,
+            decodeSinkErrors = decodeHealth.sinkErrors,
+            bFramesYes = decodeHealth.bFramesYes,
+            bFramesNo = decodeHealth.bFramesNo,
+            bFramesUnknown = decodeHealth.bFramesUnknown,
         )
     }
 
@@ -176,6 +191,16 @@ data class PlaybackQualitySummary(
     val resolutionMs: List<Long>,
     /** Top failure codes as `NAME:count`, enum names only. */
     val failureCodes: String,
+    /** Decode-health issues seen this session (before the per-session cap), with `NAME:count` codes. */
+    val decodeIssues: Int = 0,
+    val decodeIssueCodes: String = "",
+    val decodeFramesDropped: Long = 0,
+    val decodeUnderruns: Int = 0,
+    val decodeSinkErrors: Int = 0,
+    /** Video streams by frame type: B-frames yes / no / unknown. */
+    val bFramesYes: Int = 0,
+    val bFramesNo: Int = 0,
+    val bFramesUnknown: Int = 0,
 ) {
     fun toProperties(): Map<String, Any> = linkedMapOf(
         "schema_version" to 1,
@@ -205,5 +230,13 @@ data class PlaybackQualitySummary(
         "res_ms_fhd" to resolutionMs[2],
         "res_ms_uhd" to resolutionMs[3],
         "failure_codes" to failureCodes,
+        "decode_issues" to decodeIssues,
+        "decode_issue_codes" to decodeIssueCodes,
+        "decode_frames_dropped" to decodeFramesDropped,
+        "decode_underruns" to decodeUnderruns,
+        "decode_sink_errors" to decodeSinkErrors,
+        "b_frames_yes" to bFramesYes,
+        "b_frames_no" to bFramesNo,
+        "b_frames_unknown" to bFramesUnknown,
     )
 }

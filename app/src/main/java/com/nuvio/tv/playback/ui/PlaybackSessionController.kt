@@ -22,11 +22,15 @@ class PlaybackSessionController internal constructor(
     val snapshot: StateFlow<PlaybackSnapshot>,
     private val dispatchCommand: suspend (PlaybackCommand) -> Unit,
     private val releaseSession: suspend () -> Unit,
+    /** Decode-health totals for the session summary (`clean_playback_session`). */
+    val decodeHealthTotals: () -> com.nuvio.tv.playback.core.DecodeHealthTotals =
+        { com.nuvio.tv.playback.core.DecodeHealthTotals.NONE },
 ) {
     constructor(session: PlaybackSession) : this(
         snapshot = session.snapshot,
         dispatchCommand = session::dispatch,
         releaseSession = session::release,
+        decodeHealthTotals = session::decodeHealthTotals,
     )
 
     suspend fun tune(selection: ProviderPlaybackSelection, profile: SessionProfile) {

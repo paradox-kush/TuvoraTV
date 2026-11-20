@@ -902,6 +902,8 @@ object PlaybackStateMachine {
                 it.copy(decoderReady = true)
             }
             is PlaybackEvent.VideoInputFormatChanged -> unchanged(state)
+            // Decode-health facts are routed to the session's reporting before the reducer; never state.
+            is PlaybackEvent.DecodeSignalObserved -> unchanged(state)
             is PlaybackEvent.VideoFrameRateChanged -> videoFrameRateChanged(state, event.frameRate)
             is PlaybackEvent.VideoSizeChanged ->
                 videoSizeChanged(state, event.width, event.height, event.pixelWidthHeightRatio)

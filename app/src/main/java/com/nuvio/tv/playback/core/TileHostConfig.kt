@@ -13,6 +13,8 @@ data class TileHostConfig(
     val bufferBytes: Int,
     /** Adaptive streams are capped here; a tile never needs more than a quarter-screen picture. */
     val maxVideo: VideoDimensions = MAX_VIDEO,
+    /** The multiview screen's shared decode-health cap and tile count; null in tests that do not report. */
+    val decodeHealth: DecodeHealthTileLink? = null,
 ) {
     init {
         require(bufferBytes > 0) { "Tile buffer must be positive" }

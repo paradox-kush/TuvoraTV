@@ -2,6 +2,9 @@ package com.nuvio.tv.playback.mpv
 
 import android.content.Context
 import android.view.Surface
+import com.nuvio.tv.playback.core.DecodeHealthPolicy
+import com.nuvio.tv.playback.core.DecodeSignal
+import com.nuvio.tv.playback.core.DecodeSignalCoalescer
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
@@ -77,6 +80,8 @@ internal sealed interface MpvBackendEvent {
         val height: Int,
         val pixelWidthHeightRatio: Float = 1f,
     ) : MpvBackendEvent
+    /** A decode-health fact for the session's reporting; never drives recovery. */
+    data class DecodeHealth(val signal: com.nuvio.tv.playback.core.DecodeSignal) : MpvBackendEvent
     data class Ended(val reason: PlaybackEndReason) : MpvBackendEvent
     data class Failed(val failure: PlaybackFailure) : MpvBackendEvent
 }
@@ -214,6 +219,10 @@ internal class AndroidMpvBackend(
     /** Set when the source is reset, until the next file starts: callbacks in between belong to the old file. */
     @Volatile private var awaitingNewFile = false
     @Volatile private var terminalEventsSuppressed = false
+    // A repeating decoder warning must not flood the events flow (a full flow drops the first-frame event).
+    private val audioLogCoalescer = DecodeSignalCoalescer()
+    private val videoLogCoalescer = DecodeSignalCoalescer()
+    private val avSyncCoalescer = DecodeSignalCoalescer()
     private var videoWidth = 0
     private var videoHeight = 0
     private var videoPixelAspect = 1f
@@ -624,6 +633,12 @@ internal class AndroidMpvBackend(
                     videoHeight = value.toInt()
                     emitVideoSizeIfKnown()
                 }
+                "audio-params/samplerate" -> if (value > 0) {
+                    _events.tryEmit(MpvBackendEvent.DecodeHealth(DecodeSignal.FormatFacts(audioSampleRate = value.toInt())))
+                }
+                "audio-params/channel-count" -> if (value > 0) {
+                    _events.tryEmit(MpvBackendEvent.DecodeHealth(DecodeSignal.FormatFacts(audioChannels = value.toInt())))
+                }
             }
         }
     }
@@ -646,6 +661,16 @@ internal class AndroidMpvBackend(
     }
 
     override fun property(name: String, value: Double) {
+        if (name == "avsync") {
+            // Fires at video-frame rate: a threshold test and a coalescer, no coroutine launch.
+            if (!awaitingNewFile && !terminalEventsSuppressed && value.isFinite() &&
+                kotlin.math.abs(value) > DecodeHealthPolicy.AV_OFFSET_FAULT_S &&
+                avSyncCoalescer.offer(android.os.SystemClock.elapsedRealtime()) != null
+            ) {
+                _events.tryEmit(MpvBackendEvent.DecodeHealth(DecodeSignal.AvSyncOffset(value)))
+            }
+            return
+        }
         val staleAudio = name == "audio-pts" && awaitingNewFile
         if (name == "audio-pts" && value.isFinite() && !staleAudio && lastAudioPts != value) {
             lastAudioPts = value
@@ -687,6 +712,14 @@ internal class AndroidMpvBackend(
             if (name == "hwdec-current" && value.isNotBlank()) {
                 _events.tryEmit(MpvBackendEvent.VideoDecoderInitialized(value))
             }
+            if (name == "audio-codec-name" && value.isNotBlank()) {
+                _events.tryEmit(MpvBackendEvent.DecodeHealth(DecodeSignal.FormatFacts(audioCodec = value)))
+            }
+            if (name == "video-params/gamma") {
+                MpvDecodeHealth.hdr(value)?.let {
+                    _events.tryEmit(MpvBackendEvent.DecodeHealth(DecodeSignal.FormatFacts(hdr = it)))
+                }
+            }
             if (name == "video-codec" && value.isNotBlank()) {
                 _events.tryEmit(MpvBackendEvent.VideoInputFormatChanged(value.toVideoMimeType()))
             }
@@ -713,7 +746,14 @@ internal class AndroidMpvBackend(
 
     override fun logMessage(prefix: String, level: Int, text: String) {
         loadEvidence = MpvFailureCause.observe(loadEvidence, prefix, level, text)
+        // Decode health: only the module and level are read; the text is never kept.
+        if (terminalEventsSuppressed || !MpvDecodeHealth.isDecodeModule(prefix)) return
+        if (MpvDecodeHealth.logSignal(prefix, level, 1) == null) return
+        val coalescer = if (prefix == "vd") videoLogCoalescer else audioLogCoalescer
+        val count = coalescer.offer(android.os.SystemClock.elapsedRealtime()) ?: return
+        MpvDecodeHealth.logSignal(prefix, level, count)?.let { _events.tryEmit(MpvBackendEvent.DecodeHealth(it)) }
     }
+
 
     override fun event(id: Int, data: MPVNode) {
         // Synchronous, on mpv's event thread: lines of the new load may arrive before the
@@ -825,6 +865,12 @@ internal class AndroidMpvBackend(
         core.observeBoolean("seekable")
         core.observeString("hwdec-current")
         core.observeString("video-codec")
+        // Decode health: format facts and the A/V difference, as observed properties only (never a read).
+        core.observeDouble("avsync")
+        core.observeString("audio-codec-name")
+        core.observeLong("audio-params/samplerate")
+        core.observeLong("audio-params/channel-count")
+        core.observeString("video-params/gamma")
         core.observeNode("track-list")
         core.observeNode("demuxer-cache-state")
     }

@@ -103,6 +103,16 @@ class MpvFailureCauseTest {
         }
     }
 
+    @Test
+    fun `the clean player hears decoder and audio output warnings for decode health`() {
+        val spec = MpvFailureCause.MSG_LEVEL
+        listOf("ad", "vd", "ao").forEach { module -> assertEquals(module, "warn", MpvLogLevelPolicy.levelFor(module, spec)) }
+        // The URL-bearing modules stay off even with the decode modules on (B116).
+        listOf("cplayer", "stream", "ffmpeg/demuxer", "demux").forEach { module ->
+            assertEquals(module, "no", MpvLogLevelPolicy.levelFor(module, spec))
+        }
+    }
+
     private companion object {
         // mpv client.h: MPV_LOG_LEVEL_WARN = 30, MPV_LOG_LEVEL_INFO = 40.
         const val MPV_LOG_WARN = 30

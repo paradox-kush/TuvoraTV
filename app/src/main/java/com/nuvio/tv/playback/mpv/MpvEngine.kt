@@ -413,6 +413,7 @@ class MpvEngine internal constructor(
                 PlaybackEvent.VideoFrameRateChanged(generation, event.frameRate)
             is MpvBackendEvent.VideoSizeChanged ->
                 PlaybackEvent.VideoSizeChanged(generation, event.width, event.height, event.pixelWidthHeightRatio)
+            is MpvBackendEvent.DecodeHealth -> PlaybackEvent.DecodeSignalObserved(generation, event.signal)
             is MpvBackendEvent.Ended -> PlaybackEvent.PlaybackEnded(generation, event.reason)
             is MpvBackendEvent.Failed -> PlaybackEvent.Failed(generation, event.failure)
         }

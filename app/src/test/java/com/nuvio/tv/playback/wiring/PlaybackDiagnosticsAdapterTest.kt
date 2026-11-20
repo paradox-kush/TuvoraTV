@@ -342,6 +342,176 @@ class PlaybackDiagnosticsAdapterTest {
         assertFalse("candidate_graphs" in formatted.properties)
     }
 
+    private fun decodeHealthEvent(report: com.nuvio.tv.playback.core.DecodeHealthReport) = PlaybackDiagnosticEvent(
+        generation = 5,
+        code = PlaybackDiagnosticCode.DECODE_HEALTH_ISSUE,
+        engine = EngineType.MEDIA3,
+        decodeHealth = report,
+    )
+
+    private fun fullReport() = com.nuvio.tv.playback.core.DecodeHealthReport(
+        issue = com.nuvio.tv.playback.core.DecodeIssue.AUDIO_TIMESTAMP_FAULT,
+        fault = com.nuvio.tv.playback.core.DecodeFault.AV_OFFSET,
+        shape = com.nuvio.tv.playback.core.DecodeStreamShape(
+            container = com.nuvio.tv.playback.core.StreamContainerCode.TS,
+            videoCodec = com.nuvio.tv.playback.core.StreamCodecCode.HEVC,
+            videoHeight = com.nuvio.tv.playback.core.StreamHeightCode.UHD,
+            videoFps = 50f,
+            hdr = com.nuvio.tv.playback.core.StreamHdrCode.HDR10,
+            audioCodec = "eac3",
+            audioChannels = 6,
+            audioSampleRate = 48_000,
+            decoder = "c2.mtk.hevc.decoder",
+            decoderMode = com.nuvio.tv.playback.core.DecoderMode.HARDWARE,
+        ),
+        avOffsetBucket = "1-10s",
+        secondsInBucket = 5,
+        framesDropped = 12,
+        underruns = 1,
+        sinkErrors = 3,
+        surface = com.nuvio.tv.playback.core.DecodeSurface.MULTIVIEW_TILE,
+        tileCount = 4,
+    )
+
+    @Test
+    fun `a decode health issue emits exactly the documented properties`() {
+        val formatted = PlaybackDiagnosticFormatter.format(decodeHealthEvent(fullReport()))
+
+        assertEquals("clean_playback_diagnostic", formatted.eventName)
+        assertEquals(
+            setOf(
+                "schema_version", "generation", "diagnostic_code", "engine",
+                "issue", "fault", "container", "audio_codec", "audio_channels", "audio_sample_rate",
+                "video_codec", "video_height", "video_fps", "hdr", "decoder", "decode_mode",
+                "av_offset_bucket", "seconds_in_bucket", "frames_dropped", "underruns", "sink_errors",
+                "surface", "tile_count",
+                PostHogPrivacy.GEOIP_DISABLE_PROPERTY,
+            ),
+            formatted.properties.keys,
+        )
+        assertEquals("DECODE_HEALTH_ISSUE", formatted.properties["diagnostic_code"])
+        assertEquals("AUDIO_TIMESTAMP_FAULT", formatted.properties["issue"])
+        assertEquals("AV_OFFSET", formatted.properties["fault"])
+        assertEquals("hevc", formatted.properties["video_codec"])
+        assertEquals("c2_mtk_hevc_decoder", formatted.properties["decoder"])
+        assertEquals("hw", formatted.properties["decode_mode"])
+        assertEquals("50", formatted.properties["video_fps"])
+        assertEquals("multiview_tile", formatted.properties["surface"])
+        assertEquals(4, formatted.properties["tile_count"])
+    }
+
+    @Test
+    fun `a video stream reports b frames and reorder depth and an unknown one only the word`() {
+        val known = PlaybackDiagnosticFormatter.format(
+            decodeHealthEvent(fullReport().copy(shape = fullReport().shape.copy(hasVideo = true, reorderDepth = 2))),
+        )
+        assertEquals("yes", known.properties["b_frames"])
+        assertEquals(2, known.properties["reorder_depth"])
+        val unknown = PlaybackDiagnosticFormatter.format(
+            decodeHealthEvent(fullReport().copy(shape = fullReport().shape.copy(hasVideo = true))),
+        )
+        assertEquals("unknown", unknown.properties["b_frames"])
+        assertFalse("reorder_depth" in unknown.properties)
+        val audioOnly = PlaybackDiagnosticFormatter.format(decodeHealthEvent(fullReport()))
+        assertFalse("b_frames" in audioOnly.properties)
+    }
+
+    @Test
+    fun `decode health properties survive the privacy filter and carry no forbidden name or url`() {
+        val formatted = PlaybackDiagnosticFormatter.format(decodeHealthEvent(fullReport()))
+        val forbidden = setOf("code", "state", "url", "token")
+
+        assertTrue("no forbidden name", formatted.properties.keys.none { it in forbidden })
+        assertFalse(
+            "no name ending in a url-like suffix or holding a secret word",
+            formatted.properties.keys.any { key ->
+                key.endsWith("_url") || key.endsWith("_uri") ||
+                    listOf("token", "secret", "password", "cookie", "authorization").any { key.contains(it) }
+            },
+        )
+        assertTrue(
+            "no url-like value",
+            formatted.properties.values.none { it is String && (it.contains("://") || it.contains("redacted") || it.contains(".")) },
+        )
+        assertTrue(formatted.properties.values.all { it is String || it is Number || it is Boolean })
+        // The privacy filter drops nothing the formatter produced.
+        assertEquals(formatted.properties, PostHogPrivacy.sanitize(formatted.properties))
+    }
+
+    @Test
+    fun `a hostile decoder name is reduced to an identifier`() {
+        val report = fullReport().copy(
+            shape = fullReport().shape.copy(
+                decoder = "https://panel.example/live/u/p/1.ts?token=abc",
+                audioCodec = "audio/x-weird codec",
+            ),
+        )
+        val formatted = PlaybackDiagnosticFormatter.format(decodeHealthEvent(report))
+
+        val decoder = formatted.properties["decoder"] as String
+        assertTrue("identifier characters only: $decoder", decoder.matches(Regex("[A-Za-z0-9_:-]+")))
+        assertFalse(decoder.contains("://"))
+        assertTrue((formatted.properties["audio_codec"] as String).matches(Regex("[A-Za-z0-9_:-]+")))
+    }
+
+    @Test
+    fun `a decode health issue with nothing known still reports only what is known`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            decodeHealthEvent(com.nuvio.tv.playback.core.DecodeHealthReport(issue = com.nuvio.tv.playback.core.DecodeIssue.VIDEO_DROP_BURST)),
+        )
+        assertEquals("VIDEO_DROP_BURST", formatted.properties["issue"])
+        assertFalse("fault" in formatted.properties)
+        assertFalse("surface" in formatted.properties)
+        assertFalse("tile_count" in formatted.properties)
+        assertEquals(0L, formatted.properties["frames_dropped"])
+    }
+
+    @Test
+    fun `decode health uploads and the gate sends it with the on device trail`() {
+        val formatted = PlaybackDiagnosticFormatter.format(decodeHealthEvent(fullReport()))
+        assertTrue("non routine, so it uploads", PlaybackDiagnosticUploadPolicy.shouldUpload(formatted))
+
+        val decision = com.nuvio.tv.core.telemetry.TelemetrySendPolicy.decide(formatted.eventName, formatted.properties)
+        assertEquals(com.nuvio.tv.core.telemetry.TelemetrySendPolicy.Action.SEND, decision.action)
+        assertTrue("with diag_trail", decision.withTrail)
+
+        val kept = DiagTrailPolicy.sanitize(formatted.properties)
+        listOf("issue", "fault", "surface", "decode_mode", "video_codec", "sink_errors", "tile_count").forEach {
+            assertTrue("the trail keeps $it", it in kept)
+        }
+    }
+
+    @Test
+    fun `a live failure carries the stream shape and the start engine as bucketed codes`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(
+                generation = 2,
+                code = PlaybackDiagnosticCode.ENGINE_REPORTED_FAILURE,
+                engine = EngineType.LIBMPV,
+                engineAtStart = EngineType.MEDIA3,
+                stream = fullReport().shape,
+                failure = com.nuvio.tv.playback.core.HttpStatusFailures.forStatus(456, FailurePhase.PLAYBACK),
+            ),
+        )
+        assertEquals("MEDIA3", formatted.properties["engine_at_start"])
+        assertEquals("hevc", formatted.properties["stream_codec"])
+        assertEquals("ts", formatted.properties["stream_container"])
+        assertEquals("uhd", formatted.properties["stream_height"])
+        assertEquals("hdr10", formatted.properties["stream_hdr"])
+        assertEquals("50", formatted.properties["stream_fps"])
+        assertEquals("eac3", formatted.properties["stream_audio_codec"])
+        assertTrue(formatted.properties.values.none { it is String && it.contains("://") })
+        assertTrue(formatted.properties.keys.none { it == "code" || it == "state" || it == "url" || it == "token" })
+    }
+
+    @Test
+    fun `a failure without a known shape adds no stream properties`() {
+        val formatted = PlaybackDiagnosticFormatter.format(
+            PlaybackDiagnosticEvent(generation = 2, code = PlaybackDiagnosticCode.ENGINE_REPORTED_FAILURE, engine = EngineType.MEDIA3),
+        )
+        assertFalse(formatted.properties.keys.any { it.startsWith("stream_") || it == "engine_at_start" })
+    }
+
     private fun noEligibleGraphEvent() = PlaybackDiagnosticEvent(
         generation = 9,
         code = PlaybackDiagnosticCode.ENGINE_OPERATION_FAILED,

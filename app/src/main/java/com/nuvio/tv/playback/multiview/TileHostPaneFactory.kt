@@ -3,6 +3,7 @@ package com.nuvio.tv.playback.multiview
 import com.nuvio.tv.core.multiview.MultiviewPanePlayer
 import com.nuvio.tv.core.multiview.TileLoadBounds
 import com.nuvio.tv.core.multiview.TileOpenGate
+import com.nuvio.tv.playback.core.DecodeHealthTileLink
 import com.nuvio.tv.playback.core.PlaybackProfileId
 import com.nuvio.tv.playback.core.TileHostConfig
 import com.nuvio.tv.playback.host.AndroidCleanLiveHostInput
@@ -28,8 +29,11 @@ internal class TileHostPaneFactory(
     private val nowMs: () -> Long,
     private val hostInput: (slot: Int, tile: TileHostConfig) -> AndroidCleanLiveHostInput,
 ) {
+    /** One decode-health cap per multiview screen: four tiles on a bad provider report at most 5 events in all. */
+    private val decodeHealth = DecodeHealthTileLink(tileCount = tileCount)
+
     fun create(slot: Int, bufferBytes: Int, changed: () -> Unit): MultiviewPanePlayer<TileChannel> {
-        val tile = TileHostConfig(bufferBytes)
+        val tile = TileHostConfig(bufferBytes, decodeHealth = decodeHealth)
         return TileHostPanePlayer(
             scope = scope,
             profileId = profileId,
