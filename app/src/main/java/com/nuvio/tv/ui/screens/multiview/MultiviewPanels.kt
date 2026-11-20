@@ -169,6 +169,7 @@ internal fun BoxScope.MultiviewSidePanel(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val border = NuvioTheme.colors.Border
+    val gate = remember { com.nuvio.tv.ui.screens.iptv.PanelKeyGate() }
     Column(
         modifier = Modifier
             .align(Alignment.CenterEnd)
@@ -177,14 +178,19 @@ internal fun BoxScope.MultiviewSidePanel(
             .background(NuvioTheme.colors.Background)
             .drawBehind { drawRect(border, topLeft = Offset.Zero, size = Size(1.dp.toPx(), size.height)) }
             .focusGroup()
-            .then(
-                if (onLeft == null) Modifier else Modifier.onPreviewKeyEvent { event ->
-                    if (event.key == Key.DirectionLeft) {
-                        if (event.type == KeyEventType.KeyDown) onLeft()
-                        true
-                    } else false
-                },
-            )
+            .onPreviewKeyEvent { event ->
+                // Back is answered by the BackHandler; never swallow it here.
+                if (event.key == Key.Back) return@onPreviewKeyEvent false
+                // The long OK that opened this panel keeps sending repeats and its KeyUp to the first row (Audio):
+                // ignore keys until a fresh press (same guard as the guide's side panel).
+                if (!gate.admit(event.type == KeyEventType.KeyDown, event.nativeKeyEvent.repeatCount)) {
+                    return@onPreviewKeyEvent true
+                }
+                if (onLeft != null && event.key == Key.DirectionLeft) {
+                    if (event.type == KeyEventType.KeyDown) onLeft()
+                    true
+                } else false
+            }
             .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.lg),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
