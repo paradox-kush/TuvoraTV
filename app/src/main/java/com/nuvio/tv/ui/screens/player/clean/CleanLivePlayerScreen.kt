@@ -192,6 +192,8 @@ internal fun CleanLivePlayerScreen(
         }
     }
 
+    // True between the OK press that showed the controls and its KeyUp (see LiveControlsPolicy.okUpOwed).
+    val okUpOwed = remember { BooleanArray(1) }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -208,7 +210,9 @@ internal fun CleanLivePlayerScreen(
                     isRepeat = event.nativeKeyEvent.repeatCount > 0,
                     zapReveal = zapReveal,
                     scrubbable = scrubbable,
+                    okUpOwed = okUpOwed[0],
                 )
+                if (event.type == KeyEventType.KeyUp && LiveControlsPolicy.isOkKey(event.key)) okUpOwed[0] = false
                 when (action) {
                     LiveControlsPolicy.KeyAction.PASS -> return@onPreviewKeyEvent false
                     LiveControlsPolicy.KeyAction.PASS_AND_KEEP_ALIVE -> {
@@ -216,7 +220,10 @@ internal fun CleanLivePlayerScreen(
                         return@onPreviewKeyEvent false
                     }
                     LiveControlsPolicy.KeyAction.CONSUME -> Unit
-                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> { showControls(); zapReveal = false }
+                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> {
+                        if (event.type == KeyEventType.KeyDown && LiveControlsPolicy.isOkKey(event.key)) okUpOwed[0] = true
+                        showControls(); zapReveal = false
+                    }
                     LiveControlsPolicy.KeyAction.SCRUB_BACK, LiveControlsPolicy.KeyAction.SCRUB_FORWARD -> {
                         val direction = if (action == LiveControlsPolicy.KeyAction.SCRUB_BACK) {
                             LiveControlsPolicy.ScrubDirection.BACK

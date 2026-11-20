@@ -800,6 +800,8 @@ fun LiveGuide(
     }
     BackHandler(enabled = fullscreen) { fullscreenBack() }
 
+    // True between the OK press that showed the controls and its KeyUp (see LiveControlsPolicy.okUpOwed).
+    val okUpOwed = remember { BooleanArray(1) }
     Box(
         Modifier
             .fillMaxSize()
@@ -829,7 +831,9 @@ fun LiveGuide(
                         hasLineup = true,
                         zapReveal = controls.zapReveal,
                         scrubbable = scrubbable,
+                        okUpOwed = okUpOwed[0],
                     )
+                if (event.type == KeyEventType.KeyUp && LiveControlsPolicy.isOkKey(event.key)) okUpOwed[0] = false
                 when (action) {
                     LiveControlsPolicy.KeyAction.PASS -> return@onPreviewKeyEvent false
                     // The buttons own the D-pad while shown; each press keeps them up.
@@ -840,7 +844,8 @@ fun LiveGuide(
                     // The KeyUp half of a handled key: consumed so the locked row never clicks.
                     LiveControlsPolicy.KeyAction.CONSUME -> Unit
                     LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> {
-                        val ok = event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter
+                        val ok = LiveControlsPolicy.isOkKey(event.key)
+                        if (ok && event.type == KeyEventType.KeyDown) okUpOwed[0] = true
                         if (ok && LiveZapModePolicy.okAction(surfAim, playingContentId) == LiveZapModePolicy.OkAction.TUNE_AIM_NOW) {
                             commitSurf()
                             controls.showBanner()

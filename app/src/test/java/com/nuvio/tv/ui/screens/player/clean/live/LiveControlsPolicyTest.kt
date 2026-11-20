@@ -32,6 +32,23 @@ class LiveControlsPolicyTest {
     }
 
     @Test
+    fun `the KeyUp of the OK press that showed the controls is consumed, not clicked into a button`() {
+        for (ok in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) {
+            // Controls are now visible (the KeyDown showed them); the KeyUp must not pass to the focused button.
+            assertEquals("$ok", KeyAction.CONSUME,
+                LiveControlsPolicy.keyAction(ok, false, true, false, false, okUpOwed = true))
+        }
+        // A later, separate OK press on a button still reaches it.
+        assertEquals(KeyAction.PASS_AND_KEEP_ALIVE,
+            LiveControlsPolicy.keyAction(Key.DirectionCenter, false, true, false, false, okUpOwed = false))
+        // The debt never swallows other keys or an open panel's keys.
+        assertEquals(KeyAction.PASS_AND_KEEP_ALIVE,
+            LiveControlsPolicy.keyAction(Key.DirectionDown, false, true, false, false, okUpOwed = true))
+        assertEquals(KeyAction.PASS,
+            LiveControlsPolicy.keyAction(Key.DirectionCenter, false, true, false, true, okUpOwed = true))
+    }
+
+    @Test
     fun `UP and DOWN with the controls hidden change channel`() {
         assertEquals("up", KeyAction.ZAP_PREVIOUS, key(Key.DirectionUp))
         assertEquals("down", KeyAction.ZAP_NEXT, key(Key.DirectionDown))
