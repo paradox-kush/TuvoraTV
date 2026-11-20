@@ -69,6 +69,15 @@ import dev.chrisbanes.haze.hazeEffect
 
 private val SidebarLeadingVisualSize = NuvioComponents.tokens.sidebar.leadingVisual
 private val SidebarContentGap = NuvioComponents.tokens.sidebar.contentGap
+private const val SidebarItemFocusScale = 1.1f
+
+// The header was nudged down with a layout-neutral offset(y = md) and the item list pulled up with
+// offset(y = -12.dp), so when the list filled the rail the focused (1.1x scaled) first pill ran into
+// the header. Both nudges are now real layout: header inset via padding, no upward pull on the list,
+// and the gap below the header exceeds the focus-scale overhang of the first pill.
+private val SidebarHeaderTopInset = NuvioTheme.spacing.sm
+private val SidebarHeaderToListGap = NuvioTheme.spacing.md
+
 private val SidebarProfileContentGap = NuvioComponents.tokens.sidebar.contentGap + NuvioTheme.spacing.xs
 
 @Composable
@@ -156,7 +165,7 @@ internal fun ModernSidebarBlurPanel(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = NuvioTheme.spacing.md),
+                    .padding(top = SidebarHeaderTopInset),
                 contentAlignment = Alignment.Center
             ) {
                 SidebarProfileItem(
@@ -176,7 +185,7 @@ internal fun ModernSidebarBlurPanel(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = NuvioTheme.spacing.md),
+                    .padding(top = SidebarHeaderTopInset),
                 contentAlignment = Alignment.Center
             ) {
                 BrandWordmark(
@@ -189,7 +198,7 @@ internal fun ModernSidebarBlurPanel(
             }
         }
 
-        Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+        Spacer(modifier = Modifier.height(SidebarHeaderToListGap))
 
         Column(
             modifier = Modifier
@@ -199,7 +208,6 @@ internal fun ModernSidebarBlurPanel(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Column(
-                modifier = Modifier.offset(y = (-12).dp),
                 verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm - NuvioTheme.spacing.xxs)
             ) {
                 drawerItems.forEachIndexed { index, item ->
@@ -285,7 +293,7 @@ private fun SidebarNavigationItem(
     )
     val iconTint = if (selected && !isFocused) iconTintTarget else animatedIconTint
     val itemScale by animateFloatAsState(
-        targetValue = if (isFocused) 1.1f else 1f,
+        targetValue = if (isFocused) SidebarItemFocusScale else 1f,
         animationSpec = tween(durationMillis = NuvioMotion.tokens.durations.fast, easing = NuvioMotion.tokens.easings.standard),
         label = "sidebarItemScale"
     )
