@@ -914,6 +914,8 @@ fun LiveGuide(
                 modifier = Modifier
                     .width(categoryColWidth)
                     .fillMaxHeight()
+                    // Restyle B: the group list is one panel, not a stack of outlined rows.
+                    .guidePanel()
                     .focusRequester(categoryListFocus)
                     // B254: leaving the column drops a switch still pending for a category only passed.
                     .onFocusChanged {
@@ -1054,6 +1056,8 @@ fun LiveGuide(
                         onMenu = { pinMenuOpen = true },
                     )
                 }
+                // Restyle B: the time ruler, the notices and the rows share ONE panel.
+                Column(Modifier.weight(1f).fillMaxWidth().guidePanel()) {
                 GuideTimeHeaderWithDay(
                     windowStartMs = windowStartMs,
                     nowMs = nowMs,
@@ -1274,6 +1278,7 @@ fun LiveGuide(
                         }
                     }
                 }
+                } // Restyle B guide panel
             }
         }
         } // B56 guide scroll spec
@@ -1900,12 +1905,19 @@ private fun GuideChannelListSkeleton(layout: GuideLayoutPreset) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(layout.rowHeightDp.dp)
-                    .padding(horizontal = NuvioTheme.spacing.md, vertical = 1.dp)
-                    .padding(horizontal = NuvioTheme.spacing.sm),
+                    .guideListRow(
+                        look = GuideFocusLanguage.listLook(focused = false, selected = false),
+                        divider = true,
+                        barColor = Color.Transparent,
+                        playingColor = Color.Transparent,
+                    ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    modifier = Modifier.width(layout.channelWidthDp.dp).fillMaxHeight(),
+                    modifier = Modifier
+                        .padding(start = NuvioTheme.spacing.md + NuvioTheme.spacing.sm)
+                        .width(layout.channelWidthDp.dp)
+                        .fillMaxHeight(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
                 ) {
@@ -1917,24 +1929,30 @@ private fun GuideChannelListSkeleton(layout: GuideLayoutPreset) {
                     )
                     GuideSkeletonBlock(width = 140.dp, height = 12.dp, shimmerOffsetState = shimmerOffsetState)
                 }
+                Spacer(Modifier.width(NuvioTheme.spacing.sm))
+                // The lane: one darker strip, a tick at each (placeholder) programme start.
                 Row(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .padding(start = NuvioTheme.spacing.sm, top = 3.dp, bottom = 3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        .background(GuideListStyle.lane()),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     listOf(1f, 1.6f, 1.2f).forEach { cellWeight ->
-                        Box(
-                            modifier = Modifier
-                                .weight(cellWeight)
-                                .fillMaxHeight()
-                                .clip(RoundedCornerShape(NuvioTheme.radii.xs))
-                                .placeholderCardShimmer(
-                                    shimmerOffsetState = shimmerOffsetState,
-                                    backgroundColor = NuvioTheme.colors.BackgroundElevated.copy(alpha = 0.4f)
-                                )
-                        )
+                        Row(Modifier.weight(cellWeight).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.width(GuideFocusLanguage.HAIRLINE_DP.dp).fillMaxHeight().background(GuideListStyle.Hairline))
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = NuvioTheme.spacing.sm)
+                                    .weight(1f)
+                                    .height(12.dp)
+                                    .clip(RoundedCornerShape(NuvioTheme.radii.xxs))
+                                    .placeholderCardShimmer(
+                                        shimmerOffsetState = shimmerOffsetState,
+                                        backgroundColor = NuvioTheme.colors.SurfaceVariant.copy(alpha = 0.5f)
+                                    )
+                            )
+                        }
                     }
                 }
             }
@@ -2000,10 +2018,15 @@ private fun GuideCategoryRow(
                 right = rightFocus
                 if (upFocus != null) up = upFocus
             }
-            .padding(vertical = 2.dp)
-            .clip(RoundedCornerShape(NuvioTheme.radii.sm))
-            // Redesign change 2: ring = cursor, soft fill = the group shown (GuideFocusLanguage).
-            .guideFocusLook(GuideFocusLanguage.look(focused = focused, selected = selected), RoundedCornerShape(NuvioTheme.radii.sm))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(9.dp))
+            // Restyle B: solid fill = cursor, quiet fill + thin bar = the group shown (GuideFocusLanguage.listLook).
+            .guideListRow(
+                look = GuideFocusLanguage.listLook(focused = focused, selected = selected),
+                divider = false,
+                barColor = NuvioTheme.colors.FocusRing,
+                playingColor = NuvioTheme.colors.Error,
+            )
             // ponytail: onFocusChanged MUST precede the focus target to observe it. And use
             // clickable (not plain focusable) — plain focusable() didn't reliably take D-pad focus
             // in this LazyColumn, so the category never highlighted and selectCategory never fired
@@ -2040,8 +2063,12 @@ private fun GuideCategoryRow(
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            fontWeight = if (selected) FontWeight.Bold else null,
-            color = if (focused || selected) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary,
+            fontWeight = if (selected || focused) FontWeight.Bold else null,
+            color = when {
+                focused -> GuideListStyle.FocusContent
+                selected -> NuvioTheme.colors.TextPrimary
+                else -> NuvioTheme.colors.TextSecondary
+            },
         )
     }
     } // Column (B4 caption)
@@ -2117,13 +2144,14 @@ internal fun GuideChannelRow(
         modifier = Modifier
             .fillMaxWidth()
             .height(layout.rowHeightDp.dp)
-            .padding(horizontal = NuvioTheme.spacing.md, vertical = 1.dp)
-            .clip(RoundedCornerShape(NuvioTheme.radii.sm))
-            // Redesign change 2: ring = cursor, soft fill = the row whose cells the cursor is in, red edge = playing
-            // (GuideFocusLanguage). Playing never draws a ring and never shortens the name.
-            .guideFocusLook(
-                GuideFocusLanguage.look(focused = isFocused, selected = timelineActive, playing = isPlaying),
-                RoundedCornerShape(NuvioTheme.radii.sm),
+            // Restyle B: solid fill = cursor (the label block; the lane stays dark), quiet fill + thin bar = the row whose
+            // cells the cursor is in, red edge = playing, hairline between rows (GuideFocusLanguage.listLook).
+            // Playing never draws a ring and never shortens the name.
+            .guideListRow(
+                look = GuideFocusLanguage.listLook(focused = isFocused, selected = timelineActive, playing = isPlaying),
+                divider = true,
+                barColor = NuvioTheme.colors.FocusRing,
+                playingColor = NuvioTheme.colors.Error,
             )
             .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
@@ -2173,27 +2201,33 @@ internal fun GuideChannelRow(
                     GuideChannelRowKeyPolicy.Action.FOCUS_TABS -> { onUpToTabs?.invoke(); true }
                 }
             }
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(horizontal = NuvioTheme.spacing.sm),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Fixed label block: number | logo | name (+favorite star) — the timeline cells fill the rest.
+        // Fixed label block: number | logo | name (+favorite star) — the timeline lane fills the rest, flush to the panel edge.
         Row(
-            modifier = Modifier.width(layout.channelWidthDp.dp).fillMaxHeight(),
+            modifier = Modifier
+                .padding(start = NuvioTheme.spacing.md + NuvioTheme.spacing.sm)
+                .width(layout.channelWidthDp.dp)
+                .fillMaxHeight(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
         ) {
             Text(
                 text = number.toString(),
                 style = MaterialTheme.typography.labelMedium,
-                color = if (isPlaying) NuvioTheme.colors.Error else NuvioTheme.colors.TextSecondary,
+                color = when {
+                    isPlaying -> NuvioTheme.colors.Error
+                    isFocused -> GuideListStyle.FocusContent
+                    else -> NuvioTheme.colors.TextSecondary
+                },
                 fontWeight = if (isPlaying) FontWeight.Bold else null,
                 modifier = Modifier.width(30.dp),
                 maxLines = 1
             )
             if (GuideNoGuidePolicy.needsMonogram(logo)) {
                 // UX64: no logo is a monogram tile, not an empty square.
-                MonogramTile(name = name, modifier = Modifier.size(30.dp))
+                MonogramTile(name = name, modifier = Modifier.size(30.dp), container = if (isFocused) Color(0xFF262626) else GuideListStyle.TileContainer)
             } else {
                 AsyncImage(
                     model = logo,
@@ -2204,7 +2238,8 @@ internal fun GuideChannelRow(
             Text(
                 text = name,
                 style = MaterialTheme.typography.bodySmall,
-                color = NuvioTheme.colors.TextPrimary,
+                color = if (isFocused) GuideListStyle.FocusContent else NuvioTheme.colors.TextPrimary,
+                fontWeight = if (isFocused) FontWeight.SemiBold else null,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
@@ -2218,7 +2253,7 @@ internal fun GuideChannelRow(
                 Icon(
                     imageVector = Icons.Default.PushPin,
                     contentDescription = null,
-                    tint = NuvioTheme.colors.Primary,
+                    tint = if (isFocused) GuideListStyle.FocusContent else NuvioTheme.colors.Primary,
                     modifier = Modifier.size(NuvioTheme.spacing.md)
                 )
             }
@@ -2226,11 +2261,12 @@ internal fun GuideChannelRow(
                 Icon(
                     imageVector = Icons.Default.Star,
                     contentDescription = null,
-                    tint = NuvioTheme.colors.Primary,
+                    tint = if (isFocused) GuideListStyle.FocusContent else NuvioTheme.colors.Primary,
                     modifier = Modifier.size(NuvioTheme.spacing.md)
                 )
             }
         }
+        Spacer(Modifier.width(NuvioTheme.spacing.sm))
         GuideProgrammeCells(
             programmes = epg?.programmes ?: emptyList(),
             channel = channel,
@@ -2304,11 +2340,11 @@ private const val PLAYING_EDGE_DP = 4
 
 /** UX64: the channel's first letter on a tile in the app's neutral surface, for a channel with no logo. */
 @Composable
-internal fun MonogramTile(name: String, modifier: Modifier = Modifier) {
+internal fun MonogramTile(name: String, modifier: Modifier = Modifier, container: Color = NuvioTheme.colors.BackgroundElevated) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(NuvioTheme.radii.xs))
-            .background(NuvioTheme.colors.BackgroundElevated),
+            .background(container),
         contentAlignment = Alignment.Center,
     ) {
         Text(

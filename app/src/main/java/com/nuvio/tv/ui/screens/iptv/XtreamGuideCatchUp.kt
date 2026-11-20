@@ -28,6 +28,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -164,7 +165,8 @@ internal fun RowScope.GuideProgrammeCells(
         modifier = Modifier
             .weight(1f)
             .fillMaxHeight()
-            .padding(start = NuvioTheme.spacing.sm, top = 3.dp, bottom = 3.dp)
+            // Restyle B: the programme cells are ONE darker lane (flush to the panel edge), a hairline under it.
+            .guideLane(GuideListStyle.lane())
             // LEFT and RIGHT are the time-travel keys: inside the strip they step between cells,
             // and AT the window's edge they scroll the window itself. That is why BACK, not LEFT,
             // is the way out of the timeline.
@@ -219,12 +221,8 @@ internal fun RowScope.GuideProgrammeCells(
                             stripFocused = it.isFocused
                             if (it.isFocused) focusedStart = null
                         }
-                        // The app's D-pad vocabulary: a focused strip is outlined like a cell.
-                        .border(
-                            if (stripFocused) GuideFocusLanguage.RING_DP.dp else 0.dp,
-                            if (stripFocused) NuvioTheme.colors.BorderFocused else Color.Transparent,
-                            RoundedCornerShape(NuvioTheme.radii.xs),
-                        )
+                        // Restyle B: a focused strip is filled, like a cell (a lighter solid, since it spans the lane).
+                        .background(if (stripFocused) Color.White.copy(alpha = 0.22f) else Color.Transparent)
                         // clickable for reliable D-pad focus (see GuideCell); OK on an empty
                         // stretch of time has nothing to do.
                         .clickable { (onStripOk ?: onExitTimeline)?.invoke() }
@@ -233,7 +231,7 @@ internal fun RowScope.GuideProgrammeCells(
     ) {
         Row(
             modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+            horizontalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             if (visible.isEmpty()) {
                 GuideCell(
@@ -290,7 +288,7 @@ internal fun RowScope.GuideProgrammeCells(
                 Spacer(Modifier.weight(nowFraction.coerceIn(0.001f, 0.999f)))
                 Box(
                     Modifier
-                        .width(2.dp)
+                        .width(3.dp)
                         .fillMaxHeight()
                         .background(NuvioTheme.colors.Error)
                 )
@@ -338,20 +336,16 @@ private fun RowScope.GuideCell(
         modifier = Modifier
             .weight(weightMs.coerceAtLeast(60_000L).toFloat())
             .fillMaxHeight()
-            .clip(RoundedCornerShape(NuvioTheme.radii.xs))
-            .background(
+            // Restyle B: no boxes. Focus = the solid fill (GuideFocusLanguage.listLook), airing now = a lighter
+            // block on the lane, a hairline tick at each programme start; fillers are bare lane.
+            .drawBehind {
+                val tick = GuideFocusLanguage.HAIRLINE_DP.dp.toPx()
                 when {
-                    isFocused -> NuvioTheme.colors.FocusBackground
-                    live -> NuvioTheme.colors.Primary.copy(alpha = 0.20f)
-                    filler -> NuvioTheme.colors.BackgroundElevated.copy(alpha = 0.4f)
-                    else -> NuvioTheme.colors.BackgroundElevated
+                    isFocused -> drawRect(GuideListStyle.FocusFill)
+                    live -> drawRect(GuideListStyle.LiveBlock)
                 }
-            )
-            .border(
-                if (isFocused) GuideFocusLanguage.RING_DP.dp else 0.dp,
-                if (isFocused) NuvioTheme.colors.BorderFocused else Color.Transparent,
-                RoundedCornerShape(NuvioTheme.radii.xs)
-            )
+                if (!filler && !isFocused) drawRect(GuideListStyle.Hairline, size = androidx.compose.ui.geometry.Size(tick, size.height))
+            }
             .then(focusRequesters.fold<FocusRequester, Modifier>(Modifier) { m, r -> m.focusRequester(r) })
             .onFocusChanged { isFocused = it.isFocused; if (it.isFocused) latestOnFocused() }
             // clickable, not focusable(): the same reason GuideCategoryRow gives — plain
@@ -366,7 +360,7 @@ private fun RowScope.GuideCell(
                 Text(
                     text = REPLAY_GLYPH,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (isFocused) NuvioTheme.colors.FocusContent else NuvioTheme.colors.Primary,
+                    color = if (isFocused) GuideListStyle.FocusContent else NuvioTheme.colors.Primary,
                     fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.width(4.dp))
@@ -375,7 +369,7 @@ private fun RowScope.GuideCell(
                 Text(
                     text = stringResource(R.string.rec_badge),
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (isFocused) NuvioTheme.colors.FocusContent else NuvioTheme.colors.Error,
+                    color = if (isFocused) GuideListStyle.FocusContent else NuvioTheme.colors.Error,
                     fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.width(4.dp))
@@ -384,11 +378,12 @@ private fun RowScope.GuideCell(
                 text = title,
                 style = MaterialTheme.typography.labelMedium,
                 color = when {
-                    isFocused -> NuvioTheme.colors.FocusContent
+                    isFocused -> GuideListStyle.FocusContent
                     live -> NuvioTheme.colors.TextPrimary
                     else -> NuvioTheme.colors.TextSecondary
                 }.let { if (dim && !isFocused) it.copy(alpha = 0.55f) else it },
                 fontStyle = if (dim) androidx.compose.ui.text.font.FontStyle.Italic else null,
+                fontWeight = if (isFocused || live) FontWeight.SemiBold else null,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -416,11 +411,12 @@ internal fun GuideTimeHeaderWithDay(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = NuvioTheme.spacing.md + NuvioTheme.spacing.sm, vertical = 2.dp),
+            // Restyle B: the ruler's slots sit on the same lane as the rows and run to the panel edge.
+            .padding(start = NuvioTheme.spacing.md + NuvioTheme.spacing.sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
-            modifier = Modifier.width(labelWidth + NuvioTheme.spacing.sm),
+            modifier = Modifier.width(labelWidth + NuvioTheme.spacing.sm).padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             val atLive = GuideTimeTravel.isAtLiveEdge(windowStartMs, nowMs)
@@ -443,7 +439,10 @@ internal fun GuideTimeHeaderWithDay(
                 text = guideHhMm(windowStartMs + i * GuideTimeTravel.SLOT_MS),
                 style = MaterialTheme.typography.labelSmall,
                 color = NuvioTheme.colors.TextSecondary,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .background(GuideListStyle.lane())
+                    .padding(start = 6.dp, top = 6.dp, bottom = 6.dp),
                 maxLines = 1
             )
         }
@@ -701,3 +700,10 @@ internal val NO_REC_STARTS: Set<Long> = emptySet()
 
 /** The ⟲ every broadcaster guide uses for "this one was kept". */
 private const val REPLAY_GLYPH = "⟲"
+
+/** The programme lane: a darker strip under the cells with a hairline at its foot (the row divider through the lane). */
+private fun Modifier.guideLane(lane: Color): Modifier = this.drawBehind {
+    val hair = GuideFocusLanguage.HAIRLINE_DP.dp.toPx()
+    drawRect(lane)
+    drawRect(GuideListStyle.Hairline, topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - hair), size = androidx.compose.ui.geometry.Size(size.width, hair))
+}

@@ -43,4 +43,50 @@ internal object GuideFocusLanguage {
         restOutline = !focused,
         playingMarks = playing,
     )
+
+    // ---- Restyle "B" (2026-11-20, owner pick; supersedes the ring ONLY for the guide list) -----------------------
+    // The group column, the channel rows and the programme lane sit on one panel each, divided by hairlines.
+    // Focus there is a SOLID FILL with dark content (the ring stays everywhere else: side panel, overlay, hub).
+    // Marks stay distinct: focus = solid white fill; selected = quiet fill + a thin accent bar; playing = a red edge.
+
+    /** Solid focus fill (opaque white): >= 15:1 against AMOLED black, so it is unmistakable on a TV. */
+    const val LIST_FOCUS_FILL_ARGB = 0xFFFFFFFFL
+
+    /** Text / icons drawn on the solid fill. */
+    const val LIST_FOCUS_CONTENT_ARGB = 0xFF111111L
+
+    /** The selected row's quiet fill (white at this alpha over the panel). Far below the focus fill on purpose. */
+    const val QUIET_FILL_ALPHA = 0.08f
+
+    /** The selected group's / active row's accent bar, in dp. */
+    const val SELECTED_BAR_DP = 3
+
+    /** The playing channel's red left edge, in dp. */
+    const val PLAYING_EDGE_DP = 5
+
+    /** Hairline between rows / programme ticks, in dp. */
+    const val HAIRLINE_DP = 1
+
+    data class ListLook(
+        /** Solid fill: the element the remote points at. */
+        val solidFill: Boolean,
+        /** Quiet fill: selected and NOT focused (focus wins the fill). */
+        val quietFill: Boolean,
+        /** The thin accent bar on the selected element, kept under focus. */
+        val selectedBar: Boolean,
+        /** Content flips dark because it sits on the solid fill. */
+        val darkContent: Boolean,
+        val playingEdge: Boolean,
+        /** Rows are always divided by a hairline, so the panel survives AMOLED black. */
+        val hairline: Boolean,
+    )
+
+    fun listLook(focused: Boolean, selected: Boolean, playing: Boolean = false): ListLook = ListLook(
+        solidFill = focused,
+        quietFill = selected && !focused,
+        selectedBar = selected,
+        darkContent = focused,
+        playingEdge = playing,
+        hairline = true,
+    )
 }
