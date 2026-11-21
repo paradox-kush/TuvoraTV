@@ -63,7 +63,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -218,16 +218,16 @@ fun ProfileSelectionScreen(
     viewModel: ProfileSelectionViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
-    val profiles by viewModel.profiles.collectAsState()
-    val activeProfileId by viewModel.activeProfileId.collectAsState()
-    val avatarCatalog by viewModel.avatarCatalog.collectAsState()
-    val profileBackgroundCatalog by viewModel.profileBackgroundCatalog.collectAsState()
-    val hasProfileBackgroundAccess by viewModel.hasProfileBackgroundAccess.collectAsState()
-    val isCreating by viewModel.isCreating.collectAsState()
-    val isSaving by viewModel.isSaving.collectAsState()
-    val isCopyingSettings by viewModel.isCopyingSettings.collectAsState()
-    val profilePinEnabled by viewModel.profilePinEnabled.collectAsState()
-    val isPinOperationInProgress by viewModel.isPinOperationInProgress.collectAsState()
+    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
+    val activeProfileId by viewModel.activeProfileId.collectAsStateWithLifecycle()
+    val avatarCatalog by viewModel.avatarCatalog.collectAsStateWithLifecycle()
+    val profileBackgroundCatalog by viewModel.profileBackgroundCatalog.collectAsStateWithLifecycle()
+    val hasProfileBackgroundAccess by viewModel.hasProfileBackgroundAccess.collectAsStateWithLifecycle()
+    val isCreating by viewModel.isCreating.collectAsStateWithLifecycle()
+    val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
+    val isCopyingSettings by viewModel.isCopyingSettings.collectAsStateWithLifecycle()
+    val profilePinEnabled by viewModel.profilePinEnabled.collectAsStateWithLifecycle()
+    val isPinOperationInProgress by viewModel.isPinOperationInProgress.collectAsStateWithLifecycle()
     val avatarImageUrlsById = remember(avatarCatalog, profiles) {
         buildMap {
             avatarCatalog.forEach { avatar -> put(avatar.id, avatar.imageUrl) }
@@ -262,7 +262,7 @@ fun ProfileSelectionScreen(
         }
     }
     val focusedProfile = profiles.firstOrNull { it.id == focusedProfileId }
-    val profileThemes by viewModel.profileThemes.collectAsState()
+    val profileThemes by viewModel.profileThemes.collectAsStateWithLifecycle()
     val focusedBrandWordmarkRes = remember(focusedProfileId, profileThemes) {
         val pid = focusedProfileId ?: return@remember null
         val theme = profileThemes[pid]

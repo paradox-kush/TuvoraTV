@@ -57,7 +57,6 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -1020,7 +1019,7 @@ private fun EssentialAdvancedSettingsContent(
     advancedSettingsViewModel: AdvancedSettingsViewModel = hiltViewModel()
 ) {
     var showConfirmation by remember { mutableStateOf(false) }
-    val advancedUiState by advancedSettingsViewModel.uiState.collectAsState()
+    val advancedUiState by advancedSettingsViewModel.uiState.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier.fillMaxSize(),
