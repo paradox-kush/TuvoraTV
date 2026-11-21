@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -124,6 +125,12 @@ class RadarChannelMatcher @Inject constructor(
         assembleCandidates()
     }
 
+    /** The visible lineup (selection and hidden groups applied) and the hidden-channel test for matched channels. */
+    private data class Assembled(
+        val candidates: List<CandidateChannel>,
+        val hiddenChannels: ((playlistId: String, name: String, epgChannelId: String?) -> Boolean)?,
+    )
+
     suspend fun match(
         fixture: RadarFixture,
         league: RadarLeague?,
@@ -139,16 +146,27 @@ class RadarChannelMatcher @Inject constructor(
         val keywords = league?.keywords.orEmpty()
         val prepared = SportsEventMatchEngine.prepare(fixture, keywords)
         val homeRegion = SportsBroadcastRegionPolicy.regionOfCountry(fixture.country)
-        val candidates = assembleCandidates()
-        val named = candidates.mapNotNull { c ->
+        val (candidates, hiddenChannels) = assembleCandidates()
+        // What the viewer hid is decided per MATCHED channel (one identity hash each, memoised for this lookup), never
+        // for the whole lineup: see SportsChannelVisibilityPolicy.
+        val hiddenMemo = HashMap<String, Boolean>()
+        fun visible(c: CandidateChannel) = hiddenChannels == null ||
+            !hiddenMemo.getOrPut(c.contentId) { hiddenChannels(c.playlistId, c.name, c.epgChannelId) }
+        fun merge(matches: List<ChannelMatch>) = mergeMatches(matches.filter { visible(it.channel) })
+        val named = ArrayList<ChannelMatch>()
+        candidates.forEachIndexed { i, c ->
+            // Cooperative: a 55k-channel lineup must not hold a cancelled (timed-out) lookup on the CPU.
+            if (i % 4096 == 0) ensureActive()
+            if (!SportsEventMatchEngine.nameMayMatch(prepared, c.name)) return@forEachIndexed
             val evidence = SportsEventMatchEngine.name(prepared, c.name)
-            if (evidence.strength == 0) return@mapNotNull null
-            ChannelMatch(c, programme = null,
+            if (evidence.strength == 0) return@forEachIndexed
+            named += ChannelMatch(c, programme = null,
                 score = evidence.strength + SportsBroadcastRegionPolicy.homeRegionBoost(c.name, homeRegion),
                 confidence = evidence.confidence, evidence = evidence)
-        }.sortedWith(matchOrder).take(NAME_POOL_CAP)
+        }
+        val namedPool = named.sortedWith(matchOrder).asSequence().filter { visible(it.channel) }.take(NAME_POOL_CAP).toList()
         if (generation != matcherGeneration.get()) return@withContext emptyList()
-        onPartial(mergeMatches(named))
+        onPartial(merge(namedPool))
 
         // Read the local guides before any provider probes. These queries never fetch a catalog.
         val cached = coroutineScope {
@@ -157,18 +175,19 @@ class RadarChannelMatcher @Inject constructor(
             mirror.await() + provider.await() + stationMatches(candidates, stations, homeRegion)
         }
         if (generation != matcherGeneration.get()) return@withContext emptyList()
-        onPartial(mergeMatches(named + cached))
+        onPartial(merge(namedPool + cached))
         val local = cached + stationMatches(candidates, stationTask?.await().orEmpty(), homeRegion)
         if (generation != matcherGeneration.get()) return@withContext emptyList()
-        onPartial(mergeMatches(named + local))
+        onPartial(merge(namedPool + local))
         val resolved = local.filter { it.via == MatchVia.EPG && it.confidence == MatchConfidence.CONFIRMED }
             .map { it.channel.contentId }.toSet()
         // Generic sports channels are probe candidates only. They never pad displayed results.
         // B141: one normalisation per channel (was one per marker, per channel, per fixture open).
-        val probeCandidates = (named.map { it.channel } +
-            SportsGenericChannelPolicy.genericSportChannels(candidates, { it.name })
-        ).distinctBy { it.contentId }.filterNot { it.contentId in resolved }.take(EPG_PROBE_CAP)
+        // Lazy: the generic-channel scan stops at the first few visible candidates instead of normalising the lineup.
         val probed = if (fixture.startEpochMs == null || resolved.isNotEmpty()) emptyList() else coroutineScope {
+            val probeCandidates = (namedPool.asSequence().map { it.channel } +
+                candidates.asSequence().filter { SportsGenericChannelPolicy.isGenericSportName(it.name) }
+            ).distinctBy { it.contentId }.filterNot { it.contentId in resolved }.filter(::visible).take(EPG_PROBE_CAP).toList()
             val semaphore = Semaphore(EPG_CONCURRENCY)
             probeCandidates.map { c -> async {
                 semaphore.withPermit {
@@ -181,7 +200,7 @@ class RadarChannelMatcher @Inject constructor(
                 }
             } }.awaitAll().filterNotNull()
         }
-        if (generation != matcherGeneration.get()) emptyList() else mergeMatches(named + local + probed)
+        if (generation != matcherGeneration.get()) emptyList() else merge(namedPool + local + probed)
     }
 
     private val matchOrder = compareByDescending<ChannelMatch> { SportsEventMatchEngine.rank(it.confidence) }
@@ -288,9 +307,16 @@ class RadarChannelMatcher @Inject constructor(
         homeRegion: String?,
     ): List<ChannelMatch> {
         if (stations.isEmpty()) return emptyList()
+        // coreNorm costs ~130 us a name on a 4-core Onn box (7.3 s for a 55k lineup, per lookup). A channel can equal a
+        // station (whole core, squashed core, or brand) only if its core's first token and the station core's first
+        // token are prefixes of one another, so only those channels pay for coreNorm.
+        val stationLeads = stations.mapNotNull { st -> st.channel?.let { EpgNorm.coreNorm(it).substringBefore(' ') } }
+            .filter { it.isNotEmpty() }.toSet()
+        if (stationLeads.isEmpty()) return emptyList()
         val byCore = HashMap<String, MutableList<CandidateChannel>>()
         val bySquash = HashMap<String, MutableList<CandidateChannel>>()
         for (c in candidates) {
+            if (EpgNorm.coreLeadCandidates(c.name).none { lead -> stationLeads.any { lead.startsWith(it) || it.startsWith(lead) } }) continue
             val core = EpgNorm.coreNorm(c.name)
             if (core.isEmpty()) continue
             byCore.getOrPut(core) { mutableListOf() }.add(c)
@@ -486,7 +512,7 @@ class RadarChannelMatcher @Inject constructor(
 
     // --- source assembly ------------------------------------------------------
 
-    private suspend fun assembleCandidates(): List<CandidateChannel> {
+    private suspend fun assembleCandidates(): Assembled {
         // Every enabled playlist, whatever its source: the factory hands back the Xtream
         // player_api client, the M3U catalog client, or the Stalker portal session as needed.
         val overlay = try { overlayRepository.freshSnapshot() }
@@ -498,49 +524,19 @@ class RadarChannelMatcher @Inject constructor(
                     it.categorySelections.live?.isEmpty() != true
             }
         }
-        return buildList {
-            for (account in accounts) {
-                // A panel can return hundreds of thousands of rows. Keep transport and portal
-                // work off the computation pool; conversion below resumes on Default with match().
-                val catalogKey = account.id + ":" + account.hashCode() + ":" + contentDb.builtAt(account.id) + ":" + refreshStore.lastCheckedMs(account.id) + ":" + matcherGeneration.get()
-                // A playlist edit changes the catalog key: its older in-flight download is now stale.
-                lineupLoads.keys.filter { it.startsWith(account.id + ":") && it != catalogKey }
-                    .forEach { stale -> lineupLoads.remove(stale)?.cancel() }
-                val channels = withContext(Dispatchers.IO) {
-                    channelCache[catalogKey] ?: lineupLoads.computeIfAbsent(catalogKey) {
-                        // The load runs in the matcher's OWN scope: a caller that gives up (the game screen's bounded
-                        // lookup) cancels only its wait, never the load, so the next attempt finds it finished or
-                        // still running instead of restarting a multi-second panel download from zero.
-                        loadScope.async {
-                            try {
-                                run {
-                                  // A hung panel ends as a failure the caller sees (the game screen shows "couldn't check", with Retry).
-                                  kotlinx.coroutines.withTimeoutOrNull(lineupDeadlineMs) {
-                                val t0 = android.os.SystemClock.elapsedRealtime()
-                                clientFactory.clientFor(account).liveChannels(account)
-                                    .getOrDefault(emptyList())
-                                    .also { android.util.Log.i("RadarChannelMatcher", "lineup download ${it.size} rows in ${android.os.SystemClock.elapsedRealtime() - t0} ms") }
-                                    // Only cache success — this is an app-lifetime singleton, and caching a
-                                    // transient panel failure would leave matching dead until restart.
-                                    .also { channels ->
-                                        if (channels.isNotEmpty()) {
-                                            channelCache.keys.removeAll { it.startsWith(account.id + ":") && it != catalogKey }
-                                            channelCache[catalogKey] = channels
-                                        }
-                                    }
-                                  } ?: throw IllegalStateException("playlist lineup download timed out")
-                                }
-                            } finally {
-                                lineupLoads.remove(catalogKey)
-                            }
-                        }
-                    }.let { load ->
-                        // One slow playlist must not hold the others hostage: wait for it only this long, then
-                        // match with the lineups that are ready. Its download keeps running in the background and
-                        // its channels join the next lookup (Retry / next open).
-                        withTimeoutOrNull(accountWaitMs) { load.await() } ?: emptyList()
-                    }
-                }
+        // Start (or join) EVERY playlist's download before waiting on any: started one after another, each behind the
+        // previous playlist's wait, three cold panels took up to 3 x accountWaitMs inside a 6 s lookup.
+        val loads = withContext(Dispatchers.IO) { accounts.map { account -> account to lineupFor(account) } }
+        // One shared wait: a playlist not ready by then is matched without; its download keeps running in the
+        // background and its channels join the next lookup (Retry / next open).
+        val waitUntil = System.nanoTime() + accountWaitMs * 1_000_000L
+        val candidates = buildList {
+            for ((account, load) in loads) {
+                val (catalogKey, lineup) = load
+                val channels = lineup?.let { deferred ->
+                    val remainingMs = ((waitUntil - System.nanoTime()) / 1_000_000L).coerceAtLeast(0L)
+                    if (deferred.isCompleted) deferred.await() else withTimeoutOrNull(remainingMs) { deferred.await() }
+                } ?: channelCache[catalogKey] ?: emptyList()
                 val categoryNames = if (SportsChannelVisibilityPolicy.needsCategoryNames(account, overlay)) {
                     withContext(Dispatchers.IO) {
                         categoryNameMutex.withLock {
@@ -557,7 +553,7 @@ class RadarChannelMatcher @Inject constructor(
                         }
                     }
                 } else emptyList()
-                for (ch in SportsChannelVisibilityPolicy.filter(account, channels, categoryNames, overlay)) {
+                for (ch in SportsChannelVisibilityPolicy.groupVisible(account, channels, categoryNames, overlay)) {
                     add(
                         CandidateChannel(
                             playlistId = account.id,
@@ -573,6 +569,47 @@ class RadarChannelMatcher @Inject constructor(
                             catalogRevision = catalogKey,
                         )
                     )
+                }
+            }
+        }
+        return Assembled(candidates, SportsChannelVisibilityPolicy.hiddenChannels(overlay))
+    }
+
+    /**
+     * The playlist's catalog key and its lineup download: null when the lineup is already cached (read it from
+     * [channelCache]), else the shared in-flight load, started here when none is running.
+     */
+    private suspend fun lineupFor(account: com.nuvio.tv.core.iptv.XtreamAccount): Pair<String, kotlinx.coroutines.Deferred<List<XtreamChannel>>?> {
+        // A panel can return hundreds of thousands of rows. Keep transport and portal
+        // work off the computation pool; conversion resumes on Default with match().
+        val catalogKey = account.id + ":" + account.hashCode() + ":" + contentDb.builtAt(account.id) + ":" + refreshStore.lastCheckedMs(account.id) + ":" + matcherGeneration.get()
+        // A playlist edit changes the catalog key: its older in-flight download is now stale.
+        lineupLoads.keys.filter { it.startsWith(account.id + ":") && it != catalogKey }
+            .forEach { stale -> lineupLoads.remove(stale)?.cancel() }
+        if (channelCache[catalogKey] != null) return catalogKey to null
+        return catalogKey to lineupLoads.computeIfAbsent(catalogKey) {
+            // The load runs in the matcher's OWN scope: a caller that gives up (the game screen's bounded
+            // lookup) cancels only its wait, never the load, so the next attempt finds it finished or
+            // still running instead of restarting a multi-second panel download from zero.
+            loadScope.async {
+                try {
+                    // A hung panel ends as a failure the caller sees (the game screen shows "couldn't check", with Retry).
+                    kotlinx.coroutines.withTimeoutOrNull(lineupDeadlineMs) {
+                        val t0 = android.os.SystemClock.elapsedRealtime()
+                        clientFactory.clientFor(account).liveChannels(account)
+                            .getOrDefault(emptyList())
+                            .also { android.util.Log.i("RadarChannelMatcher", "lineup download ${it.size} rows in ${android.os.SystemClock.elapsedRealtime() - t0} ms") }
+                            // Only cache success — this is an app-lifetime singleton, and caching a
+                            // transient panel failure would leave matching dead until restart.
+                            .also { channels ->
+                                if (channels.isNotEmpty()) {
+                                    channelCache.keys.removeAll { it.startsWith(account.id + ":") && it != catalogKey }
+                                    channelCache[catalogKey] = channels
+                                }
+                            }
+                    } ?: throw IllegalStateException("playlist lineup download timed out")
+                } finally {
+                    lineupLoads.remove(catalogKey)
                 }
             }
         }

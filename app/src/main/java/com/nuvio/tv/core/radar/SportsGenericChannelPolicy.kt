@@ -20,8 +20,11 @@ internal object SportsGenericChannelPolicy {
         candidates: List<T>,
         name: (T) -> String,
         normalize: (String) -> String = SportsEventMatchEngine::normalize,
-    ): List<T> = candidates.filter { c ->
-        val normalized = normalize(name(c))
-        MARKERS.any { marker -> normalized.contains(marker) }
+    ): List<T> = candidates.filter { c -> isGenericSportName(name(c), normalize) }
+
+    /** One channel's answer, for callers that stop at the first few hits instead of scanning the whole lineup. */
+    fun isGenericSportName(name: String, normalize: (String) -> String = SportsEventMatchEngine::normalize): Boolean {
+        val normalized = normalize(name)
+        return MARKERS.any { marker -> normalized.contains(marker) }
     }
 }

@@ -56,6 +56,7 @@ class GameDetailViewModelTest {
         val store = mockk<XtreamAccountStore>(); every { store.accounts } returns accounts
         val profiles = mockk<ProfileManager>(); every { profiles.activeProfileId } returns MutableStateFlow(1)
         coEvery { matcher.match(any(), any(), any(), any(), any()) } returns emptyList()
+        every { matcher.inFlightLineupLoads() } returns 0
         return GameDetailViewModel(SavedStateHandle(mapOf("gameId" to "7")), repo, matcher, service, mockk<XtreamLivePlaylist>(relaxed = true), profiles, store, mockk<RadarPendingMatch>(relaxed = true))
     }
 
@@ -79,5 +80,29 @@ class GameDetailViewModelTest {
         advanceUntilIdle()
         assertEquals("failed after the deadline", com.nuvio.tv.core.sports.detail.screen.WatchStatus.FAILED, v.watch.value.status)
         assertEquals("with Retry", com.nuvio.tv.core.sports.detail.screen.PrimaryAction.Rematch(failed = true), v.watch.value.primary)
+    }
+
+    /**
+     * Onn: every open waited 6 s, failed, then repeated the SAME slow work for another 6 s before saying
+     * "Couldn't check your channels" (~13-14 s). A second attempt only helps while a playlist download is
+     * still in flight (cold start); otherwise the deadline's answer stands.
+     */
+    @Test fun `a timed-out lookup is not blindly repeated when no playlist is still downloading`() = runTest(main.dispatcher) {
+        val v = vm()
+        every { matcher.inFlightLineupLoads() } returns 0
+        coEvery { matcher.match(any(), any(), any(), any(), any()) } coAnswers { kotlinx.coroutines.delay(600_000); emptyList() }
+        accounts.value = listOf(mockk<XtreamAccount>(relaxed = true).also { every { it.enabled } returns true })
+        advanceUntilIdle()
+        coVerify(exactly = 1) { matcher.match(any(), any(), any(), any(), any()) }
+        assertEquals(com.nuvio.tv.core.sports.detail.screen.WatchStatus.FAILED, v.watch.value.status)
+    }
+
+    @Test fun `a cold lookup still waiting on a playlist download gets one more attempt`() = runTest(main.dispatcher) {
+        vm()
+        every { matcher.inFlightLineupLoads() } returns 1
+        coEvery { matcher.match(any(), any(), any(), any(), any()) } coAnswers { kotlinx.coroutines.delay(600_000); emptyList() }
+        accounts.value = listOf(mockk<XtreamAccount>(relaxed = true).also { every { it.enabled } returns true })
+        advanceUntilIdle()
+        coVerify(exactly = 2) { matcher.match(any(), any(), any(), any(), any()) }
     }
 }
