@@ -327,6 +327,86 @@ class RadarChannelMatcherSourcesTest {
         coVerify(exactly=6) { client.shortEpg(any(),any(),any()) }
     }
 
+    /**
+     * Onn (4-core, 2 GB), three playlists of 15k/26k/15k channels and ONE hidden channel: the game screen's lookup
+     * spent 2.9-4.3 s PER PLAYLIST hashing every channel's identity to find the hidden one, so it never reached the
+     * name pass inside its 6 s deadline and ended "Couldn't check your channels" on every open. A hidden channel is
+     * decided only for the channels that matched; the lineup is never hashed.
+     */
+    @Test
+    fun `one hidden channel does not make the lookup hash every channel of the lineup`() = runTest {
+        val account = xtreamAccount()
+        val hidden = channel(1, "Spain vs Austria", XTREAM_URL)
+        val lineup = listOf(hidden, channel(2, "Spain vs Austria HD", XTREAM_URL)) +
+            (3..5_000).map { channel(it, "US: Channel $it", XTREAM_URL) }
+        val overlay = OverlaySnapshot(channels = mapOf(
+            IptvIdentity.entityId(account.id, hidden.name, hidden.epgChannelId) to ChannelOverlay(hidden = true),
+        ))
+        val matcher = matcher(account to clientWith(*lineup.toTypedArray()), overlay = { overlay })
+        var hashed = 0
+        io.mockk.mockkObject(IptvIdentity)
+        every { IptvIdentity.entityId(any(), any(), any()) } answers { hashed++; callOriginal() }
+        try {
+            val partials = mutableListOf<RadarChannelMatcher.ChannelMatch>()
+            val result = matcher.match(FIXTURE, null) { partials += it }
+            assertEquals("the hidden channel stays hidden", listOf("Spain vs Austria HD"), result.map { it.channel.name })
+            assertTrue("hidden channel never reaches a partial", partials.none { it.channel.streamId == 1 })
+            // Matched channels plus the few generic probe candidates looked at; never the 5,000-row lineup.
+            assertTrue("hashed $hashed channel identities", hashed <= 20)
+        } finally {
+            io.mockk.unmockkObject(IptvIdentity)
+        }
+    }
+
+    /**
+     * Onn: once the hash was gone, the broadcaster-listing tier normalised every channel name (coreNorm, ~130 us each)
+     * on every open — 8.5 s for 55k channels and ONE listed station — and the scoring pass fully evaluated every
+     * name (6.9 s). Both now pay only for the channels that could match.
+     */
+    @Test
+    fun `listings and name scoring do not normalise every channel of the lineup`() = runTest {
+        val lineup = listOf(channel(1, "US: ESPN 2", XTREAM_URL), channel(2, "Spain vs Austria", XTREAM_URL)) +
+            (3..5_000).map { channel(it, "US: Channel $it", XTREAM_URL) }
+        val matcher = matcher(xtreamAccount() to clientWith(*lineup.toTypedArray()))
+        var cores = 0
+        var scored = 0
+        io.mockk.mockkObject(com.nuvio.tv.core.epg.EpgNorm, SportsEventMatchEngine)
+        every { com.nuvio.tv.core.epg.EpgNorm.coreNorm(any()) } answers { cores++; callOriginal() }
+        every { SportsEventMatchEngine.name(any(), any()) } answers { scored++; callOriginal() }
+        try {
+            val result = matcher.match(FIXTURE, null, stations = listOf(RadarTvStation(country = "United States", channel = "ESPN 2")))
+            assertEquals(setOf("US: ESPN 2", "Spain vs Austria"), result.map { it.channel.name }.toSet())
+            assertTrue("normalised $cores channel names for one listed station", cores <= 20)
+            assertTrue("fully scored $scored channel names", scored <= 20)
+        } finally {
+            io.mockk.unmockkObject(com.nuvio.tv.core.epg.EpgNorm, SportsEventMatchEngine)
+        }
+    }
+
+    /**
+     * Cold start: each playlist's download began only after the previous playlist's wait ended, so three panels
+     * waited up to 3 x [RadarChannelMatcher.accountWaitMs] in a row (12 s on the Onn) inside a 6 s lookup.
+     * All downloads start together and share one wait.
+     */
+    @Test
+    fun `playlist downloads start together and share one wait`() = runTest {
+        val accounts = (1..3).map { xtreamAccount().copy(id = "p$it", name = "Panel $it", baseUrl = "http://p$it.example") }
+        val clients = accounts.mapIndexed { i, _ ->
+            clientWith().also { client ->
+                coEvery { client.liveChannels(any(), any()) } coAnswers {
+                    kotlinx.coroutines.delay(400) // real time, in the matcher's own IO scope
+                    Result.success(listOf(channel(i + 1, "Spain vs Austria ${i + 1}", XTREAM_URL)))
+                }
+            }
+        }
+        val matcher = matcher(*accounts.zip(clients).toTypedArray()).also { it.accountWaitMs = 1_000 }
+        val started = System.nanoTime()
+        val result = withContext(kotlinx.coroutines.Dispatchers.Default) { matcher.match(FIXTURE, null) }
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertEquals("every playlist answered within the shared wait", 3, result.size)
+        assertTrue("downloads ran one after another: $elapsedMs ms", elapsedMs < 1_000)
+    }
+
     // --- helpers ---------------------------------------------------------------
 
     private fun matcher(

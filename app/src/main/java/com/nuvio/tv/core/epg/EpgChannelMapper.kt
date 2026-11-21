@@ -69,6 +69,40 @@ object EpgNorm {
         return if (i < toks.size) toks.subList(i, toks.size).joinToString(" ") else s
     }
 
+    /**
+     * The tokens one of which is [coreNorm]'s FIRST token: [baseNorm]'s tokens up to and including the first that is
+     * neither a region nor a quality tag (only those are ever stripped from the front). A superset, no regex, and for
+     * a plain-ASCII name no Unicode normalisation: a cheap check before paying for [coreNorm] across a whole lineup
+     * (coreNorm over 55k channels took 7.3 s on a 4-core Onn box).
+     */
+    fun coreLeadCandidates(s: String): List<String> {
+        var ascii = true
+        for (c in s) if (c.code >= 128) { ascii = false; break }
+        val name = if (ascii) s.lowercase() else Normalizer.normalize(s, Normalizer.Form.NFKD)
+            .filterNot { it.code in 0x0300..0x036F }.lowercase()
+        val out = ArrayList<String>(4)
+        val token = StringBuilder()
+        // True while the token just taken may still be stripped, i.e. the real first token can come after it.
+        fun take(t: String): Boolean {
+            out += t
+            return t in COUNTRY_PREF || t in QUALITY || GLUED_QUALITY_ENDINGS.any { t.endsWith(it) }
+        }
+        for (c in name) {
+            when {
+                c.isLetterOrDigit() || c == '+' -> token.append(c)
+                else -> {
+                    if (token.isNotEmpty()) { val t = token.toString(); token.setLength(0); if (!take(t)) return out }
+                    if (c == '&' && !take("and")) return out
+                }
+            }
+        }
+        if (token.isNotEmpty()) take(token.toString())
+        return out
+    }
+
+    /** [GLUED_PREFIX]'s quality endings ("uksd", "frhd"): such a token may be a stripped region prefix. */
+    private val GLUED_QUALITY_ENDINGS = listOf("sd", "hd", "fhd", "uhd", "4k")
+
     /** The comparable "core" of a channel name (region/quality stripped, word-digits folded). */
     fun coreNorm(s: String): String {
         val stripped = stripPrefix(baseNorm(s))

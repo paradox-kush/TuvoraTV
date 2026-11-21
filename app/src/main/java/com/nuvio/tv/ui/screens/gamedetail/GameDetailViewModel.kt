@@ -12,6 +12,7 @@ import com.nuvio.tv.core.radar.RadarPendingMatch
 import com.nuvio.tv.core.radar.RadarRepository
 import com.nuvio.tv.core.radar.RadarTime
 import com.nuvio.tv.core.sports.detail.SportsDetailService
+import com.nuvio.tv.core.sports.detail.screen.ChannelLookupPolicy
 import com.nuvio.tv.core.sports.detail.screen.GameDetailEntry
 import com.nuvio.tv.core.sports.detail.screen.GameDetailPoller
 import com.nuvio.tv.core.sports.detail.screen.GameDetailUiReducer
@@ -196,12 +197,13 @@ class GameDetailViewModel @Inject constructor(
                         onPartial = { partial -> matches = partial; publishWatch() },
                     )
                 }
-                // The first lookup after a cold start can outlast the deadline while the channel index warms; one
-                // quiet second attempt (warm) before the screen is allowed to say it could not check.
+                // The first lookup after a cold start can outlast the deadline while a playlist's lineup still downloads;
+                // only then one quiet second attempt (the download keeps running and is ready for it). Any other timeout
+                // stands: repeating the same slow work only doubled the wait before "Couldn't check" (ChannelLookupPolicy).
                 val started = android.os.SystemClock.elapsedRealtime()
                 var result = lookup()
                 val first = android.os.SystemClock.elapsedRealtime() - started
-                if (result == null && matches.isEmpty()) result = lookup()
+                if (result == null && ChannelLookupPolicy.retryAfterTimeout(matches.size, matcher.inFlightLineupLoads())) result = lookup()
                 android.util.Log.i("GameDetailVM", "channel lookup first=${first}ms ok=${result != null} matches=${matches.size}")
                 if (result != null) matches = result else if (matches.isEmpty()) matchingFailed = true
                 if (finished && result != null) {
