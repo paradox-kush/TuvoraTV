@@ -27,19 +27,43 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.collectAsState
 import com.nuvio.tv.updater.ImmersivePlaybackGate
 import com.nuvio.tv.updater.UpdateBannerVisibilityPolicy
-import com.nuvio.tv.updater.UpdateUiState
+import com.nuvio.tv.updater.UpdateViewModel
 
+/**
+ * The banner sits above the app in a Column. The update state is read in [UpdateBannerSection] only, so a download
+ * progress tick recomposes the banner and nothing else: [content] is not re-run when the state changes (B274).
+ */
 @Composable
 fun UpdateBannerHost(
-    state: UpdateUiState,
-    onDismissBanner: () -> Unit,
-    onDownload: () -> Unit,
-    onInstall: () -> Unit,
-    onDismissUnknownSources: () -> Unit,
-    onOpenUnknownSources: () -> Unit,
-    onFeedbackShown: () -> Unit,
+    viewModel: UpdateViewModel,
+    playerRouteActive: Boolean,
     content: @Composable () -> Unit
 ) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        UpdateBannerSection(viewModel = viewModel, playerRouteActive = playerRouteActive)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun UpdateBannerSection(
+    viewModel: UpdateViewModel,
+    playerRouteActive: Boolean
+) {
+    val rawState by viewModel.uiState.collectAsState()
+    val state = if (playerRouteActive && rawState.showBanner) rawState.copy(showBanner = false) else rawState
+    val onDismissBanner = viewModel::dismissBanner
+    val onDownload = viewModel::downloadUpdate
+    val onInstall = viewModel::installUpdateOrRequestPermission
+    val onDismissUnknownSources = viewModel::dismissUnknownSourcesDialog
+    val onOpenUnknownSources = viewModel::openUnknownSourcesSettings
+    val onFeedbackShown = viewModel::consumeFeedbackMessage
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var showReleaseNotes by remember { mutableStateOf(false) }
@@ -75,38 +99,28 @@ fun UpdateBannerHost(
         playerOnScreen = playerOnScreen
     )
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = showBanner,
-            enter = expandVertically(
-                expandFrom = Alignment.Top,
-                animationSpec = tween(durationMillis = 300)
-            ) + fadeIn(animationSpec = tween(durationMillis = 180)),
-            exit = shrinkVertically(
-                shrinkTowards = Alignment.Top,
-                animationSpec = tween(durationMillis = 240)
-            ) + fadeOut(animationSpec = tween(durationMillis = 150))
-        ) {
-            update?.let {
-                UpdateBanner(
-                    state = state,
-                    update = it,
-                    isInstalledUpdate = state.update == null,
-                    autoDismissPaused = showReleaseNotes,
-                    onDownload = onDownload,
-                    onInstall = onInstall,
-                    onShowReleaseNotes = { showReleaseNotes = true },
-                    onDismiss = onDismissBanner
-                )
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-        ) {
-            content()
+    AnimatedVisibility(
+        visible = showBanner,
+        enter = expandVertically(
+            expandFrom = Alignment.Top,
+            animationSpec = tween(durationMillis = 300)
+        ) + fadeIn(animationSpec = tween(durationMillis = 180)),
+        exit = shrinkVertically(
+            shrinkTowards = Alignment.Top,
+            animationSpec = tween(durationMillis = 240)
+        ) + fadeOut(animationSpec = tween(durationMillis = 150))
+    ) {
+        update?.let {
+            UpdateBanner(
+                state = state,
+                update = it,
+                isInstalledUpdate = state.update == null,
+                autoDismissPaused = showReleaseNotes,
+                onDownload = onDownload,
+                onInstall = onInstall,
+                onShowReleaseNotes = { showReleaseNotes = true },
+                onDismiss = onDismissBanner
+            )
         }
     }
 

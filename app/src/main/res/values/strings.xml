@@ -2544,6 +2544,7 @@
     <string name="update_close">Close</string>
     <string name="update_open_settings">Open Settings</string>
     <string name="update_install">Install</string>
+    <string name="update_opening_installer">Opening installer…</string>
     <string name="update_ignore">Ignore</string>
 
     <!-- Update flow errors -->
