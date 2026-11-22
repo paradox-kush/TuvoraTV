@@ -514,24 +514,62 @@ class ArchitectureTest {
         val app = files.firstOrNull { (p, _) -> p.endsWith("/com/nuvio/tv/NuvioApplication.kt") }
         assertTrue("R8 could not find NuvioApplication.kt; it must fail closed", app != null)
         val text = stripComments(app!!.second)
-        val cheapEager = setOf(
-            "com.nuvio.tv.core.lifecycle.AppForegroundTracker", // empty constructor
-            "SentrySettingsDataStore", // DataStore handle, no I/O
-            "com.nuvio.tv.core.telemetry.TelemetryService", // context + consent store
-            "com.nuvio.tv.data.local.ProfileDataStoreFactory", // context only
-            "com.nuvio.tv.data.mediaserver.ServerTrust", // one SharedPreferences handle
-            "com.nuvio.tv.core.recordings.api.RecordingsPort", // "cheap (no I/O)"; receivers need it headless
-        )
-        val violations = mutableListOf<String>()
-        if (Regex("""\brunBlocking\b""").containsMatchIn(text)) violations += "runBlocking in NuvioApplication"
-        Regex("""@Inject\s+lateinit\s+var\s+(\w+)\s*:\s*([\w.<>]+)""").findAll(text).forEach { m ->
-            val type = m.groupValues[2]
-            if (!type.startsWith("dagger.Lazy<") && type !in cheapEager) violations += "eager field ${m.groupValues[1]}: $type"
-        }
+        val violations = r8Violations(text)
         assertTrue(
             "NuvioApplication must stay cheap on Main for headless starts — use dagger.Lazy + StartupWorkPolicy:\n" +
                 violations.joinToString("\n"),
             violations.isEmpty(),
         )
+    }
+
+    /** R8 must not be bypassable by annotation use-site targets, extra modifiers or annotations. */
+    @Test
+    fun `R8 catches eager injection written in bypass forms`() {
+        val bypasses = listOf(
+            "@field:Inject lateinit var a: com.example.Heavy",
+            "@Inject internal lateinit var b: com.example.Heavy",
+            "@Inject\n    private lateinit var c: com.example.Heavy",
+            "@set:Inject @Named(\"x\") lateinit var d: com.example.Heavy",
+            "@Inject @JvmField var e: com.example.Heavy? = null",
+        )
+        bypasses.forEach { field ->
+            val src = "class NuvioApplication : Application() {\n    $field\n}"
+            assertFalse("R8 must flag: $field", r8Violations(src).isEmpty())
+        }
+        assertTrue(
+            "lazy and allow-listed fields stay legal",
+            r8Violations(
+                "@Inject lateinit var x: dagger.Lazy<com.example.Heavy>\n" +
+                    "@field:Inject lateinit var y: com.nuvio.tv.data.mediaserver.ServerTrust",
+            ).isEmpty(),
+        )
+    }
+
+    private val r8CheapEager = setOf(
+        "com.nuvio.tv.core.lifecycle.AppForegroundTracker", // empty constructor
+        "SentrySettingsDataStore", // DataStore handle, no I/O
+        "com.nuvio.tv.core.telemetry.TelemetryService", // context + consent store
+        "com.nuvio.tv.data.local.ProfileDataStoreFactory", // context only
+        "com.nuvio.tv.data.mediaserver.ServerTrust", // one SharedPreferences handle
+        "com.nuvio.tv.core.recordings.api.RecordingsPort", // "cheap (no I/O)"; receivers need it headless
+    )
+
+    /** Any use-site target (`@field:`/`@set:`), then any annotations or modifiers, then `var name: Type`. */
+    private val r8InjectField = Regex(
+        """@(?:\w+:)?Inject\b(?:\s+(?:@[\w.:]+(?:\([^)]*\))?|private|internal|protected|public|override|open|final|lateinit))*\s+var\s+(\w+)\s*:\s*([\w.]+(?:<[\w.<>, ?]*>)?)""",
+    )
+
+    private fun r8Violations(text: String): List<String> {
+        val violations = mutableListOf<String>()
+        if (Regex("""\brunBlocking\b""").containsMatchIn(text)) violations += "runBlocking in NuvioApplication"
+        val fields = r8InjectField.findAll(text).toList()
+        fields.forEach { m ->
+            val type = m.groupValues[2]
+            if (!type.startsWith("dagger.Lazy<") && type !in r8CheapEager) violations += "eager field ${m.groupValues[1]}: $type"
+        }
+        // Fail closed: an @Inject site the field pattern could not read is a violation, not a pass.
+        val sites = Regex("""@(?:\w+:)?Inject\b""").findAll(text).count()
+        if (sites != fields.size) violations += "unrecognised @Inject form ($sites sites, ${fields.size} parsed)"
+        return violations
     }
 }
