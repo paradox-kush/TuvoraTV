@@ -101,7 +101,10 @@ object TelemetrySendPolicy {
 
             // The exit record stays: it is the only signal when our crash handler could not run
             // (out of memory, a crash before it was installed) and it carries the previous run's trail.
-            "app_exit" -> Decision(Action.SEND, withTrail = true, area = DiagArea.LIFECYCLE, code = "exit")
+            // The one exception is our own deliberate kill, tagged by AppExitReporter: a rate, never an event.
+            "app_exit" ->
+                if (properties["reason"] == "self_exit") Decision(Action.COUNT, area = DiagArea.LIFECYCLE, code = "self_exit")
+                else Decision(Action.SEND, withTrail = true, area = DiagArea.LIFECYCLE, code = "exit")
 
             // The `$exception` promoted from a crash exit repeats what `app_crash_report` and the exit
             // record already say.

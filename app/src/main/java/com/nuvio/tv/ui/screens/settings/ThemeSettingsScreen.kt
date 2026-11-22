@@ -8,7 +8,6 @@ import com.nuvio.tv.ui.util.findActivity
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.os.Process
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
@@ -36,6 +35,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.LaunchedEffect
+import com.nuvio.tv.core.analytics.SelfExitMarker
+import com.nuvio.tv.core.runtime.SelfExit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -410,7 +411,7 @@ fun ThemeSettingsContent(
                 appIconConfirmation = null
                 if (viewModel.selectAppIcon(option)) {
                     context.findActivity()?.finishAffinity()
-                    Process.killProcess(Process.myPid())
+                    SelfExit.kill(context, SelfExitMarker.ICON_CHANGE)
                 }
             },
             onDismiss = { appIconConfirmation = null }

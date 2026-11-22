@@ -1269,7 +1269,7 @@ open class MainActivity : ComponentActivity() {
                             finishAndRemoveTask()
                             if (confirmExitEnabled) {
                                 // Kill the process to free RAM on low-memory devices.
-                                android.os.Process.killProcess(android.os.Process.myPid())
+                                com.nuvio.tv.core.runtime.SelfExit.kill(this@MainActivity, com.nuvio.tv.core.analytics.SelfExitMarker.USER_EXIT)
                             }
                         } else {
                             backPressedOnce = true

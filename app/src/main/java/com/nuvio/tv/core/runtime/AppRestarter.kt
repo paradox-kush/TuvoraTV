@@ -3,8 +3,8 @@ package com.nuvio.tv.core.runtime
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
-import android.os.Process
 import android.os.SystemClock
+import com.nuvio.tv.core.analytics.SelfExitMarker
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -33,7 +33,7 @@ class AppRestarter @Inject constructor(
             SystemClock.elapsedRealtime() + RESTART_DELAY_MS,
             pendingIntent
         )
-        Process.killProcess(Process.myPid())
+        SelfExit.kill(context, SelfExitMarker.RESTART)
         exitProcess(0)
     }
 

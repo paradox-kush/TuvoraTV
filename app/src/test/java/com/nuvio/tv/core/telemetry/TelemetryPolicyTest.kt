@@ -49,6 +49,14 @@ class TelemetryPolicyTest {
     }
 
     @Test
+    fun ourOwnExitIsCountedNotSentWhileARealExitStillGoesOut() {
+        val own = decide("app_exit", "reason" to "self_exit", "kind" to "user_exit")
+        assertEquals("self exit is a count in session_health", Action.COUNT, own.action)
+        assertEquals("a real foreground kill is still sent", Action.SEND, decide("app_exit", "reason" to "signaled", "importance" to 100).action)
+        assertEquals("a crash is still sent", Action.SEND, decide("app_exit", "reason" to "native_crash").action)
+    }
+
+    @Test
     fun theExceptionPromotedFromACrashExitIsCountedNotSentAgain() {
         val promoted = decide("\$exception", "\$exception_values" to "[\"Android process exited abnormally: crash\"]")
         assertEquals("promoted copy counted", Action.COUNT, promoted.action)
