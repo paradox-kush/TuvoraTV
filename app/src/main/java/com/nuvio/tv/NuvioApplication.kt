@@ -32,7 +32,6 @@ import com.nuvio.tv.core.sync.androidtv.AndroidTvChannelSyncService
 import com.nuvio.tv.core.network.IPv4FirstDns
 import com.nuvio.tv.core.network.NoDelaySocketFactory
 import com.nuvio.tv.core.network.imageNetworkFetcherFactory
-import com.nuvio.tv.data.local.ImagePerformancePreferences
 import com.nuvio.tv.data.local.SentrySettingsDataStore
 import com.nuvio.tv.data.mediaserver.ServerUserStateProjection
 import com.nuvio.tv.data.mediaserver.plex.PlexArtworkInterceptor
@@ -59,55 +58,66 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 @HiltAndroidApp
 class NuvioApplication : Application(), SingletonImageLoader.Factory, Configuration.Provider {
 
     private val analyticsConsentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    @Inject lateinit var startupSyncService: StartupSyncService
+    // Field injection runs inside super.onCreate() on the main thread for EVERY process start, including
+    // headless JobService/receiver/bind starts with a bindApplication deadline. Eager fields used to build
+    // the whole graph there (Supabase/Ktor, Room, every sync service): that is where the background
+    // "Timed out while trying to bind" ANRs sat. So heavy dependencies are dagger.Lazy and are started
+    // by core/startup/StartupWorkPolicy: BACKGROUND (every process, off Main) or FIRST_UI (first Activity).
+    // ArchitectureTest R8 keeps it that way.
+    @Inject lateinit var startupSyncService: dagger.Lazy<StartupSyncService>
     @Inject lateinit var appForegroundTracker: com.nuvio.tv.core.lifecycle.AppForegroundTracker
-    @Inject lateinit var recEventLogger: com.nuvio.tv.core.rec.RecEventLogger
-    @Inject lateinit var androidTvChannelSyncService: AndroidTvChannelSyncService
-    @Inject lateinit var workerFactory: HiltWorkerFactory
-    @Inject lateinit var iptvRefreshScheduler: IptvRefreshScheduler
-    // Eager so LiveEngineMemory is loaded from disk before the first live tune reads it (§3.7).
-    @Inject lateinit var liveEngineMemoryStore: com.nuvio.tv.core.memory.LiveEngineMemoryStore
-    // Eagerly created so its accountId->dnsProvider mirror is warm before the first playback needs
-    // it (its init observes the account store); otherwise a very-early first live/VOD play could
-    // miss its playlist's DoH provider and fall back to system DNS.
-    @Inject lateinit var playlistDnsResolver: com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver
-    @Inject lateinit var xtreamTmdbResolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver
-    @Inject lateinit var realtimeSyncInvalidationService: RealtimeSyncInvalidationService
-    @Inject lateinit var m3uIdRekeyer: com.nuvio.tv.core.iptv.M3uIdRekeyer
+    @Inject lateinit var recEventLogger: dagger.Lazy<com.nuvio.tv.core.rec.RecEventLogger>
+    @Inject lateinit var androidTvChannelSyncService: dagger.Lazy<AndroidTvChannelSyncService>
+    @Inject lateinit var workerFactory: dagger.Lazy<HiltWorkerFactory>
+    @Inject lateinit var iptvRefreshScheduler: dagger.Lazy<IptvRefreshScheduler>
+    // Built at process start (BACKGROUND) so LiveEngineMemory is loaded from disk before the first live
+    // tune reads it (§3.7); a tune that comes first waits on the same singleton's construction.
+    @Inject lateinit var liveEngineMemoryStore: dagger.Lazy<com.nuvio.tv.core.memory.LiveEngineMemoryStore>
+    // Built at process start (BACKGROUND) so its accountId->dnsProvider mirror is warm before the first
+    // playback needs it (its init observes the account store); otherwise a very-early first live/VOD play
+    // could miss its playlist's DoH provider and fall back to system DNS.
+    @Inject lateinit var playlistDnsResolver: dagger.Lazy<com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver>
+    @Inject lateinit var xtreamTmdbResolver: dagger.Lazy<com.nuvio.tv.core.iptv.match.XtreamTmdbResolver>
+    @Inject lateinit var realtimeSyncInvalidationService: dagger.Lazy<RealtimeSyncInvalidationService>
+    @Inject lateinit var m3uIdRekeyer: dagger.Lazy<com.nuvio.tv.core.iptv.M3uIdRekeyer>
     @Inject lateinit var sentrySettingsDataStore: SentrySettingsDataStore
     @Inject lateinit var telemetry: com.nuvio.tv.core.telemetry.TelemetryService
     @Inject lateinit var profileDataStoreFactory: com.nuvio.tv.data.local.ProfileDataStoreFactory
-    @Inject lateinit var imagePerformancePreferences: ImagePerformancePreferences
-    @Inject lateinit var simklAnimeIdPreferenceHolder: SimklAnimeIdPreferenceHolder
-    @Inject lateinit var xtreamIptvSearchProvider: com.nuvio.tv.core.iptv.XtreamIptvSearchProvider
-    @Inject lateinit var serverUserStateProjection: ServerUserStateProjection
+    @Inject lateinit var simklAnimeIdPreferenceHolder: dagger.Lazy<SimklAnimeIdPreferenceHolder>
+    @Inject lateinit var xtreamIptvSearchProvider: dagger.Lazy<com.nuvio.tv.core.iptv.XtreamIptvSearchProvider>
+    @Inject lateinit var serverUserStateProjection: dagger.Lazy<ServerUserStateProjection>
     @Inject lateinit var serverTrust: com.nuvio.tv.data.mediaserver.ServerTrust
-    @Inject lateinit var serverRepository: com.nuvio.tv.data.mediaserver.ServerRepository
-    @Inject lateinit var xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore
-    @Inject lateinit var deviceClaimCoordinator: com.nuvio.tv.core.iptv.DeviceClaimCoordinator
+    @Inject lateinit var serverRepository: dagger.Lazy<com.nuvio.tv.data.mediaserver.ServerRepository>
+    @Inject lateinit var xtreamAccountStore: dagger.Lazy<com.nuvio.tv.data.local.XtreamAccountStore>
+    @Inject lateinit var deviceClaimCoordinator: dagger.Lazy<com.nuvio.tv.core.iptv.DeviceClaimCoordinator>
     @Inject lateinit var recordingsPort: com.nuvio.tv.core.recordings.api.RecordingsPort
-    @Inject lateinit var calendarComingUpContributor: com.nuvio.tv.core.calendar.CalendarComingUpContributor
+    @Inject lateinit var calendarComingUpContributor: dagger.Lazy<com.nuvio.tv.core.calendar.CalendarComingUpContributor>
 
-    @Inject lateinit var plexArtworkSigner: PlexArtworkSigner
-    @Inject lateinit var siloArtworkRefresher: SiloArtworkRefresher
+    @Inject lateinit var plexArtworkSigner: dagger.Lazy<PlexArtworkSigner>
+    @Inject lateinit var siloArtworkRefresher: dagger.Lazy<SiloArtworkRefresher>
+
+    private val firstUiGate = com.nuvio.tv.core.startup.FirstUiGate()
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
-            .setWorkerFactory(workerFactory)
+            .setWorkerFactory(workerFactory.get())
             .build()
 
     companion object {
         // Public client-side key — safe to ship in the binary.
         const val POSTHOG_PROJECT_TOKEN = "phc_o824qv3fcxKW9NvF4K6mYKX3rScK5CBQzrSx4RQ5b6ye"
         const val POSTHOG_HOST = "https://us.i.posthog.com"
+
+        /** Main waits this long for the prefetched device profile before registering it late instead. */
+        private const val DEVICE_PROFILE_WAIT_MS = 500L
+        private const val DEVICE_PROFILE_LATE_WAIT_MS = 30_000L
 
         /**
          * Shared cookie jar for CloudStream extension HTTP requests.
@@ -140,16 +150,25 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate() {
+        // Startup reads start on their own threads first, so they overlap Hilt injection below instead of
+        // running after it on the main thread (consent: StartupConsentPolicy; the main thread only waits
+        // for it with a deadline). The two SharedPreferences files read on Main later load meanwhile.
+        val consentPrefetch = com.nuvio.tv.core.startup.StartupPrefetch("startup-consent") {
+            SentrySettingsDataStore.readEnabledBlocking(this)
+        }
+        val deviceProfilePrefetch = com.nuvio.tv.core.startup.StartupPrefetch("startup-device-profile") {
+            getSharedPreferences("app_locale", Context.MODE_PRIVATE)
+            getSharedPreferences("telemetry", Context.MODE_PRIVATE)
+            com.nuvio.tv.core.telemetry.DeviceProfile.properties(this)
+        }
         // Before super.onCreate(): Hilt creates injected services there, and the budget is read once.
         MemoryBudget.init(this)
         super.onCreate()
         appForegroundTracker.register(this)
-        // Calendar's optional Home "Coming up" row (off by default); registered before Home first collects changes.
-        com.nuvio.tv.core.contracts.HomeSectionContributorRegistry.register(calendarComingUpContributor)
         com.nuvio.tv.data.mediaserver.ServerMediaRouting.router = com.nuvio.tv.data.mediaserver.ServerMediaRouter(serverTrust)
         // Unverified TLS for playback is an IPTV-panel-only fallback; a media-server host is never eligible.
         com.nuvio.tv.core.contracts.PlaybackTrustHosts.registerMediaServerHostPredicate("servers") { host ->
-            serverRepository.uiState.value.connections.any { connection ->
+            serverRepository.get().uiState.value.connections.any { connection ->
                 com.nuvio.tv.core.contracts.PlaybackTlsPolicy.normalize(
                     runCatching { java.net.URI(connection.address).host }.getOrNull()
                 ) == host
@@ -160,17 +179,15 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         telemetry.startFirstRunFunnel(
             com.nuvio.tv.core.telemetry.FirstRunExistingInstallProbe.forApp(this, profileDataStoreFactory)::hasUserState,
         )
-        // B205: a setup code redeemed with no account is claimed when a real account signs in (and at app start).
-        deviceClaimCoordinator.start(analyticsConsentScope)
         // Recordings: alarm receivers and the foreground service are not injected, so they read the port here.
         // Ledger recovery + handing overdue schedules to the service wait for the first visible Activity.
         com.nuvio.tv.core.recordings.api.RecordingsAccess.register(recordingsPort)
         com.nuvio.tv.core.recordings.api.RecordingsAndroid.installAppStartHook(this, recordingsPort)
-        analyticsConsentScope.launch {
-            xtreamAccountStore.accounts.collect { com.nuvio.tv.core.iptv.IptvPanelHosts.setAccounts(it) }
-        }
         // Own sources register into the plural source ports (id predicates, search) before anything asks.
-        com.nuvio.tv.core.iptv.IptvSourceRegistrations.register(xtreamIptvSearchProvider)
+        // The search provider is built on its first use, not here (its graph is the IPTV index + overlay).
+        com.nuvio.tv.core.iptv.IptvSourceRegistrations.register(
+            com.nuvio.tv.core.iptv.LazyIptvSearchProvider { xtreamIptvSearchProvider.get() }
+        )
         // Resolve the memory tier once, before anything sizes a cache from it.
         com.nuvio.tv.core.memory.AndroidMemoryTierProbe.tier(this)
         // Startup journal — foundational to the durable resolver backoff and the crash-loop recovery
@@ -182,12 +199,14 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         // mode the resolver warm-up + IPTV refresh worker + channel sync withhold their heavy work.
         com.nuvio.tv.core.journal.StartupJournal.decideStartupMode()
         telemetry.start(BuildConfig.VERSION_NAME)
-        val crashReportsEnabled = runBlocking(Dispatchers.IO) {
-            sentrySettingsDataStore.isEnabled()
-        }
+        val consent = com.nuvio.tv.core.startup.StartupConsentPolicy.initial(
+            consentPrefetch.await(com.nuvio.tv.core.startup.StartupConsentPolicy.CONSENT_WAIT_MS)
+        )
         // As early as consent is known: a crash during the rest of startup still leaves a stack. The
         // handler goes in before PostHog's, so ours writes the file before its best-effort capture.
-        telemetry.applyConsent(crashReportsEnabled)
+        // Not answered in time: telemetry stays at its default (off, nothing written) WITHOUT the wiping
+        // applyConsent(false); the consent collector below settles it.
+        if (consent.applyConsentNow) telemetry.applyConsent(!consent.optOut)
         com.nuvio.tv.core.telemetry.CrashRecorder.install(this, BuildConfig.VERSION_NAME)
         // Breadcrumbs persist locally so AppExitReporter can attribute a process death on the
         // NEXT launch; their live-event side goes through PostHog and is consent-gated by the
@@ -220,7 +239,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 errorTrackingConfig.autoCapture = true
                 // Consent is authoritative. Calling optIn/optOut after setup also overrides any
                 // consent value persisted by an older PostHog SDK run.
-                optOut = !crashReportsEnabled
+                optOut = consent.optOut
                 // This consent is for crash diagnostics, not general product analytics.
                 captureApplicationLifecycleEvents = false
                 captureScreenViews = false
@@ -261,7 +280,16 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         PostHog.register(PostHogPrivacy.GEOIP_DISABLE_PROPERTY, true)
         val supportCode = com.nuvio.tv.core.telemetry.SupportCodeStore.get(this)
         PostHog.register("support_code", supportCode)
-        com.nuvio.tv.core.telemetry.DeviceProfile.properties(this).forEach { (k, v) -> PostHog.register(k, v) }
+        // Computed on the prefetch thread (a binder call); registered here so early events still carry it.
+        // Late (starved box): registered from the prefetch side as soon as it lands.
+        val deviceProfile = deviceProfilePrefetch.await(DEVICE_PROFILE_WAIT_MS)
+        if (deviceProfile != null) {
+            deviceProfile.forEach { (k, v) -> PostHog.register(k, v) }
+        } else {
+            Thread({
+                deviceProfilePrefetch.await(DEVICE_PROFILE_LATE_WAIT_MS)?.forEach { (k, v) -> PostHog.register(k, v) }
+            }, "startup-device-profile-late").apply { isDaemon = true }.start()
+        }
         // Install-channel split for retention: flavor + bucketed installer (never the raw package).
         PostHog.register("build_flavor", com.nuvio.tv.core.build.AppFeaturePolicy.buildFlavor)
         PostHog.register("install_source", com.nuvio.tv.core.analytics.InstallSourcePolicy.currentBucket(this))
@@ -282,48 +310,111 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
             override fun onActivityDestroyed(activity: android.app.Activity) = Unit
         })
-        if (crashReportsEnabled) {
+        if (consent.runConsentedWorkNow) {
             PostHog.optIn()
-            AppExitReporter.reportPendingExits(this)
-            Thread({
-                runCatching { com.nuvio.tv.core.telemetry.DeviceProfile.extended(this).forEach { (k, v) -> PostHog.register(k, v) } }
-                runCatching { com.nuvio.tv.core.telemetry.CrashRecorder.sendPending(this, supportCode) }
-            }, "pending-crash-send").start()
+            runConsentedStartupWork(supportCode)
         } else {
             PostHog.optOut()
         }
         // Opt state is final for this start: funnel events held since startFirstRunFunnel can go out now.
-        telemetry.firstRunSdkReady()
+        // Consent not known yet: they stay held until the collector's first answer.
+        if (consent.releaseFunnelNow) telemetry.firstRunSdkReady()
         analyticsConsentScope.launch {
+            var deferredSettled = false
             sentrySettingsDataStore.enabled.distinctUntilChanged().collect { enabled ->
                 telemetry.applyConsent(enabled)
                 if (enabled) PostHog.optIn() else PostHog.optOut()
+                val late = com.nuvio.tv.core.startup.StartupConsentPolicy.onAnswer(consent, enabled, deferredSettled)
+                deferredSettled = true
+                // A late yes: the startup exit report and crash send run now, one launch late, never lost
+                // (exit timestamps only advance after a report).
+                if (late.runConsentedWork) runConsentedStartupWork(supportCode)
+                if (late.releaseFunnel) telemetry.firstRunSdkReady()
             }
         }
         // Upstream's Sentry: inert without a SENTRY_DSN (the fork's crash reporter is PostHog);
         // kept wired so future upstream merges stay clean.
         SentryInitializer.start(this, sentrySettingsDataStore)
         PluginRuntimeHooks.onApplicationCreate(this)
-        // Restores anything a previous process left unsent and starts the flush timer. Guarded
-        // because nothing about recommendation telemetry may ever prevent the app from starting.
-        runCatching { recEventLogger.start() }
-        androidTvChannelSyncService.start()
-        if (BuildConfig.REALTIME_SYNC_ENABLED) {
-            realtimeSyncInvalidationService.start()
-        }
-        // Keep the IPTV auto-refresh worker scheduled to the shortest enabled playlist interval.
-        iptvRefreshScheduler.start()
-        // B64: moves saved M3U refs onto the login-free ids once each catalog is rebuilt under them.
-        runCatching { m3uIdRekeyer.start() }
-        // Warm the Xtream match indexes off the critical path so the first play/search
-        // doesn't pay the full-catalog download (minutes on budget boxes).
-        xtreamTmdbResolver.warmUpAll()
-        serverUserStateProjection.start()
+        // Process-wide starters: off Main, in every process (StartupWorkPolicy BACKGROUND).
+        com.nuvio.tv.core.startup.StartupWorkPolicy.tasksFor(com.nuvio.tv.core.startup.StartupTrigger.PROCESS_START)
+            .forEach { task -> analyticsConsentScope.launch { runStartupTaskSuspending(task) } }
+        // UI-only starters: once, as the first Activity is created (StartupWorkPolicy FIRST_UI). A headless
+        // start (JobService, receiver, bind) never pays for them.
+        registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
+            override fun onActivityPreCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {
+                runFirstUiWork()
+            }
+            // Below API 29 there is no pre-created callback; this one still runs before any frame.
+            override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {
+                runFirstUiWork()
+            }
+            override fun onActivityStarted(activity: android.app.Activity) = Unit
+            override fun onActivityResumed(activity: android.app.Activity) = Unit
+            override fun onActivityPaused(activity: android.app.Activity) = Unit
+            override fun onActivityStopped(activity: android.app.Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
+            override fun onActivityDestroyed(activity: android.app.Activity) = Unit
+        })
         // Load locale synchronously so it's available before Activity.attachBaseContext.
         // SharedPreferences reads are fast (cached in memory after first access).
         val tag = getSharedPreferences("app_locale", Context.MODE_PRIVATE)
             .getString("locale_tag", null)
         LocaleCache.localeTag = tag ?: ""
+    }
+
+    /** Consent is ON for this start: the startup exit report, then the previous run's crash file, off Main. */
+    private fun runConsentedStartupWork(supportCode: String) {
+        AppExitReporter.reportPendingExits(this)
+        Thread({
+            runCatching { com.nuvio.tv.core.telemetry.DeviceProfile.extended(this).forEach { (k, v) -> PostHog.register(k, v) } }
+            runCatching { com.nuvio.tv.core.telemetry.CrashRecorder.sendPending(this, supportCode) }
+        }, "pending-crash-send").start()
+    }
+
+    /** Main thread, first Activity only. Same work, same thread as before; it just no longer runs headless. */
+    private fun runFirstUiWork() {
+        if (!firstUiGate.claim()) return
+        com.nuvio.tv.core.startup.StartupWorkPolicy.tasksFor(com.nuvio.tv.core.startup.StartupTrigger.FIRST_ACTIVITY)
+            .forEach(::runStartupTask)
+    }
+
+    private suspend fun runStartupTaskSuspending(task: com.nuvio.tv.core.startup.StartupTask) {
+        when (task) {
+            com.nuvio.tv.core.startup.StartupTask.IPTV_PANEL_HOSTS ->
+                xtreamAccountStore.get().accounts.collect { com.nuvio.tv.core.iptv.IptvPanelHosts.setAccounts(it) }
+            else -> runStartupTask(task)
+        }
+    }
+
+    private fun runStartupTask(task: com.nuvio.tv.core.startup.StartupTask) {
+        when (task) {
+            com.nuvio.tv.core.startup.StartupTask.IPTV_PANEL_HOSTS -> Unit // collected in runStartupTaskSuspending
+            com.nuvio.tv.core.startup.StartupTask.LIVE_ENGINE_MEMORY -> liveEngineMemoryStore.get()
+            com.nuvio.tv.core.startup.StartupTask.PLAYLIST_DNS -> playlistDnsResolver.get()
+            // Keep the IPTV auto-refresh worker scheduled to the shortest enabled playlist interval.
+            com.nuvio.tv.core.startup.StartupTask.IPTV_REFRESH_SCHEDULER -> iptvRefreshScheduler.get().start()
+            com.nuvio.tv.core.startup.StartupTask.SIMKL_ANIME_ID_PREFERENCE -> simklAnimeIdPreferenceHolder.get()
+            // Built here, not in Application injection: its init starts the sign-in sync pull.
+            com.nuvio.tv.core.startup.StartupTask.STARTUP_SYNC -> startupSyncService.get()
+            com.nuvio.tv.core.startup.StartupTask.REALTIME_SYNC ->
+                if (BuildConfig.REALTIME_SYNC_ENABLED) realtimeSyncInvalidationService.get().start()
+            // B205: a setup code redeemed with no account is claimed when a real account signs in (and at app start).
+            com.nuvio.tv.core.startup.StartupTask.DEVICE_CLAIM -> deviceClaimCoordinator.get().start(analyticsConsentScope)
+            // Restores anything a previous process left unsent and starts the flush timer. Guarded
+            // because nothing about recommendation telemetry may ever prevent the app from starting.
+            com.nuvio.tv.core.startup.StartupTask.REC_EVENT_LOGGER -> { runCatching { recEventLogger.get().start() } }
+            com.nuvio.tv.core.startup.StartupTask.TV_CHANNEL_SYNC -> androidTvChannelSyncService.get().start()
+            // B64: moves saved M3U refs onto the login-free ids once each catalog is rebuilt under them.
+            com.nuvio.tv.core.startup.StartupTask.M3U_REKEY -> { runCatching { m3uIdRekeyer.get().start() } }
+            // Warm the Xtream match indexes off the critical path so the first play/search
+            // doesn't pay the full-catalog download (minutes on budget boxes).
+            com.nuvio.tv.core.startup.StartupTask.XTREAM_MATCH_WARMUP -> xtreamTmdbResolver.get().warmUpAll()
+            com.nuvio.tv.core.startup.StartupTask.SERVER_USER_STATE -> serverUserStateProjection.get().start()
+            // Calendar's optional Home "Coming up" row (off by default); registered before Home first collects changes.
+            com.nuvio.tv.core.startup.StartupTask.CALENDAR_HOME_ROW ->
+                com.nuvio.tv.core.contracts.HomeSectionContributorRegistry.register(calendarComingUpContributor.get())
+        }
     }
 
     override fun onTrimMemory(level: Int) {
@@ -353,9 +444,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 .connectTimeout(4, TimeUnit.SECONDS)
                 .readTimeout(5, TimeUnit.SECONDS)
                 .callTimeout(8, TimeUnit.SECONDS)
-                .addInterceptor(PlexArtworkInterceptor { if (::plexArtworkSigner.isInitialized) plexArtworkSigner else null })
-                .addNetworkInterceptor(PlexArtworkInterceptor.Token { if (::plexArtworkSigner.isInitialized) plexArtworkSigner else null })
-                .addInterceptor(SiloArtworkInterceptor({ if (::siloArtworkRefresher.isInitialized) siloArtworkRefresher else null }))
+                .addInterceptor(PlexArtworkInterceptor { if (::plexArtworkSigner.isInitialized) plexArtworkSigner.get() else null })
+                .addNetworkInterceptor(PlexArtworkInterceptor.Token { if (::plexArtworkSigner.isInitialized) plexArtworkSigner.get() else null })
+                .addInterceptor(SiloArtworkInterceptor({ if (::siloArtworkRefresher.isInitialized) siloArtworkRefresher.get() else null }))
                 .addInterceptor { chain ->
                     try {
                         chain.proceed(chain.request())

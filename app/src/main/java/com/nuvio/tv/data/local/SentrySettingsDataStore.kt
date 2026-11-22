@@ -21,12 +21,14 @@ private val Context.sentrySettingsDataStore: DataStore<Preferences> by preferenc
     corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
 )
 
+private val enabledPreferenceKey = booleanPreferencesKey("enabled")
+
 @Singleton
 class SentrySettingsDataStore @Inject constructor(
     @param:ApplicationContext private val context: Context
 ) {
     private val dataStore = context.sentrySettingsDataStore
-    private val enabledKey = booleanPreferencesKey("enabled")
+    private val enabledKey = enabledPreferenceKey
 
     val enabled: Flow<Boolean> = dataStore.data.map { prefs ->
         resolveDiagnosticsEnabled(prefs[enabledKey])
@@ -39,6 +41,17 @@ class SentrySettingsDataStore @Inject constructor(
     suspend fun setEnabled(value: Boolean) {
         dataStore.edit { prefs ->
             prefs[enabledKey] = value
+        }
+    }
+
+    companion object {
+        /**
+         * One blocking read of the consent value, for the startup prefetch thread only (see
+         * core/startup/StartupPrefetch): never call it on Main. Same DataStore instance as the class
+         * (the file-level delegate is a process singleton), so it can run before Hilt injection.
+         */
+        fun readEnabledBlocking(context: Context): Boolean = kotlinx.coroutines.runBlocking {
+            resolveDiagnosticsEnabled(context.sentrySettingsDataStore.data.first()[enabledPreferenceKey])
         }
     }
 }
