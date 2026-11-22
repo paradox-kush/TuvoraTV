@@ -495,4 +495,43 @@ class ArchitectureTest {
             violations.isEmpty(),
         )
     }
+
+    // ── R8: Application.onCreate stays off the headless-start critical path ─────────────────────
+
+    /**
+     * R8 — `Application.onCreate` runs for every process start, including headless JobService, receiver
+     * and bind starts that must finish inside the system's bindApplication timeout. PostHog app_exit
+     * traces (2026-11, 257 TV `anr` exits at importance 300) put the main thread inside Hilt field
+     * injection of NuvioApplication: eager `@Inject lateinit var` fields built the Supabase/Ktor client,
+     * Room and every sync service before the first line of onCreate. So:
+     * - no `runBlocking` in NuvioApplication (a bounded off-main read is StartupPrefetch's job);
+     * - every injected field is `dagger.Lazy<…>` unless it is on the short, cheap allow-list below.
+     *   A new starter goes into core/startup/StartupWorkPolicy's table, not into an eager field.
+     */
+    @Test
+    fun `NuvioApplication does not block or build heavy graphs on the main thread (R8)`() {
+        assertProductionFilesCollected()
+        val app = files.firstOrNull { (p, _) -> p.endsWith("/com/nuvio/tv/NuvioApplication.kt") }
+        assertTrue("R8 could not find NuvioApplication.kt; it must fail closed", app != null)
+        val text = stripComments(app!!.second)
+        val cheapEager = setOf(
+            "com.nuvio.tv.core.lifecycle.AppForegroundTracker", // empty constructor
+            "SentrySettingsDataStore", // DataStore handle, no I/O
+            "com.nuvio.tv.core.telemetry.TelemetryService", // context + consent store
+            "com.nuvio.tv.data.local.ProfileDataStoreFactory", // context only
+            "com.nuvio.tv.data.mediaserver.ServerTrust", // one SharedPreferences handle
+            "com.nuvio.tv.core.recordings.api.RecordingsPort", // "cheap (no I/O)"; receivers need it headless
+        )
+        val violations = mutableListOf<String>()
+        if (Regex("""\brunBlocking\b""").containsMatchIn(text)) violations += "runBlocking in NuvioApplication"
+        Regex("""@Inject\s+lateinit\s+var\s+(\w+)\s*:\s*([\w.<>]+)""").findAll(text).forEach { m ->
+            val type = m.groupValues[2]
+            if (!type.startsWith("dagger.Lazy<") && type !in cheapEager) violations += "eager field ${m.groupValues[1]}: $type"
+        }
+        assertTrue(
+            "NuvioApplication must stay cheap on Main for headless starts — use dagger.Lazy + StartupWorkPolicy:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
 }
