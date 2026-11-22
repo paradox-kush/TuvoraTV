@@ -56,7 +56,10 @@ object AppExitReporter {
         runCatching {
             val ctx = (context?.applicationContext ?: appContext) ?: return
             val raw = SelfExitMarker.encode(tag, Process.myPid(), System.currentTimeMillis()) ?: return
-            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SELF_EXIT, raw).commit()
+            // Under the lock so the reporter's read-compare-clear can never interleave with this write.
+            synchronized(lock) {
+                ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SELF_EXIT, raw).commit()
+            }
         }
     }
     private val diagnosticsSampler = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -170,14 +173,20 @@ object AppExitReporter {
 
     private fun doReport(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val selfExitMarker = SelfExitMarker.decode(prefs.getString(KEY_SELF_EXIT, null))
+        val rawAtStart = synchronized(lock) { prefs.getString(KEY_SELF_EXIT, null) }
+        var completed = false
         try {
-            doReport(context, prefs, selfExitMarker)
+            doReport(context, prefs, SelfExitMarker.decode(rawAtStart))
+            completed = true
         } finally {
-            // Consumed: one marker explains at most one earlier process. Never clear a marker this very process
-            // wrote (it is about to kill itself).
-            if (prefs.contains(KEY_SELF_EXIT) && selfExitMarker?.pid != Process.myPid()) {
-                prefs.edit().remove(KEY_SELF_EXIT).commit()
+            // Consumed: one marker explains at most one earlier process. The decision is pure
+            // (SelfExitMarker.shouldClearAfterReport); read-compare-clear runs under the same lock
+            // markSelfExit writes under, so a marker written while this pass ran is never deleted.
+            synchronized(lock) {
+                val current = prefs.getString(KEY_SELF_EXIT, null)
+                if (SelfExitMarker.shouldClearAfterReport(rawAtStart, current, completed, Process.myPid())) {
+                    prefs.edit().remove(KEY_SELF_EXIT).commit()
+                }
             }
         }
     }

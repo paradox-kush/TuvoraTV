@@ -90,4 +90,55 @@ class SelfExitPolicyTest {
         assertNull("an exit before the marker is not ours", SelfExitMarker.tagFor(m, 2973, 900_000L))
         assertNull("no marker", SelfExitMarker.tagFor(null, 2973, 1_000_050L))
     }
+
+    // --- marker clean-up after a report pass (race: user presses Exit while the reporter thread runs) ---
+
+    private val myPid = 4242
+    private val oldMarker = "user_exit|1111|1000"
+    private val freshMarker = "user_exit|4242|5000"
+
+    @Test
+    fun `a consumed marker from an earlier process is cleared`() {
+        assertEquals(
+            "the marker read at start is still stored, so this pass consumed it",
+            true,
+            SelfExitMarker.shouldClearAfterReport(oldMarker, oldMarker, reportCompleted = true, myPid = myPid),
+        )
+    }
+
+    @Test
+    fun `a marker rewritten while the report ran is kept`() {
+        assertEquals(
+            "Exit pressed mid-report wrote a fresh marker; deleting it files the SIGKILL as fatal",
+            false,
+            SelfExitMarker.shouldClearAfterReport(oldMarker, freshMarker, reportCompleted = true, myPid = myPid),
+        )
+    }
+
+    @Test
+    fun `a marker written when none existed at start is kept`() {
+        assertEquals(
+            "nothing was read, so nothing was consumed",
+            false,
+            SelfExitMarker.shouldClearAfterReport(null, freshMarker, reportCompleted = true, myPid = myPid),
+        )
+    }
+
+    @Test
+    fun `a marker is kept when the exit history query threw`() {
+        assertEquals(
+            "a failed pass consumed nothing; the next launch must still see the marker",
+            false,
+            SelfExitMarker.shouldClearAfterReport(oldMarker, oldMarker, reportCompleted = false, myPid = myPid),
+        )
+    }
+
+    @Test
+    fun `nothing stored means nothing to clear`() {
+        assertEquals(
+            "no-op",
+            false,
+            SelfExitMarker.shouldClearAfterReport(oldMarker, null, reportCompleted = true, myPid = myPid),
+        )
+    }
 }

@@ -94,6 +94,18 @@ data class SelfExitMarker(val tag: String, val pid: Int, val atMs: Long) {
             return SelfExitMarker(parts[0], pid, at)
         }
 
+        /**
+         * Whether the exit reporter may delete the stored marker once its pass ends.
+         *
+         * @param readAtStart the raw marker read when the report pass began
+         * @param current the raw marker stored now
+         * @param reportCompleted false when the exit-history query threw (nothing was consumed)
+         */
+        fun shouldClearAfterReport(readAtStart: String?, current: String?, reportCompleted: Boolean, myPid: Int): Boolean =
+            // Compare-and-clear: only the exact value this pass read (and consumed) may go. A marker written meanwhile
+            // (Exit pressed mid-report) or one this very process wrote must survive for the next launch.
+            reportCompleted && current != null && current == readAtStart && decode(readAtStart)?.pid != myPid
+
         /** The tag when [marker] explains an exit of [exitPid] stamped [exitTimestampMs], else null. */
         fun tagFor(marker: SelfExitMarker?, exitPid: Int, exitTimestampMs: Long): String? {
             if (marker == null || marker.pid != exitPid) return null
