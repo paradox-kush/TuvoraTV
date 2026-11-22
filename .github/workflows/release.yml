@@ -142,9 +142,12 @@ jobs:
           ./gradlew :app:assembleFullRelease \
             -PversionNameOverride="${{ steps.ver.outputs.version }}" \
             -PversionCodeOverride="${{ github.run_number }}" --stacktrace
+          # R8 overwrites mapping.txt per build: archive right after each invocation.
+          scripts/archive-mapping.sh app tv "${{ steps.ver.outputs.version }}" "${{ github.run_number }}" fullRelease full-apk
           ./gradlew :app:bundleFullRelease \
             -PversionNameOverride="${{ steps.ver.outputs.version }}" \
             -PversionCodeOverride="${{ github.run_number }}" --stacktrace
+          scripts/archive-mapping.sh app tv "${{ steps.ver.outputs.version }}" "${{ github.run_number }}" fullRelease full-aab
 
       - name: Decode Play upload keystore
         run: echo "${{ secrets.PLAY_UPLOAD_KEYSTORE_BASE64 }}" | base64 -d > "$GITHUB_WORKSPACE/play-upload.jks"
@@ -159,6 +162,21 @@ jobs:
           ./gradlew :app:bundlePlaystoreRelease \
             -PversionNameOverride="${{ steps.ver.outputs.version }}" \
             -PversionCodeOverride="${{ github.run_number }}" --stacktrace
+          scripts/archive-mapping.sh app tv "${{ steps.ver.outputs.version }}" "${{ github.run_number }}" playstoreRelease playstore-aab
+
+      # Keep the R8 mappings so our own app_crash_report stacks (minified SourceFile:N frames) can be
+      # retraced with scripts/retrace-crash.sh. PostHog symbolicates only its own $exception events.
+      # Artifact-only on purpose: mapping files are not secrets but make deobfuscation trivial, so
+      # they are NOT attached to the (public-facing) GitHub Release. Runs before the release/Play
+      # steps, so a later Play failure cannot lose them.
+      - name: Archive R8 mappings
+        uses: actions/upload-artifact@v4
+        with:
+          name: mapping-tv-${{ steps.ver.outputs.version }}+${{ github.run_number }}
+          path: mappings/
+          if-no-files-found: error
+          # Capped by the repo/org retention setting if lower.
+          retention-days: 365
 
       - name: Collect artifacts
         run: |
