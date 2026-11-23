@@ -14,24 +14,37 @@ class StalkerVodCommandPolicyTest {
 
     @Test fun `rtsp_url row builds the movie cmd`() =
         assertEquals("rtsp", Decision.Cmd("/media/10.mpg"),
-            StalkerVodCommandPolicy.decide(Row(10, "http://cdn.test/a.mkv", rtspUrl = "http://cdn.test/a.mkv")))
+            StalkerVodCommandPolicy.decide(Row(10, "http://cdn.test/a.mkv", rtspUrl = "http://cdn.test/a.mkv", hasFiles = 0)))
 
     @Test fun `has_files resolves files first and never tries the movie cmd`() =
         assertEquals("has_files", Decision.ResolveFiles(null),
             StalkerVodCommandPolicy.decide(Row(10, "http://cdn.test/a.mkv", hasFiles = 1)))
 
-    @Test fun `media cmd passes unchanged`() {
+    @Test fun `has_files with a movie-form media cmd still resolves files first`() =
+        assertEquals("movie-form", Decision.ResolveFiles(null),
+            StalkerVodCommandPolicy.decide(Row(101, "/media/101.mpg", hasFiles = 1)))
+
+    @Test fun `has_files with an rtsp_url still resolves files first`() =
+        assertEquals("rtsp+files", Decision.ResolveFiles(null),
+            StalkerVodCommandPolicy.decide(Row(10, "http://cdn.test/a.mkv", rtspUrl = "http://cdn.test/a.mkv", hasFiles = 2)))
+
+    @Test fun `has_files with a file-form cmd stays direct`() =
+        assertEquals("file-form", Decision.Cmd("/media/file_5.mpg"),
+            StalkerVodCommandPolicy.decide(Row(7, "/media/file_5.mpg", hasFiles = 1)))
+
+    @Test fun `media cmd passes unchanged when the row has no files`() {
         assertEquals("movie", Decision.Cmd("/media/101.mpg"), StalkerVodCommandPolicy.decide(Row(101, "/media/101.mpg")))
+        assertEquals("movie has_files 0", Decision.Cmd("/media/101.mpg"), StalkerVodCommandPolicy.decide(Row(101, "/media/101.mpg", hasFiles = 0)))
         assertEquals("file", Decision.Cmd("/media/file_5.mpg"), StalkerVodCommandPolicy.decide(Row(7, "/media/file_5.mpg")))
     }
-
-    @Test fun `media cmd wins over has_files so a stock row keeps its cmd`() =
-        assertEquals("stock", Decision.Cmd("/media/101.mpg"),
-            StalkerVodCommandPolicy.decide(Row(101, "/media/101.mpg", hasFiles = 1)))
 
     @Test fun `opaque cmd passes unchanged`() =
         assertEquals("xc", Decision.Cmd("eyJ0eXBlIjoibW92aWUifQ=="),
             StalkerVodCommandPolicy.decide(Row(3, "eyJ0eXBlIjoibW92aWUifQ==")))
+
+    @Test fun `a raw url with has_files 0 is the movie id cmd`() =
+        assertEquals("has_files 0", Decision.Cmd("/media/10.mpg"),
+            StalkerVodCommandPolicy.decide(Row(10, "http://cdn.test/a.mkv", hasFiles = 0)))
 
     @Test fun `a cold row with only a url resolves files then falls back to the movie cmd`() =
         assertEquals("cold", Decision.ResolveFiles("/media/10.mpg"),

@@ -11,12 +11,12 @@ package com.nuvio.tv.core.iptv.stalker
  */
 object StalkerVodCommandPolicy {
 
-    /** The movie row fields the decision reads. [hasFiles] 0 when the row has no such key. */
+    /** The movie row fields the decision reads. [hasFiles] null = the row did not say (a cold stored row keeps only cmd). */
     data class Row(
         val id: Int?,
         val cmd: String?,
         val rtspUrl: String? = null,
-        val hasFiles: Int = 0,
+        val hasFiles: Int? = null,
         val isFile: Boolean = false,
     )
 
@@ -32,16 +32,19 @@ object StalkerVodCommandPolicy {
         val cmd = row.cmd?.trim().orEmpty()
         val id = row.id
         if (row.isFile && id != null) return Decision.Cmd(fileCmd(id))
-        if (isMediaCmd(cmd)) return Decision.Cmd(cmd)
-        if (id != null && !row.rtspUrl.isNullOrBlank()) return Decision.Cmd(movieCmd(id))
-        if (row.hasFiles > 0) return Decision.ResolveFiles(fallback = null)
-        if (isRawUrl(cmd)) {
-            // Only a URL survives (a cold stored row keeps cmd alone): the files may carry the real
-            // id, so look there, and keep the movie id form as the last resort.
-            return Decision.ResolveFiles(fallback = id?.let(::movieCmd))
+        if ((row.hasFiles ?: 0) > 0) {
+            // Real MAG boxes go to the file row first (c/vclub.js): only a file-form cmd is already a file id.
+            return if (isFileCmd(cmd)) Decision.Cmd(cmd) else Decision.ResolveFiles(fallback = null)
         }
+        if (id != null && !row.rtspUrl.isNullOrBlank()) return Decision.Cmd(movieCmd(id))
         if (cmd.isBlank()) return Decision.ResolveFiles(fallback = id?.let(::movieCmd))
-        return Decision.Cmd(cmd)   // XC emulator: base64 / opaque cmd goes through unchanged
+        if (isRawUrl(cmd)) {
+            // has_files == 0 proves a single file: the id form is right. An unknown has_files (cold row)
+            // may still be multi-file: look at the files first, keep the id form as the last resort.
+            return if (row.hasFiles == 0 && id != null) Decision.Cmd(movieCmd(id))
+            else Decision.ResolveFiles(fallback = id?.let(::movieCmd))
+        }
+        return Decision.Cmd(cmd)   // /media/<id>.mpg, XC base64 / opaque cmd: unchanged
     }
 
     /** The create_link cmd for a file row of get_ordered_list (movie, or Ministra episode files). */
@@ -54,6 +57,8 @@ object StalkerVodCommandPolicy {
 
     fun movieCmd(id: Int) = "/media/$id.mpg"
     fun fileCmd(fileId: Int) = "/media/file_$fileId.mpg"
+
+    private fun isFileCmd(cmd: String): Boolean = FILE_CMD.containsMatchIn(cmd)
 
     fun isMediaCmd(cmd: String): Boolean = MEDIA_CMD.containsMatchIn(cmd.trim())
 
@@ -81,5 +86,6 @@ object StalkerVodCommandPolicy {
     }
 
     private val MEDIA_CMD = Regex("""^(?:(?:ffmpeg|auto|ffrt\d*)\s+)?/media/(?:file_)?\d+\.mpg""", RegexOption.IGNORE_CASE)
+    private val FILE_CMD = Regex("""/media/file_\d+""")
     private val RAW_URL = Regex("""^(?:https?|rtsp|rtp|udp)://""", RegexOption.IGNORE_CASE)
 }

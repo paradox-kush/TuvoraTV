@@ -1029,7 +1029,7 @@ class StalkerClient @Inject constructor(
             id = streamId,
             cmd = r.str("cmd"),
             rtspUrl = r.str("rtsp_url"),
-            hasFiles = r.int("has_files") ?: 0,
+            hasFiles = r.int("has_files"),
             isFile = r.flag("is_file") == true,
         )
         rowCache[rowKey(acc.id, "vod", streamId)]?.let { return fromJson(it) }

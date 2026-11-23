@@ -135,6 +135,16 @@ class StalkerStrictMinistraVodTest {
     }
 
     @Test
+    fun `F - a multi-file movie with a movie-form cmd still goes to the file row first`() = runBlocking {
+        movieRow = """{"id":"10","name":"M","cmd":"/media/10.mpg","has_files":1,"category_id":"1","is_series":"0"}"""
+        fileRows = """[{"id":"100","is_file":true,"cmd":"/media/file_100.mpg"}]"""
+        val c = client()
+        c.vodMovies(acc, "1").getOrThrow()
+        assertNotNull("link", c.resolveStreamUrl(acc, "movie", 10, false))
+        assertEquals("file id first, no movie-form mint", listOf<String?>("/media/file_100.mpg"), mints())
+    }
+
+    @Test
     fun `C - a Ministra episode with a custom url file row mints the file id cmd`() = runBlocking {
         movieRow = """{"id":"70","name":"S","cmd":"/media/70.mpg","category_id":"1","is_series":"1"}"""
         fileRows = """[{"id":"9001","is_file":true,"protocol":"custom","cmd":"http://cdn.test/e.mkv"}]"""
