@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.settings
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.runtime.AppRestarter
@@ -9,7 +10,9 @@ import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.core.telemetry.TelemetryService
 import com.nuvio.tv.core.rec.RecEventSettings
 import com.nuvio.tv.data.local.SentrySettingsDataStore
+import coil3.SingletonImageLoader
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,16 +27,20 @@ data class AdvancedSettingsUiState(
     val composeHighlighterEnabled: Boolean = false,
     val playerStatsHudEnabled: Boolean = false,
     val rgb565Enabled: Boolean = true,
+    val hardwareBitmapsEnabled: Boolean = false,
     val sentryEnabled: Boolean = true,
-    val recEventsEnabled: Boolean = true
+    val recEventsEnabled: Boolean = true,
+    val usenet: com.nuvio.tv.core.usenet.UsenetConfiguration = com.nuvio.tv.core.usenet.UsenetConfiguration()
 )
 
 sealed class AdvancedSettingsEvent {
+    data class SetUsenet(val configuration: com.nuvio.tv.core.usenet.UsenetConfiguration) : AdvancedSettingsEvent()
     data class SetFastHorizontalNavigationEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetSmoothBringIntoViewEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetComposeHighlighterEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetPlayerStatsHudEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetRgb565Enabled(val enabled: Boolean) : AdvancedSettingsEvent()
+    data class SetHardwareBitmapsEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetSentryEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
     data class SetRecEventsEnabled(val enabled: Boolean) : AdvancedSettingsEvent()
 }
@@ -46,7 +53,9 @@ class AdvancedSettingsViewModel @Inject constructor(
     private val imagePerformancePreferences: ImagePerformancePreferences,
     private val appRestarter: AppRestarter,
     private val recEventSettings: RecEventSettings,
-    telemetry: TelemetryService
+    telemetry: TelemetryService,
+    private val usenetSettings: com.nuvio.tv.core.usenet.UsenetSettings,
+    @param:ApplicationContext private val appContext: Context
 ) : ViewModel() {
     /** Settings > Diagnostics > Send a report. */
     val reportFlow = SettingsReportFlow(telemetry, viewModelScope)
@@ -55,7 +64,15 @@ class AdvancedSettingsViewModel @Inject constructor(
     val uiState: StateFlow<AdvancedSettingsUiState> = _uiState.asStateFlow()
 
     init {
-        _uiState.update { it.copy(rgb565Enabled = imagePerformancePreferences.rgb565Enabled) }
+        viewModelScope.launch {
+            usenetSettings.settings.collectLatest { configuration -> _uiState.update { it.copy(usenet = configuration) } }
+        }
+        _uiState.update {
+            it.copy(
+                rgb565Enabled = imagePerformancePreferences.rgb565Enabled,
+                hardwareBitmapsEnabled = imagePerformancePreferences.hardwareBitmapsEnabled
+            )
+        }
         viewModelScope.launch {
             layoutPreferenceDataStore.fastHorizontalNavigationEnabled.collectLatest { enabled ->
                 _uiState.update { it.copy(fastHorizontalNavigationEnabled = enabled) }
@@ -90,6 +107,7 @@ class AdvancedSettingsViewModel @Inject constructor(
 
     fun onEvent(event: AdvancedSettingsEvent) {
         when (event) {
+            is AdvancedSettingsEvent.SetUsenet -> usenetSettings.update(event.configuration)
             is AdvancedSettingsEvent.SetFastHorizontalNavigationEnabled -> {
                 viewModelScope.launch {
                     layoutPreferenceDataStore.setFastHorizontalNavigationEnabled(event.enabled)
@@ -114,6 +132,12 @@ class AdvancedSettingsViewModel @Inject constructor(
                 if (imagePerformancePreferences.setRgb565Enabled(event.enabled)) {
                     _uiState.update { it.copy(rgb565Enabled = event.enabled) }
                     appRestarter.restart()
+                }
+            }
+            is AdvancedSettingsEvent.SetHardwareBitmapsEnabled -> {
+                if (imagePerformancePreferences.setHardwareBitmapsEnabled(event.enabled)) {
+                    _uiState.update { it.copy(hardwareBitmapsEnabled = event.enabled) }
+                    SingletonImageLoader.get(appContext).memoryCache?.clear()
                 }
             }
             is AdvancedSettingsEvent.SetSentryEnabled -> {

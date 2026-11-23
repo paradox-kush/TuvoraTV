@@ -88,6 +88,7 @@ class LiveFavouriteRenumberTest {
             xtreamAccountStore = store,
             xtreamStreamSource = streamSource,
             serverStreams = mockk(relaxed = true),
+            usenetSourceSettings = mockk<com.nuvio.tv.core.usenet.UsenetSourceSettings> { every { read(any()) } returns com.nuvio.tv.core.usenet.UsenetSourceConfiguration() }, builtInUsenetService = mockk(relaxed = true),
         )
 
         // Day 1: BBC ONE HD is stream 100 and the user favourites it. All the app keeps is this id.

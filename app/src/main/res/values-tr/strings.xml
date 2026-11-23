@@ -598,6 +598,8 @@
     <string name="advanced_section_diagnostics">Teşhis</string>
     <string name="advanced_sentry_reports">Sentry çökme raporları</string>
     <string name="advanced_sentry_reports_subtitle">Güvenli bağlamla çökme ve ANR raporları gönder. Varsayılan olarak açık.</string>
+    <string name="advanced_playback_issue_reports">Oynatma sorunu raporları</string>
+    <string name="advanced_playback_issue_reports_subtitle">Oynatma sırasında, uzun yüklemelerde ve oynatma hatalarında sorun bildirme butonlarını göster</string>
     <string name="advanced_player_stats_hud">Oynatma istatistikleri katmanı</string>
     <string name="advanced_player_stats_hud_subtitle">Oynatma sırasında canlı CPU, bellek, tampon, bit hızı ve sıcaklık okumalarını açıp kapatmak için yayın bilgisine bir düğme ekler</string>
     <string name="sentry_enable_dialog_title">Çökme raporları açılsın mı?</string>
@@ -1337,7 +1339,7 @@
     <string name="mdblist_show_on_hero_title">Hero Alanında Puanları Göster</string>
     <string name="mdblist_show_on_hero_subtitle">Hero karuselinde MDBList puanlarını göster (modern ve klasik/ızgara)</string>
     <string name="mdblist_rating_order_title">Puan Sıralaması</string>
-    <string name="mdblist_rating_order_subtitle">Etkin ve kullanılabilir ilk 3 puan modern hero alanında gösterilir. Sıralamak için okları kullanın.</string>
+    <string name="mdblist_rating_order_subtitle">Etkin ve kullanılabilir ilk 3 puan modern hero alanında gösterilir. Sıralamak için yeniden sırala düğmesini kullanın.</string>
     <string name="mdblist_dialog_title">MDBList API Key</string>
     <string name="mdblist_dialog_subtitle">Harici verileri çekmek için API anahtarınızı girin</string>
     <string name="mdblist_dialog_placeholder">MDBList API Anahtarını Girin</string>
@@ -1846,6 +1848,9 @@
     <string name="catalog_order_disabled_on_home">Ana Sayfada Devre Dışı</string>
     <string name="catalog_order_enable">Etkinleştir</string>
     <string name="catalog_order_disable">Devre Dışı</string>
+    <string name="catalog_order_pinned">Sabitlendi</string>
+    <string name="catalog_order_pinned_to_top">Üste sabitlendi</string>
+    <string name="catalog_order_pin_to_move_toast">Taşımak için koleksiyondaki üste sabitlemeyi kaldır</string>
 
 
     <!-- StreamScreen -->
@@ -2801,6 +2806,10 @@
     <string name="plugin_repo_added_with_providers">%1$s, %2$d sağlayıcı ile eklendi</string>
     <string name="plugin_repo_removed">Uzantı deposu kaldırıldı</string>
     <string name="plugin_repo_refreshed">Uzantı deposu yenilendi</string>
+    <string name="plugin_repo_delete_confirm_title">Depo silinsin mi?</string>
+    <string name="plugin_repo_delete_confirm_message">Silmek istediğinizden emin misiniz?</string>
+    <string name="plugin_repo_delete_no">Hayır</string>
+    <string name="plugin_repo_delete_yes">Evet</string>
 
     <!-- Trakt errors -->
     <string name="trakt_error_code_expired">Cihaz kodunun süresi doldu. Yeniden başlayın.</string>
@@ -2892,6 +2901,7 @@
     <string name="cd_loading_logo">Logo yükleniyor</string>
     <string name="cd_move_up">Yukarı taşı</string>
     <string name="cd_move_down">Aşağı taşı</string>
+    <string name="cd_reorder">Yeniden sırala</string>
     <string name="cd_edit">Düzenle</string>
     <string name="cd_delete">Sil</string>
     <string name="cd_qr_code">QR kod</string>
@@ -2963,6 +2973,7 @@
     <string name="collections_valid_summary">%1$d koleksiyon, %2$d klasör</string>
     <string name="collections_confirm_import">İçe Aktarmayı Onayla</string>
     <string name="collections_folder_count">%1$d klasör</string>
+    <string name="collections_pinned">Sabitlendi</string>
 
     <!-- Collection Editor -->
     <string name="collections_delete_confirm_title">Koleksiyon silinsin mi?</string>
@@ -2972,6 +2983,16 @@
     <string name="collections_editor_delete_folder_subtitle">\"%1$s\" ve içindekiler kalıcı olarak silinecek.</string>
     <string name="collections_editor_row_title">Satır Başlığı</string>
     <string name="collections_editor_save">Kaydet</string>
+    <string name="collections_editor_unsaved_title">Değişiklikler kaydedilsin mi?</string>
+    <string name="collections_editor_unsaved_subtitle">Bu koleksiyonda kaydedilmemiş değişiklikler var.</string>
+    <string name="collections_editor_unsaved_incomplete_title">Kaydedilmemiş değişiklikler</string>
+    <string name="collections_editor_unsaved_missing_title_and_folder">Bu koleksiyonu kaydetmek için bir başlık girin ve en az bir klasör ekleyin.</string>
+    <string name="collections_editor_unsaved_missing_title">Değişiklikleri kaydetmek için bir koleksiyon başlığı girin.</string>
+    <string name="collections_editor_unsaved_missing_folder">Bu koleksiyonu kaydetmek için en az bir klasör ekleyin.</string>
+    <string name="collections_editor_folder_unsaved_title">Klasör değişiklikleri kaydedilsin mi?</string>
+    <string name="collections_editor_folder_unsaved_subtitle">Bu klasörde kaydedilmemiş değişiklikler var.</string>
+    <string name="collections_editor_folder_unsaved_incomplete_title">Kaydedilmemiş klasör değişiklikleri</string>
+    <string name="collections_editor_folder_unsaved_missing_source">Bu klasörü kaydetmek için en az bir kaynak ekleyin.</string>
     <string name="collections_editor_backdrop">Arka Plan Görseli</string>
     <string name="collections_editor_pin_above">Katalogların Üstüne Sabitle</string>
     <string name="collections_editor_pin_above_desc">Bu koleksiyonu tüm normal ana sayfa kataloglarının üstünde göster. Birden fazla sabitlenmiş koleksiyon oluşturulma sırasını takip eder.</string>
@@ -3506,7 +3527,6 @@
     <string name="autosync_tolerance_value">%1$d ms</string>
     <string name="autosync_thorough_title">Kapsamlı Otomatik Eşitleme Araması</string>
     <string name="autosync_thorough_description">Eşitlemeden önce daha yakın bir eşleşme için diğer altyazıları ve gömülü parçaları karşılaştırmaya devam eder. Kapalıyken ilk güçlü eşleşme daha hızlı kullanılır. Yalnızca güvenilir eşleşmeler uygulanır.</string>
-    <string name="autosync_toast_no_fit">Eşitleme başarısız: Bu altyazı videonun bu sürümüyle uyuşmuyor.</string>
     <string name="autosync_label_synced">Otomatik eşitlendi</string>
     <string name="stream_resume_from_time">%1$s konumundan devam et</string>
     <string name="stream_resume_from_percent">%1$d%% konumundan devam et</string>

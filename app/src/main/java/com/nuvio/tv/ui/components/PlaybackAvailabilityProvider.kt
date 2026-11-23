@@ -11,6 +11,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.contracts.IptvStreamSources
 import com.nuvio.tv.core.streams.PlaybackAvailability
+import com.nuvio.tv.core.usenet.UsenetSourceSettings
 import com.nuvio.tv.data.local.PluginDataStore
 import com.nuvio.tv.data.mediaserver.ServerRepository
 import com.nuvio.tv.data.mediaserver.ServerStreams
@@ -19,8 +20,12 @@ import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
@@ -32,6 +37,7 @@ internal class PlaybackAvailabilityViewModel @Inject constructor(
     pluginDataStore: PluginDataStore,
     metaRepository: MetaRepository,
     iptvStreamSources: IptvStreamSources,
+    usenetSettings: UsenetSourceSettings,
     serverRepository: ServerRepository,
     serverStreams: ServerStreams
 ) : ViewModel() {
@@ -46,18 +52,26 @@ internal class PlaybackAvailabilityViewModel @Inject constructor(
         flowOf(emptyList())
     }
 
+    // Reading the settings decrypts them: keep it off the main thread, and only pass on changes.
+    // Store builds never offer Usenet (AppFeaturePolicy.usenetEnabled = false).
+    private val usenetReady = if (!AppFeaturePolicy.usenetEnabled) flowOf(false) else
+        usenetSettings.snapshots.map { (_, result) -> result.getOrNull()?.ready == true }
+            .distinctUntilChanged().flowOn(Dispatchers.IO)
+
     val availability = combine(
         addonRepository.getAddonDiscoveryState(),
         enabledScrapers,
         iptvSourceTypes,
-        serverRepository.uiState
-    ) { discovery, scrapers, iptvTypes, _ ->
+        serverRepository.uiState,
+        usenetReady
+    ) { discovery, scrapers, iptvTypes, _, usenet ->
         PlaybackAvailability(
             discovery.addons,
             scrapers,
             isLoaded = discovery.initialized && discovery.pendingUrls.isEmpty(),
             hasPendingAddonManifests = !discovery.initialized || discovery.pendingUrls.isNotEmpty(),
             hasFailedAddonManifests = discovery.failedUrls.isNotEmpty(),
+            usenetReady = usenet,
             cachedMeta = metaRepository::getCachedMeta,
             iptvSourceTypes = iptvTypes,
             serverStreams = serverStreams::canServe

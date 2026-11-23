@@ -576,6 +576,8 @@
     <string name="advanced_section_diagnostics">Dijagnostika</string>
     <string name="advanced_sentry_reports">Sentry izvješća o rušenju</string>
     <string name="advanced_sentry_reports_subtitle">Šalji izvješća o rušenjima i ANR-ovima sa sigurnim kontekstom. Uključeno prema zadanim postavkama.</string>
+    <string name="advanced_playback_issue_reports">Izvješća o problemima s reprodukcijom</string>
+    <string name="advanced_playback_issue_reports_subtitle">Prikaži gumbe za prijavu tijekom reprodukcije, dugog učitavanja i pogrešaka reprodukcije</string>
     <string name="advanced_player_stats_hud">Prikaz statistike reprodukcije</string>
     <string name="advanced_player_stats_hud_subtitle">Prikaži gumb u informacijama o streamu za uključivanje prikaza CPU-a, memorije, međuspremnika, bitratea i temperature uživo tijekom reprodukcije</string>
     <string name="sentry_enable_dialog_title">Uključiti izvješća o rušenju?</string>
@@ -1174,7 +1176,6 @@
     <string name="mdblist_rate_limited">Dosegnuto je ograničenje zahtjeva za MDBList. Sinkronizacija će se nastaviti nakon poništavanja ograničenja.</string>
     <string name="mdblist_revoke_failed">Veza je prekinuta na ovom uređaju. Za opoziv pristupa ukloni ovu aplikaciju u postavkama MDBList računa.</string>
     <string name="mdblist_title">MDBList ocjene</string>
-    <string name="mdblist_subtitle">Konfiguriraj vanjske ocjene prikazane u istaknutom dijelu detalja</string>
     <string name="mdblist_enable_title">Omogući MDBList ocjene</string>
     <string name="mdblist_enable_subtitle">Dohvaćaj ocjene vanjskih pružatelja na zaslonu detalja</string>
     <string name="mdblist_api_key_title">API ključ</string>
@@ -1201,7 +1202,6 @@
     <string name="mdblist_show_on_hero_title">Koristi ocjene u istaknutom odjeljku</string>
     <string name="mdblist_show_on_hero_subtitle">Prikaži MDBList ocjene u istaknutom karuselu (moderni i klasični/mrežni)</string>
     <string name="mdblist_rating_order_title">Redoslijed ocjena</string>
-    <string name="mdblist_rating_order_subtitle">Prve 3 omogućene i dostupne ocjene prikazuju se u modernom istaknutom odjeljku. Koristi strelice za promjenu redoslijeda.</string>
     <string name="mdblist_dialog_title">MDBList API ključ</string>
     <string name="mdblist_dialog_subtitle">Unesi API ključ za dohvaćanje vanjskih ocjena</string>
     <string name="mdblist_dialog_placeholder">Unesi MDBList API ključ</string>

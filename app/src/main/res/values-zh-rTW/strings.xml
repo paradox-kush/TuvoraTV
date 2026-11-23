@@ -572,6 +572,8 @@
     <string name="advanced_section_diagnostics">診斷</string>
     <string name="advanced_sentry_reports">Sentry 崩潰報告</string>
     <string name="advanced_sentry_reports_subtitle">傳送包含安全內容的崩潰和 ANR 報告。預設開啟。</string>
+    <string name="advanced_playback_issue_reports">播放問題報告</string>
+    <string name="advanced_playback_issue_reports_subtitle">在播放期間、長時間載入和播放錯誤時顯示報告按鈕</string>
     <string name="advanced_player_stats_hud">播放統計覆蓋層</string>
     <string name="advanced_player_stats_hud_subtitle">在串流資訊中顯示一個按鈕，用於在播放期間切換即時 CPU、記憶體、緩衝、位元率和溫度讀數</string>
     <string name="sentry_enable_dialog_title">開啟崩潰報告？</string>
@@ -1146,7 +1148,6 @@
     <string name="mdblist_rate_limited">已達 MDBList 的請求限制。同步將在限制重設後恢復。</string>
     <string name="mdblist_revoke_failed">已在此裝置上中斷連線。請在您的 MDBList 帳戶設定中移除此應用程式以撤銷其存取權限。</string>
     <string name="mdblist_title">MDBList 評分</string>
-    <string name="mdblist_subtitle">配置詳情焦點區塊中顯示的外部評分</string>
     <string name="mdblist_enable_title">啟用 MDBList 評分</string>
     <string name="mdblist_enable_subtitle">在中繼資料詳情畫面中從外部提供者獲取評分</string>
     <string name="mdblist_api_key_title">API 金鑰</string>

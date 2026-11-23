@@ -78,7 +78,8 @@ class StreamRepositorySourceJourneyTest {
             serverStreams = mockk<ServerStreams>(relaxed = true) {
                 every { isNativeRequest(any()) } returns false
                 every { sources(any(), any(), any(), any(), any()) } returns emptyList()
-            }
+            },
+            usenetSourceSettings = mockk<com.nuvio.tv.core.usenet.UsenetSourceSettings> { every { read(any()) } returns com.nuvio.tv.core.usenet.UsenetSourceConfiguration() }, builtInUsenetService = mockk(relaxed = true)
         )
     }
 

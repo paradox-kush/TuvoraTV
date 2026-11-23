@@ -836,7 +836,6 @@
 
     <!-- MDBListSettingsScreen -->
     <string name="mdblist_title">MDBList-Bewertungen</string>
-    <string name="mdblist_subtitle">Externe Bewertungen konfigurieren, die im Detailbereich angezeigt werden</string>
     <string name="mdblist_enable_title">MDBList-Bewertungen aktivieren</string>
     <string name="mdblist_enable_subtitle">Bewertungen von externen Anbietern im Metadaten-Detailbildschirm abrufen</string>
     <string name="mdblist_api_key_title">API-Schlüssel</string>
@@ -1434,6 +1433,7 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Wird geladen\u2026</string>
     <string name="account_sync_description">Synchronisieren Sie Ihre Bibliothek, den Fortschritt, Add-ons und Plugins auf allen Geräten.</string>
+    <string name="account_sync_restart_note">Die Synchronisierung erfolgt nicht in Echtzeit auf allen aktiven Geräten. Starten Sie dieses Gerät nach der Anmeldung neu, um Änderungen zu übernehmen, die an anderer Stelle vorgenommen wurden.</string>
     <string name="account_signin_qr_title">Mit QR anmelden</string>
     <string name="account_signin_qr_subtitle">Scannen Sie einen QR-Code und schließen Sie die E-Mail-Anmeldung auf Ihrem Smartphone ab</string>
     <string name="account_signed_in_label">Angemeldet</string>
