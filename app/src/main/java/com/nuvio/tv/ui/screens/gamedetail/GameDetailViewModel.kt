@@ -87,6 +87,8 @@ class GameDetailViewModel @Inject constructor(
     private var finishedAtFirstSight: Boolean? = null
     private var renderMode: GameScoreMode? = null
     private var renderJob: Job? = null
+    /** The load state computed on the RAW detail; [_ui] shows it with the spoiler render swapped in. */
+    private var rawUi: GameDetailUiState = GameDetailUiReducer.initial(RadarTime.nowMs())
     private val _scoreMode = MutableStateFlow(GameScoreMode.SHOWN)
     /** Shown / Hidden / Pending for the scoreboard (Hidden shows the "Scores hidden" chip, Pending shows "-"). */
     val scoreMode: StateFlow<GameScoreMode> = _scoreMode.asStateFlow()
@@ -157,7 +159,7 @@ class GameDetailViewModel @Inject constructor(
             }.filterNotNull().first()
         }
         if (found == null) {
-            _ui.value = GameDetailUiState.Failed(timedOut = true)
+            synchronized(this) { rawUi = GameDetailUiState.Failed(timedOut = true); _ui.value = rawUi }
             return
         }
         fixture = found
@@ -185,52 +187,64 @@ class GameDetailViewModel @Inject constructor(
     }
 
     private fun onLoad(load: com.nuvio.tv.core.sports.detail.DetailLoad) {
-        if (load is com.nuvio.tv.core.sports.detail.DetailLoad.Loaded) {
-            synchronized(this) {
+        synchronized(this) {
+            // The load reducer (NoData / stale / availability) always judges the RAW detail; what the spoiler
+            // settings allow on screen is applied afterwards, in publishRendered.
+            rawUi = GameDetailUiReducer.onLoad(rawUi, load, RadarTime.nowMs())
+            if (load is com.nuvio.tv.core.sports.detail.DetailLoad.Loaded) {
                 if (finishedAtFirstSight == null) finishedAtFirstSight = load.detail.state == com.nuvio.tv.core.sports.detail.GameState.FINAL
                 scoreBuffer.record(gameId, load.detail, RadarTime.nowMs())
                 latestRaw = load.detail
             }
-            publishRendered()
-        } else {
-            _ui.update { GameDetailUiReducer.onLoad(it, load, RadarTime.nowMs()) }
         }
+        publishRendered()
     }
 
-    /** Renders the held raw model under the current setting; schedules the one local re-render when a delayed snapshot comes due. */
+    /**
+     * Renders the held raw model under the current setting and publishes it over the raw load state (a pure swap of
+     * what is displayed: it never changes NoData / stale / Failed). Schedules the single local re-render for when a
+     * delayed snapshot comes due.
+     */
     @Synchronized
     private fun publishRendered() {
-        val raw = latestRaw ?: return
         val now = RadarTime.nowMs()
         val settings = spoilerSettings.value
-        val render = GameScorePolicy.render(settings, gameId, scoreBuffer, raw, finishedAtFirstSight == true, now) ?: return
-        val mode = when (render) {
-            is GameRender.Shown -> GameScoreMode.SHOWN
-            is GameRender.Hidden -> GameScoreMode.HIDDEN
-            is GameRender.Pending -> GameScoreMode.PENDING
+        val raw = latestRaw
+        val render = raw?.let { GameScorePolicy.render(settings, gameId, scoreBuffer, it, finishedAtFirstSight == true, now) }
+        if (render != null) {
+            val mode = when (render) {
+                is GameRender.Shown -> GameScoreMode.SHOWN
+                is GameRender.Hidden -> GameScoreMode.HIDDEN
+                is GameRender.Pending -> GameScoreMode.PENDING
+            }
+            // A mode flip is not a score change: nothing animates on reveal.
+            if (mode != renderMode) { lastDetail = null; renderMode = mode }
+            _scoreMode.value = mode
+            gameState = raw.state; publishWatch()
+            val diff = GameMomentPolicy.diff(lastDetail, render.detail)
+            lastDetail = render.detail
+            if (diff.isNotEmpty()) _moments.update { prev -> MomentBatch(prev.seq + 1, diff) }
         }
-        // A mode flip is not a score change: nothing animates on reveal.
-        if (mode != renderMode) { lastDetail = null; renderMode = mode }
-        _scoreMode.value = mode
-        gameState = raw.state; publishWatch()
-        val diff = GameMomentPolicy.diff(lastDetail, render.detail)
-        lastDetail = render.detail
-        if (diff.isNotEmpty()) _moments.update { prev -> MomentBatch(prev.seq + 1, diff) }
-        _ui.update { GameDetailUiReducer.onLoad(it, com.nuvio.tv.core.sports.detail.DetailLoad.Loaded(render.detail), now) }
+        _ui.value = GameDetailUiReducer.display(rawUi, render?.detail)
         renderJob?.cancel()
+        renderJob = null
         val due = scoreBuffer.nextChangeAtMs(now, settings.delayMs) ?: return
         renderJob = viewModelScope.launch {
             kotlinx.coroutines.delay((due - now).coerceAtLeast(0L) + 50L)
+            synchronized(this@GameDetailViewModel) {
+                if (renderJob === kotlin.coroutines.coroutineContext[Job]) renderJob = null
+            }
             publishRendered()
         }
     }
 
     fun checkDeadline() {
-        _ui.update { GameDetailUiReducer.onDeadline(it, RadarTime.nowMs()) }
+        synchronized(this) { rawUi = GameDetailUiReducer.onDeadline(rawUi, RadarTime.nowMs()) }
+        publishRendered()
     }
 
     fun retry() {
-        _ui.value = GameDetailUiReducer.retry(RadarTime.nowMs())
+        synchronized(this) { rawUi = GameDetailUiReducer.retry(RadarTime.nowMs()); _ui.value = rawUi }
         viewModelScope.launch {
             val poller = withTimeoutOrNull(FIXTURE_WAIT_MS) { pollerReady.await() }
             if (poller == null) { bootstrap(); return@launch }

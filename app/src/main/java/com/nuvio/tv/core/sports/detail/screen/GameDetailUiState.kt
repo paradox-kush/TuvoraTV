@@ -39,6 +39,10 @@ object GameDetailUiReducer {
         }
     }
 
+    /** What the screen shows: the load state computed on the RAW model, with [rendered] swapped in. */
+    fun display(raw: GameDetailUiState, rendered: GameDetail?): GameDetailUiState =
+        if (raw is GameDetailUiState.Loaded && rendered != null) raw.copy(detail = rendered) else raw
+
     fun onDeadline(prev: GameDetailUiState, nowMs: Long): GameDetailUiState =
         if (prev is GameDetailUiState.Loading && nowMs >= prev.deadlineAtMs) GameDetailUiState.Failed(timedOut = true) else prev
 }
