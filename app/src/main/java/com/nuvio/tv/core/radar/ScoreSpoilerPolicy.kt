@@ -24,10 +24,12 @@ object ScoreSpoilerPolicy {
         if (!settings.shown) return ScoreView.ScoreHidden
         val delayMs = settings.delayMs
         if (delayMs <= 0L || eventId == null || fixtureFinishedAtFirstSight) return ScoreView.ScoreShown(observed)
-        // Never seen live: nothing to run ahead of (an upcoming game, or a result with no live row).
-        if (!buffer.hasKey(eventId)) return ScoreView.ScoreShown(observed)
-        val old = buffer.valueAt(eventId, nowMs, delayMs) ?: return ScoreView.ScorePending
-        return ScoreView.ScoreShown(old)
+        val old = buffer.valueAt(eventId, nowMs, delayMs)
+        if (old != null) return ScoreView.ScoreShown(old)
+        // Nothing old enough. A game with a score we have not buffered yet (cold-start cache, or a fetch not
+        // recorded) is pending, never shown ahead of the delay; a game with no score yet has nothing to hide.
+        val hasScore = observed != null && (!observed.homeScore.isNullOrBlank() || !observed.awayScore.isNullOrBlank())
+        return if (buffer.hasKey(eventId) || hasScore) ScoreView.ScorePending else ScoreView.ScoreShown(observed)
     }
 
     /** Spoiler-bearing game-page parts (scorers, last play, win chance, box score...) are hidden. */

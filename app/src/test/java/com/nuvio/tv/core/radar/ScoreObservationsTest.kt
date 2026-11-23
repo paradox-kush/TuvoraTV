@@ -44,4 +44,57 @@ class ScoreObservationsTest {
         assertEquals(ScoreView.ScoreShown(live("e4", "3", "3")), o.scoreView(ScoreSpoilerSettings(), "e4", live("e4", "3", "3"), 1L))
         assertTrue(o.nextChangeAtMs(1L, 0L) == null)
     }
+
+    private val d60 = ScoreSpoilerSettings(shown = true, delaySeconds = 60)
+
+    @Test
+    fun `a game with no live row that lands final with a score is delayed too`() {
+        val o = ScoreObservations()
+        o.note(listOf(fx("e5")), emptyList(), 0L)
+        val fin = fx("e5", status = "Match Finished", h = "2", a = "1")
+        o.note(listOf(fin), emptyList(), 100_000L)
+        assertEquals("pending when the fetch lands", ScoreView.ScorePending, o.scoreView(d60, fin, null, 100_000L))
+        assertEquals("pending at 59 s", ScoreView.ScorePending, o.scoreView(d60, fin, null, 159_000L))
+        val late = o.scoreView(d60, fin, null, 160_000L) as ScoreView.ScoreShown
+        assertEquals("shown 60 s later", "2", late.value?.homeScore)
+    }
+
+    @Test
+    fun `an in-progress score from a sport without a live feed is delayed`() {
+        val o = ScoreObservations()
+        val a = fx("e7", h = "1", a = "0")
+        val b = fx("e7", h = "2", a = "0")
+        o.note(listOf(a), emptyList(), 0L)
+        o.note(listOf(b), emptyList(), 70_000L)
+        val v = o.scoreView(d60, b, null, 80_000L) as ScoreView.ScoreShown
+        assertEquals("the older score", "1", v.value?.homeScore)
+    }
+
+    @Test
+    fun `a fixture score does not shadow the live row of the same response`() {
+        val o = ScoreObservations()
+        o.note(listOf(fx("e8", h = "1", a = "0")), listOf(live("e8", "1", "0")), 0L)
+        val v = o.scoreView(d30, fx("e8", h = "1", a = "0"), live("e8", "1", "0"), 31_000L) as ScoreView.ScoreShown
+        assertEquals("live row snapshot", "1H", v.value?.status)
+    }
+
+    @Test
+    fun `a game that was live in the disk cache is pending until a fresh snapshot is due`() {
+        val o = ScoreObservations()
+        val cached = fx("e6", status = "1H", h = "1", a = "0")
+        o.noteCached(listOf(cached))
+        assertEquals("cached live score is not shown", ScoreView.ScorePending, o.scoreView(d30, cached, live("e6", "1", "0"), 1_000L))
+        o.note(listOf(cached), listOf(live("e6", "1", "0")), 5_000L)
+        assertEquals("fresh snapshot not yet due", ScoreView.ScorePending, o.scoreView(d30, cached, live("e6", "1", "0"), 34_000L))
+        val v = o.scoreView(d30, cached, live("e6", "1", "0"), 35_000L) as ScoreView.ScoreShown
+        assertEquals("due", "1", v.value?.homeScore)
+    }
+
+    @Test
+    fun `an upcoming game with no score still shows no score`() {
+        val o = ScoreObservations()
+        val up = fx("e9")
+        o.note(listOf(up), emptyList(), 0L)
+        assertEquals(ScoreView.ScoreShown(null), o.scoreView(d60, up, null, 1L))
+    }
 }

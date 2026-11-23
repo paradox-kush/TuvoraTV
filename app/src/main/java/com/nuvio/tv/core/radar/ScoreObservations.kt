@@ -14,16 +14,14 @@ class ScoreObservations(
     /** Fixtures first (first-sight bookkeeping), then the live rows of the same response. */
     @Synchronized
     fun note(fixtures: Collection<RadarFixture>, liveRows: Collection<RadarLiveScore>, nowMs: Long) {
+        val liveIds = liveRows.mapNotNullTo(HashSet()) { it.eventId }
         for (fx in fixtures) {
             val id = fx.id ?: continue
             if (seen.add(id) && fx.isFinishedOrOff) finishedFirst.add(id)
-            // A game we watched live that now reads final: its final score is delayed like the rest,
-            // so record it as one more snapshot instead of letting the fixture's score jump ahead.
-            if (fx.isFinishedOrOff && id !in finishedFirst && buffer.hasKey(id) &&
-                (!fx.homeScore.isNullOrBlank() || !fx.awayScore.isNullOrBlank())
-            ) {
-                buffer.record(id, RadarLiveScore(eventId = id, status = "FT", homeScore = fx.homeScore, awayScore = fx.awayScore), nowMs)
-            }
+            // Every game not already over at first sight is delayed, whichever feed carried its score:
+            // the fixture's own score is one more observation (a sport outside the livescore feed, or a
+            // game the feed missed). A live row of the same response wins: it carries the minute too.
+            if (id !in finishedFirst && id !in liveIds) fixtureObservation(fx)?.let { buffer.record(id, it, nowMs) }
         }
         for (row in liveRows) {
             val id = row.eventId ?: continue
@@ -46,6 +44,17 @@ class ScoreObservations(
 
     fun scoreView(settings: ScoreSpoilerSettings, eventId: String?, observed: RadarLiveScore?, nowMs: Long): ScoreView =
         ScoreSpoilerPolicy.scoreFor(settings, eventId, observed, finishedAtFirstSight(eventId), buffer, nowMs)
+
+    /** Fixture-aware form: a fixture's own score counts as an observation too (see [fixtureObservation]). */
+    fun scoreView(settings: ScoreSpoilerSettings, fixture: RadarFixture, liveRow: RadarLiveScore?, nowMs: Long): ScoreView =
+        scoreView(settings, fixture.id, liveRow ?: fixtureObservation(fixture), nowMs)
+
+    private fun fixtureObservation(fx: RadarFixture): RadarLiveScore? {
+        val id = fx.id ?: return null
+        if (fx.homeScore.isNullOrBlank() && fx.awayScore.isNullOrBlank()) return null
+        // Status only distinguishes "final" so an unchanged score dedupes in the buffer.
+        return RadarLiveScore(eventId = id, status = if (fx.isFinishedOrOff) "FT" else null, homeScore = fx.homeScore, awayScore = fx.awayScore)
+    }
 
     fun nextChangeAtMs(nowMs: Long, delayMs: Long): Long? = buffer.nextChangeAtMs(nowMs, delayMs)
 }
