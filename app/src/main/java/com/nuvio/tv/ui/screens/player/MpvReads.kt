@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.player
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.CoroutineContext
 
@@ -16,6 +17,13 @@ internal object MpvReads {
     val context: CoroutineContext = Dispatchers.IO.limitedParallelism(1)
 
     suspend fun <T> read(block: () -> T): T = withContext(context) { block() }
+
+    private val postScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + context)
+
+    /** Fire-and-forget libmpv work from a non-suspending caller (on Main): runs on the same serial lane. */
+    fun post(block: () -> Unit) {
+        postScope.launch { runCatching(block) }
+    }
 }
 
 /** Everything the progress tick and the startup watchdog need from libmpv, read in one go. */

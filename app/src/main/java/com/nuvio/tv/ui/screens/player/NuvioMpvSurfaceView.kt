@@ -10,8 +10,10 @@ import android.view.SurfaceHolder
 import com.nuvio.tv.data.local.MpvHardwareDecodeMode
 import com.nuvio.tv.data.local.SubtitleStyleSettings
 import `is`.xyz.mpv.MPV
+import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToLong
@@ -34,6 +36,22 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     /** Held by off-Main reads ([readTickSample], [readTrackSnapshot]) and by [releasePlayer]'s destroy. */
     private val coreLock = Any()
+    private val playbackFailure = AtomicReference<String?>(null)
+    private val failureObserver = object : MPV.EventObserver {
+        override fun event(eventId: Int, data: MPVNode) {
+            if (eventId == MPV.mpvEvent.MPV_EVENT_END_FILE) {
+                mpvPlaybackFailure(data)?.let(playbackFailure::set)
+            }
+        }
+        override fun eventProperty(property: String) = Unit
+        override fun eventProperty(property: String, value: Long) = Unit
+        override fun eventProperty(property: String, value: Boolean) = Unit
+        override fun eventProperty(property: String, value: String) = Unit
+        override fun eventProperty(property: String, value: Double) = Unit
+        override fun eventProperty(property: String, value: MPVNode) = Unit
+    }
+
+    fun consumePlaybackFailure(): String? = playbackFailure.getAndSet(null)
     private var hasQueuedInitialMedia = false
     private var lastMediaRequestKey: String? = null
     private var pendingInitialMediaUrl: String? = null
@@ -48,6 +66,14 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     private var currentAspectMode: AspectMode = AspectMode.ORIGINAL
     private var pendingAspectRetryCount = 0
     private var styledSubtitlesEnabled = false
+    @Volatile private var lastAppliedSubtitleStyle: SubtitleStyleSettings = SubtitleStyleSettings()
+    @Volatile private var lastAppliedAssSubtitleStyle: SubtitleStyleSettings =
+        SubtitleStyleSettings(size = SubtitleStyleSettings.ASS_SIZE_DEFAULT)
+    @Volatile private var appliedStyleIsAss: Boolean? = null
+    private var appliedAssOverride: String? = null
+    private var appliedAssBold: Boolean? = null
+    private var appliedSubPos: Double? = null
+    private var appliedSubMarginY: Int? = null
     private val aspectReapplyRunnable = Runnable {
         applyAspectModeInternal(currentAspectMode, allowRetry = true)
     }
@@ -60,9 +86,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             cacheDir = context.cacheDir.path
         )
         initialized = true
+        mpv.addObserver(failureObserver)
     }
 
     fun setMedia(url: String, headers: Map<String, String>, startPositionMs: Long = 0L) {
+        playbackFailure.set(null)
         ensureInitialized()
         val requestKey = buildMediaRequestKey(url = url, headers = headers) +
             "#start=${startPositionMs.coerceAtLeast(0L)}"
@@ -258,6 +286,12 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         if (!initialized) return null
         return runCatching {
             val codec = mpv.getPropertyString("current-tracks/sub/codec")?.lowercase(Locale.US)
+            val isAss = isAssSubtitleCodec(codec)
+            if (appliedStyleIsAss != isAss) {
+                applySubtitleStyleForCodec(codec)
+            } else {
+                applyAssSubtitleOverride(isAss, if (isAss) lastAppliedAssSubtitleStyle else lastAppliedSubtitleStyle)
+            }
             val styled = enabled && codec != null && codec in MPV_STYLED_SUBTITLE_CODECS
             val sid = mpv.getPropertyString(MPV_SID_PROPERTY)
             if (sid != null && sid != "no" && sid != "false") {
@@ -463,49 +497,100 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     var subtitleLiftFraction: Double = 0.0
 
-    fun applySubtitleStyle(style: SubtitleStyleSettings) {
+    fun applySubtitleStyle(style: SubtitleStyleSettings, assStyle: SubtitleStyleSettings) {
+        lastAppliedSubtitleStyle = style
+        lastAppliedAssSubtitleStyle = assStyle
         if (!initialized) return
-        runCatching {
-            val scale = subtitleScale(style)
-            val clampedOffset = style.verticalOffset.coerceIn(
-                SUBTITLE_VERTICAL_OFFSET_MIN,
-                SUBTITLE_VERTICAL_OFFSET_MAX
-            )
-            val normalizedOffset = (clampedOffset - SUBTITLE_VERTICAL_OFFSET_MIN).toDouble() /
-                (SUBTITLE_VERTICAL_OFFSET_MAX - SUBTITLE_VERTICAL_OFFSET_MIN).toDouble()
-            val subPos = MPV_SUB_POS_AT_BOTTOM -
-                (normalizedOffset * (MPV_SUB_POS_AT_BOTTOM - MPV_SUB_POS_AT_TOP))
-            val subMarginY = (MPV_SUB_MARGIN_Y_MIN +
-                (normalizedOffset * (MPV_SUB_MARGIN_Y_MAX - MPV_SUB_MARGIN_Y_MIN))).toInt()
-            val outlineSize = when {
-                !style.outlineEnabled -> 0.0
-                isAssOrSsaSubtitleSelectedNow() -> style.outlineWidth.coerceIn(1, 6).toDouble()
-                else -> style.outlineWidth * MPV_TEXT_OUTLINE_SIZE_PER_WIDTH
+        // Fork (ANR rule): upstream reads the subtitle codec here and callers are on Main. The read and
+        // the style writes run on the serial mpv lane ([MpvReads]), under the core lock like the tick reads.
+        MpvReads.post {
+            synchronized(coreLock) {
+                if (!initialized) return@synchronized
+                runCatching {
+                    applySubtitleStyleForCodec(mpv.getPropertyString("current-tracks/sub/codec")?.lowercase(Locale.US))
+                }.onFailure {
+                    Log.w(TAG, "Failed to apply subtitle style on mpv: ${LogRedaction.text(it.message)}")
+                }
             }
-            val backgroundAlpha = (style.backgroundColor ushr 24) and 0xFF
-            val borderStyle = if (backgroundAlpha > 0) "background-box" else "outline-and-shadow"
-            // In background-box mode, sub-shadow-offset controls the box padding/margin
-            val shadowOffset = if (backgroundAlpha > 0) 5.0 else 0.0
+        }
+    }
 
-            mpv.setPropertyDouble("sub-scale", scale)
-            mpv.setPropertyBoolean("sub-bold", style.bold)
-            mpv.setPropertyDouble("sub-outline-size", outlineSize)
-            val liftedSubPos = if (subtitleLiftFraction > 0.0) {
-                minOf(subPos, 100.0 * (1.0 - subtitleLiftFraction))
+    private fun isAssSubtitleCodec(codec: String?): Boolean =
+        codec == "ass" || codec == "ssa" || (codec.isNullOrEmpty() && isAssOrSsaSubtitleSelectedNow())
+
+    private fun applySubtitleStyleForCodec(codec: String?) {
+        val isAss = isAssSubtitleCodec(codec)
+        val style = if (isAss) lastAppliedAssSubtitleStyle else lastAppliedSubtitleStyle
+        val scale = subtitleScale(style)
+        val outlineSize = when {
+            !style.outlineEnabled -> 0.0
+            isAss -> style.outlineWidth.coerceIn(1, 6).toDouble()
+            else -> style.outlineWidth * MPV_TEXT_OUTLINE_SIZE_PER_WIDTH
+        }
+        val backgroundAlpha = (style.backgroundColor ushr 24) and 0xFF
+        val borderStyle = if (backgroundAlpha > 0) "background-box" else "outline-and-shadow"
+        // In background-box mode, sub-shadow-offset controls the box padding/margin
+        val shadowOffset = if (backgroundAlpha > 0) 5.0 else 0.0
+
+        mpv.setPropertyDouble("sub-scale", scale)
+        mpv.setPropertyBoolean("sub-bold", style.bold)
+        mpv.setPropertyDouble("sub-outline-size", outlineSize)
+        mpv.setPropertyDouble("sub-shadow-offset", shadowOffset)
+        mpv.setPropertyString("sub-border-style", borderStyle)
+        mpv.setPropertyString("sub-color", toMpvColor(style.textColor))
+        mpv.setPropertyString("sub-back-color", toMpvColor(style.backgroundColor))
+        mpv.setPropertyString("sub-outline-color", toMpvColor(style.outlineColor))
+        mpv.setPropertyBoolean("sub-filter-sdh", style.stripSdh)
+        mpv.setPropertyBoolean("sub-filter-sdh-harder", style.stripSdh)
+        applyAssSubtitleOverride(isAss, style)
+        appliedStyleIsAss = isAss
+    }
+
+    private fun applyAssSubtitleOverride(isAss: Boolean, style: SubtitleStyleSettings) {
+        val scale = subtitleScale(style)
+        val assOverride = when {
+            !isAss -> "no"
+            style.customizeAss -> "force"
+            abs(scale - 1.0) > 0.001 -> "scale"
+            else -> "no"
+        }
+        if (appliedAssOverride != assOverride) {
+            mpv.setPropertyString("sub-ass-override", assOverride)
+            appliedAssOverride = assOverride
+        }
+        val clampedOffset = style.verticalOffset.coerceIn(
+            SUBTITLE_VERTICAL_OFFSET_MIN,
+            SUBTITLE_VERTICAL_OFFSET_MAX
+        )
+        val normalizedOffset = (clampedOffset - SUBTITLE_VERTICAL_OFFSET_MIN).toDouble() /
+            (SUBTITLE_VERTICAL_OFFSET_MAX - SUBTITLE_VERTICAL_OFFSET_MIN).toDouble()
+        val subPos = MPV_SUB_POS_AT_BOTTOM -
+            (normalizedOffset * (MPV_SUB_POS_AT_BOTTOM - MPV_SUB_POS_AT_TOP))
+        val liftedSubPos = if (subtitleLiftFraction > 0.0) {
+            minOf(subPos, 100.0 * (1.0 - subtitleLiftFraction))
+        } else {
+            subPos
+        }
+        val targetSubPos = if (assOverride == "scale") 100.0 else liftedSubPos
+        if (appliedSubPos != targetSubPos) {
+            mpv.setPropertyDouble("sub-pos", targetSubPos)
+            appliedSubPos = targetSubPos
+        }
+        val subMarginY = (MPV_SUB_MARGIN_Y_MIN +
+            (normalizedOffset * (MPV_SUB_MARGIN_Y_MAX - MPV_SUB_MARGIN_Y_MIN))).toInt()
+        val targetSubMarginY = if (assOverride == "scale") 0 else subMarginY
+        if (appliedSubMarginY != targetSubMarginY) {
+            mpv.setPropertyInt("sub-margin-y", targetSubMarginY)
+            appliedSubMarginY = targetSubMarginY
+        }
+        val assBold = style.bold.takeIf { assOverride == "force" }
+        if (appliedAssBold != assBold) {
+            if (assBold == null) {
+                mpv.command("change-list", "sub-ass-style-overrides", "clr", "")
             } else {
-                subPos
+                mpv.command("change-list", "sub-ass-style-overrides", "set", if (assBold) "Bold=1" else "Bold=0")
             }
-            mpv.setPropertyDouble("sub-pos", liftedSubPos)
-            mpv.setPropertyInt("sub-margin-y", subMarginY)
-            mpv.setPropertyDouble("sub-shadow-offset", shadowOffset)
-            mpv.setPropertyString("sub-border-style", borderStyle)
-            mpv.setPropertyString("sub-color", toMpvColor(style.textColor))
-            mpv.setPropertyString("sub-back-color", toMpvColor(style.backgroundColor))
-            mpv.setPropertyString("sub-outline-color", toMpvColor(style.outlineColor))
-            mpv.setPropertyBoolean("sub-filter-sdh", style.stripSdh)
-            mpv.setPropertyBoolean("sub-filter-sdh-harder", style.stripSdh)
-        }.onFailure {
-            Log.w(TAG, "Failed to apply subtitle style on mpv: ${LogRedaction.text(it.message)}")
+            appliedAssBold = assBold
         }
     }
 
@@ -645,6 +730,55 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             Log.w(TAG, "Failed to add external subtitle: ${LogRedaction.text(it.message)}")
             false
         }
+    }
+
+    /**
+     * Adds [path] (a retimed copy of a subtitle) as a new external track and selects it, then
+     * removes [replaceTrackId], an earlier copy, so repeated retiming doesn't pile up tracks.
+     * Returns the new track's id, or null when it could not be added.
+     */
+    fun replaceExternalSubtitle(
+        path: String,
+        title: String?,
+        language: String?,
+        replaceTrackId: Int?,
+    ): Int? {
+        if (!initialized || path.isBlank()) return null
+        return runCatching {
+            val safeTitle = title?.takeIf { it.isNotBlank() }
+            val safeLanguage = language?.takeIf { it.isNotBlank() }
+            when {
+                safeTitle != null && safeLanguage != null ->
+                    mpv.command("sub-add", path, "select", safeTitle, safeLanguage)
+                safeTitle != null -> mpv.command("sub-add", path, "select", safeTitle)
+                else -> mpv.command("sub-add", path, "select")
+            }
+            mpv.setPropertyBoolean("sub-visibility", !styledSubtitlesEnabled)
+            val added = mpv.getPropertyString("sid")?.toIntOrNull()
+            if (replaceTrackId != null && replaceTrackId != added) removeSubtitleTrack(replaceTrackId)
+            added
+        }.getOrElse {
+            Log.w(TAG, "Failed to replace external subtitle: ${LogRedaction.text(it.message)}")
+            null
+        }
+    }
+
+    /** Removes an external subtitle track added with [replaceExternalSubtitle]. */
+    fun removeSubtitleTrack(trackId: Int): Boolean {
+        if (!initialized) return false
+        return runCatching {
+            mpv.command("sub-remove", trackId.toString())
+            true
+        }.getOrElse {
+            Log.w(TAG, "Failed to remove subtitle track id=$trackId: ${LogRedaction.text(it.message)}")
+            false
+        }
+    }
+
+    /** The selected subtitle track id, or null when none is selected. */
+    fun selectedSubtitleTrackId(): Int? {
+        if (!initialized) return null
+        return runCatching { mpv.getPropertyString("sid")?.toIntOrNull() }.getOrNull()
     }
 
     fun applySubtitleLanguagePreferences(preferred: String, secondary: String?) {
@@ -797,6 +931,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     fun releasePlayer() {
         if (!initialized) return
+        mpv.removeObserver(failureObserver)
+        playbackFailure.set(null)
         removeCallbacks(aspectReapplyRunnable)
         synchronized(coreLock) {
             runCatching { destroy() }
@@ -812,6 +948,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         pathAtMediaRequest = null
         appliedHi10pGnextSoftwareFallback = null
         cachedTrackList = null
+        appliedAssOverride = null
+        appliedStyleIsAss = null
+        appliedAssBold = null
+        appliedSubPos = null
+        appliedSubMarginY = null
     }
 
     override fun initOptions() {
@@ -843,6 +984,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         val demuxerBytes = mpvDemuxerBudget(lowRam = com.nuvio.tv.core.util.DeviceClass.isLowRam(context))
         mpv.setOptionString("demuxer-max-bytes", "${demuxerBytes.maxBytes}")
         mpv.setOptionString("demuxer-max-back-bytes", "${demuxerBytes.maxBackBytes}")
+        // Upstream: already mpv's default, stated because Usenet payloads must stay in memory.
+        mpv.setOptionString("cache-on-disk", "no")
         mpv.setOptionString("keep-open", "yes")
         mpv.setOptionString("softvol", "yes")
         mpv.setOptionString("volume-max", MPV_MAX_VOLUME_PERCENT.toInt().toString())
@@ -1059,4 +1202,13 @@ internal fun mpvPlaybackPositionSec(
     if (audioPtsSec == null || seeking) return timePosSec
     val glitchMinSec = MPV_VIDEO_PTS_GLITCH_MIN_SEC + abs(audioDelaySec)
     return if (audioPtsSec - timePosSec > glitchMinSec) audioPtsSec else timePosSec
+}
+
+/**
+ * Upstream (sync 17): only explicit libmpv errors trigger fallback; EOF, stop and playlist redirects do not.
+ * Kept in this shell file: it names libmpv (`MPVNode`), and only the mpv boundary may (ArchitectureTest rule A).
+ */
+internal fun mpvPlaybackFailure(event: MPVNode): String? {
+    if (event["reason"]?.asString() != "error") return null
+    return event["error"]?.asString()?.takeIf { it.isNotBlank() } ?: "libmpv playback failed"
 }

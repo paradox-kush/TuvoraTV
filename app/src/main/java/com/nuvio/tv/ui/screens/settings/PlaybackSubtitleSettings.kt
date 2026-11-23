@@ -63,6 +63,8 @@ internal fun PlaybackSubtitlesSection(
         onClick = { onOpenDialog(PlaybackDialog.SECONDARY_SUBTITLE_LANGUAGE) }
     )
     autoSyncSettingsItems(enabled = enabled) // AutoSync hook
+    // Store builds hide the audio subtitle sync until it is measured on a 2 GB box (AppFeaturePolicy).
+    if (com.nuvio.tv.core.build.AppFeaturePolicy.audioSubtitleSyncEnabled) audioSyncSettingsItems(enabled = enabled)
 
     SettingsToggleRow(
         title = stringResource(R.string.sub_use_forced_subtitles),

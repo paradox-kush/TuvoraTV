@@ -505,7 +505,6 @@
 
     <!-- MDBListSettingsScreen -->
     <string name="mdblist_title">MDBList-vurderinger</string>
-    <string name="mdblist_subtitle">Konfigurer eksterne vurderinger vist i helt-delen av detaljer</string>
     <string name="mdblist_enable_title">Aktiver MDBList-vurderinger</string>
     <string name="mdblist_enable_subtitle">Hent vurderinger fra eksterne leverandører i detaljedskjermen for metadata</string>
     <string name="mdblist_api_key_title">API-nøkkel</string>
@@ -937,6 +936,7 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Laster\u2026</string>
     <string name="account_sync_description">Synkroniser biblioteket, seeframgang, tillegg og programtillegg på tvers av enheter.</string>
+    <string name="account_sync_restart_note">Sync er ikke sanntid på tvers av aktive enheter. Start denne enheten på nytt etter pålogging eller for å hente endringer gjort andre steder.</string>
     <string name="account_signin_qr_title">Logg inn med QR</string>
     <string name="account_signin_qr_subtitle">Skann en QR-kode og fullfør e-postlogging på telefonen din</string>
     <string name="account_signed_in_label">Logget inn</string>

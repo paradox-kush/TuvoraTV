@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.player
 
 import com.nuvio.tv.core.diagnostics.LogRedaction
 
+import com.nuvio.tv.ui.screens.player.audiosync.AudioSyncTaps
 import android.content.Context
 import android.content.res.Resources
 import android.graphics.RectF
@@ -127,6 +128,32 @@ private suspend fun PlayerRuntimeController.resolveCurrentStreamMimeType(
         "Resolved stream mimeType=${currentStreamMimeType ?: "unknown"} for url=${LogRedaction.url(url)}"
     )
 }
+
+/**
+ * A Blu-ray clip served over HTTP may be one part of its feature: ExoPlayer then plays the feature
+ * playlist beside it. Checked once per stream, within a few seconds, before the first start.
+ */
+private suspend fun PlayerRuntimeController.resolveClipPlaylist(
+    url: String,
+    headers: Map<String, String>,
+    engine: InternalPlayerEngine
+) {
+    if (engine == InternalPlayerEngine.MVP_PLAYER || currentStreamBluray != null || clipPlaylistProbedUrl == url) return
+    clipPlaylistProbedUrl = url
+    if (!BlurayPlaylistResolver.isLikelyBdavM2tsUrl(url) || !url.contains("/BDMV/STREAM/", ignoreCase = true)) return
+    val disc = withTimeoutOrNull(CLIP_PLAYLIST_TIMEOUT_MS) {
+        PlayerMediaSourceFactory.probeBlurayDisc(url = url, headers = headers)
+    } ?: return
+    showDiscTitles(disc)
+    val playlist = disc.feature ?: return
+    Log.i(
+        PlayerRuntimeController.TAG,
+        "Blu-ray clip is part of playlist ${playlist.name}; playing its ${playlist.segmentUrls.size} clips"
+    )
+    currentStreamBluray = playlist
+}
+
+private const val CLIP_PLAYLIST_TIMEOUT_MS = 8_000L
 
 private fun PlayerRuntimeController.disposeExoPlayerBeforeRebuild() {
     notifyAudioSessionUpdate(false)
@@ -293,6 +320,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                 url = url,
                 headers = headers
             )
+            // Fork: a single-use link is never opened by a probe (the Blu-ray check only matches
+            // /BDMV/STREAM/ clips, but the rule is the same as the AFR preflight below).
+            if (SingleUseReplayPolicy.allowsOpeningProbes(singleUseLink)) {
+                resolveClipPlaylist(url = url, headers = headers, engine = effectiveInternalPlayerEngine)
+            }
 
             val afrJob = async {
                 if (!SingleUseReplayPolicy.allowsOpeningProbes(singleUseLink)) {
@@ -1010,6 +1042,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         stripDvRpu = stripDvRpuEnabled,
                         stripHdr10PlusSei = stripHdr10PlusSei
                     ).let { autoSyncExtractorsFactory(it, url, headers) } // AutoSync hook
+            configureBdavAutoSync() // AutoSync hook for Blu-ray clips
 
             setLoadingStatus(
                 phase = "building_player",
@@ -1079,6 +1112,9 @@ internal fun PlayerRuntimeController.initializePlayer(
 
             if (useLibass) {
                 _exoPlayer?.getAssHandlerCompat()?.let { handler ->
+                    handler.applyAssFontScaleCompat(
+                        (_uiState.value.effectiveAssSubtitleStyle.size / 100f).coerceIn(0.5f, 3.0f)
+                    )
                     // Apply video effects only when an ASS track has been detected for
                     // this stream. On first init, no tracks are known yet so effects are
                     // skipped. When tracks scan finds ASS, the player is rebuilt and this
@@ -1149,6 +1185,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     mediaMetadata = buildMediaSessionMetadata(),
                     cacheKey = currentStreamCacheKey,
                     singleUseLink = singleUseLink,
+                    bluray = currentStreamBluray
                 )
 
                 if (initialResumePosition > 0L) {
@@ -1171,6 +1208,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                 // Exception: tunneled playback bypasses the normal video rendering pipeline
                 // so onRenderedFirstFrame() never fires — TunneledFirstReady starts on READY.
                 playWhenReady = false
+                com.nuvio.tv.core.usenet.UsenetStartupDiagnostics.attach(this, context)
+                com.nuvio.tv.core.usenet.UsenetStartupDiagnostics.mark(currentStreamUrl, "prepare")
                 prepare()
 
                 addListener(object : Player.Listener {
@@ -1216,6 +1255,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         // Only mark playbackEnded for real finishes so PlayerScreen does not
                         // dispatch next-episode navigation for short debrid/error placeholders.
                         val naturalEnded = playbackState == Player.STATE_ENDED &&
+                            !isPlayingDiscExtra() &&
                             shouldTreatAsNaturalPlaybackCompletion(
                                 hasRenderedFirstFrame = hasRenderedFirstFrame,
                                 hasFatalError = !_uiState.value.error.isNullOrBlank(),
@@ -1318,6 +1358,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                                 readyTransition.nextState.shouldEnforceAutoplayOnFirstReady
                             val firstFrameAlreadyRendered = hasRenderedFirstFrame
                             if (readyTransition.nextState.hasRenderedFirstFrame && isTunneledPlayback) {
+                                if (!hasRenderedFirstFrame) recordPlayedRelease()
+                                tunneledFirstFrameAssumed = !hasRenderedFirstFrame
                                 hasRenderedFirstFrame = true
                                 reportCatchUpFirstFrame()
                                 recordPlaybackOutputStarted()
@@ -1477,6 +1519,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                         hasRenderedFirstFrame = true
                         reportCatchUpFirstFrame()
                         recordPlaybackOutputStarted()
+                        if (isFirstFrame) recordPlayedRelease()
+                        tunneledFirstFrameAssumed = false
                         mediaSourceFactory.unlockStartupPrefetch()
                         if (isFirstFrame && _uiState.value.postPlayDismissedForCurrentEpisode) {
                             _uiState.update { it.copy(postPlayDismissedForCurrentEpisode = false) }
@@ -1509,10 +1553,30 @@ internal fun PlayerRuntimeController.initializePlayer(
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
+                        if (streamFallbackSession != null &&
+                            (_exoPlayer !== this@apply || streamFallbackJob?.isActive == true)) return
                         if (isReleasingPlayer && error.errorCode == PlaybackException.ERROR_CODE_TIMEOUT) return
                         cancelFirstFrameWatchdog()
                         val detailedError = error.toDisplayMessage(context)
+                        if (returnToFeatureAfterExtraFailure(detailedError)) return
+                        val usenetResponse = error.findInvalidResponseCodeException()
+                        val permanentUsenetFailure = com.nuvio.tv.core.player.isPermanentUsenetHttpFailure(
+                            com.nuvio.tv.core.usenet.UsenetSidecar.isSessionUrl(currentStreamUrl),
+                            usenetResponse?.responseCode,
+                            usenetResponse?.headerFields.orEmpty()
+                        )
                         cancelStableProgressReset()
+                        if (permanentUsenetFailure) {
+                            val kind = usenetResponse?.headerFields.orEmpty().entries
+                                .firstOrNull { it.key.equals("X-Usenet-Failure", ignoreCase = true) }?.value?.firstOrNull()
+                            streamFallbackSession?.current?.let {
+                                com.nuvio.tv.core.usenet.UnplayableReleases.get(context).record(it, kind)
+                                if (kind in com.nuvio.tv.core.usenet.UnplayableReleases.KINDS) {
+                                    com.nuvio.tv.core.usenet.UsenetSourceStats.get(context).unavailable(it.nzbUrl)
+                                }
+                            }
+                        }
+                        if (permanentUsenetFailure && tryNextStream(detailedError)) return
 
                         // Fork: a catch-up replay that has not played yet tries the next URL shape
                         // before any recovery rung below spends the connection on the wrong one.
@@ -1688,7 +1752,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         }
 
                         // ── Main Engine Failover ──
-                        if (maybeAutoSwitchInternalPlayerOnStartupError(detailedError = detailedError, allowEngineFailover = allowEngineFailover)) {
+                        if (!permanentUsenetFailure && maybeAutoSwitchInternalPlayerOnStartupError(detailedError = detailedError, allowEngineFailover = allowEngineFailover)) {
                             return
                         }
                         if (attemptAutoRetry(error, detailedError)) {
@@ -1697,6 +1761,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         if (tryServerFallback()) {
                             return
                         }
+                        if (tryNextStream(detailedError)) return
 
                         if (rebufferStartedAtMs != 0L) {
                             val lastRebufferMs = (SystemClock.elapsedRealtime() - rebufferStartedAtMs).coerceAtLeast(0L)
@@ -1950,6 +2015,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                 fetchAddonSubtitles()
             }
         } catch (e: Exception) {
+            if (streamFallbackSession != null && e is kotlinx.coroutines.CancellationException) throw e
+            if (e !is kotlinx.coroutines.CancellationException &&
+                returnToFeatureAfterExtraFailure(e.message ?: e.javaClass.simpleName)
+            ) {
+                return@launch
+            }
             if (
                 maybeAutoSwitchInternalPlayerOnStartupError(
                     detailedError = e.message ?: context.getString(com.nuvio.tv.R.string.player_error_initialize_failed),
@@ -1959,6 +2030,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 return@launch
             }
             val displayError = e.toDisplayMessage(context, context.getString(com.nuvio.tv.R.string.player_error_initialize_failed))
+            if (tryNextStream(displayError)) return@launch
             val diagnostics = LastPlaybackDiagnostics(
                 timestampMs = System.currentTimeMillis(),
                 host = currentStreamUrl.safeHost(),
@@ -2137,6 +2209,7 @@ internal fun PlayerRuntimeController.resetLoadingOverlayForNewStream() {
         progress = null
     )
     hasRenderedFirstFrame = false
+    tunneledFirstFrameAssumed = false
     endDetectionArmed = false
     mpvEofSeenClear = false
     exoEndOverrunHandled = false
@@ -2292,8 +2365,10 @@ private class SubtitleOffsetRenderersFactory(
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
             .setAudioProcessors(arrayOf(gainAudioProcessor, nightModeAudioProcessor))
         val baseAudioSink = builder.build()
+        // Audio sync hook: tap the base sink so the returned sink stays a PlaybackSpeedAwareAudioSink
+        // and buildAudioRenderers keeps installing PlaybackSpeedAwareAudioRenderer.
         val playbackSpeedAwareAudioSink = PlaybackSpeedAwareAudioSink(
-            sink = baseAudioSink,
+            sink = AudioSyncTaps.wrapAudioSink(baseAudioSink),
             initialForcePcm = initialForcePcm,
             forcePcmForBluetooth = bluetoothForcePcm
         )

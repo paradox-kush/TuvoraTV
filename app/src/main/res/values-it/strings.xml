@@ -543,6 +543,8 @@
 <string name="advanced_section_diagnostics">Diagnostica</string>
 <string name="advanced_sentry_reports">Segnalazioni di crash Sentry</string>
 <string name="advanced_sentry_reports_subtitle">Invia segnalazioni di crash e ANR con contesto sicuro. Attivo per impostazione predefinita.</string>
+<string name="advanced_playback_issue_reports">Resoconti dei problemi di riproduzione</string>
+<string name="advanced_playback_issue_reports_subtitle">Mostra i pulsanti di segnalazione durante la riproduzione, nei caricamenti lunghi e negli errori di riproduzione</string>
 <string name="advanced_player_stats_hud">Overlay statistiche di riproduzione</string>
 <string name="advanced_player_stats_hud_subtitle">Mostra un pulsante nelle info dello stream per attivare/disattivare le letture in tempo reale di CPU, memoria, buffer, bitrate e temperatura durante la riproduzione</string>
 <string name="sentry_enable_dialog_title">Attivare le segnalazioni di crash?</string>
@@ -1063,7 +1065,6 @@
 
 
 <string name="mdblist_title">Valutazioni MDBList</string>
-<string name="mdblist_subtitle">Configura le valutazioni esterne mostrate nella sezione hero dei dettagli</string>
 <string name="mdblist_enable_title">Abilita valutazioni MDBList</string>
 <string name="mdblist_enable_subtitle">Recupera le valutazioni da provider esterni nella schermata dei dettagli dei metadati</string>
 <string name="mdblist_api_key_title">Chiave API</string>
@@ -3272,7 +3273,6 @@
     <string name="mdblist_show_on_hero_title">Usa le valutazioni nell’hero</string>
     <string name="mdblist_show_on_hero_subtitle">Mostra le valutazioni MDBList nell’hero (Modern e Classic/Grid)</string>
     <string name="mdblist_rating_order_title">Ordine delle valutazioni</string>
-    <string name="mdblist_rating_order_subtitle">Nell’hero Modern vengono mostrate le prime 3 valutazioni abilitate e disponibili. Usa le frecce per cambiarne l’ordine.</string>
     <string name="mdblist_library_lists">Liste della libreria</string>
     <string name="mdblist_library_lists_description">Scegli quali liste MDBList mostrare nella Libreria e in Gestisci liste. La watchlist viene sempre visualizzata.</string>
     <string name="mdblist_library_lists_empty">Nessuna lista trovata nel tuo account MDBList. Sincronizza per caricarle.</string>
@@ -3354,14 +3354,14 @@
     <string name="stream_resume_from_time">Riprendi da %1$s</string>
     <string name="stream_resume_from_percent">Riprendi dal %1$d%%</string>
     <string name="auth_qr_phone_hint">Usa il telefono per accedere con email e password. Il login sulla TV rimane solo con il QR Code per un accesso più rapido.</string>
-<string name="sub_mode_overlay_gl">Overlay OpenGL (Consigliato)</string>
-<string name="sub_mode_overlay_gl_sub">Migliore qualità con supporto HDR. Esegue il rendering dei sottotitoli su un thread separato.</string>
-<string name="sub_mode_overlay_canvas">Canvas sovrapposto</string>
-<string name="sub_mode_effects_gl">Effetti OpenGL</string>
-<string name="sub_mode_effects_gl_sub">Supporto animazioni tramite effetti Media3. Più veloce di Canvas.</string>
-<string name="sub_mode_effects_canvas">Effetti Canvas</string>
-<string name="sub_mode_effects_canvas_sub">Supporto animazioni tramite effetti Media3 con rendering Canvas.</string>
-<string name="sub_mode_standard">Cues standard</string>
-<string name="sub_mode_standard_sub">Rendering base dei sottotitoli senza supporto animazioni. Massima compatibilità.</string>
-<string name="sub_mode_overlay_canvas_sub">Supporto HDR con rendering canvas. Potrebbe bloccare il thread UI.</string>
+    <string name="sub_mode_overlay_gl">Overlay OpenGL (Consigliato)</string>
+    <string name="sub_mode_overlay_gl_sub">Migliore qualità con supporto HDR. Esegue il rendering dei sottotitoli su un thread separato.</string>
+    <string name="sub_mode_overlay_canvas">Canvas sovrapposto</string>
+    <string name="sub_mode_effects_gl">Effetti OpenGL</string>
+    <string name="sub_mode_effects_gl_sub">Supporto animazioni tramite effetti Media3. Più veloce di Canvas.</string>
+    <string name="sub_mode_effects_canvas">Effetti Canvas</string>
+    <string name="sub_mode_effects_canvas_sub">Supporto animazioni tramite effetti Media3 con rendering Canvas.</string>
+    <string name="sub_mode_standard">Cues standard</string>
+    <string name="sub_mode_standard_sub">Rendering base dei sottotitoli senza supporto animazioni. Massima compatibilità.</string>
+    <string name="sub_mode_overlay_canvas_sub">Supporto HDR con rendering canvas. Potrebbe bloccare il thread UI.</string>
 </resources>

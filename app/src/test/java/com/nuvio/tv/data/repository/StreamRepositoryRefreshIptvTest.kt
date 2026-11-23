@@ -55,7 +55,8 @@ class StreamRepositoryRefreshIptvTest {
             iptvClientFactory = factory,
             xtreamAccountStore = accountStore,
             xtreamStreamSource = mockk(relaxed = true) { coEvery { currentLiveSid(any(), any()) } returns null }, // relaxed would answer 0 (a sid); "cannot say" is null
-            serverStreams = mockk(relaxed = true)
+            serverStreams = mockk(relaxed = true),
+            usenetSourceSettings = mockk<com.nuvio.tv.core.usenet.UsenetSourceSettings> { every { read(any()) } returns com.nuvio.tv.core.usenet.UsenetSourceConfiguration() }, builtInUsenetService = mockk(relaxed = true)
         )
     }
 
@@ -107,7 +108,8 @@ class StreamRepositoryRefreshIptvTest {
             iptvClientFactory = factory,
             xtreamAccountStore = accountStore,
             xtreamStreamSource = mockk(relaxed = true) { coEvery { currentLiveSid(any(), any()) } returns null }, // relaxed would answer 0 (a sid); "cannot say" is null
-            serverStreams = mockk(relaxed = true)
+            serverStreams = mockk(relaxed = true),
+            usenetSourceSettings = mockk<com.nuvio.tv.core.usenet.UsenetSourceSettings> { every { read(any()) } returns com.nuvio.tv.core.usenet.UsenetSourceConfiguration() }, builtInUsenetService = mockk(relaxed = true)
         )
         assertNull(repo.refreshIptvStreamUrl(XtreamItemRegistry.episodeId(account.id, "12:3:4")))
     }
@@ -215,7 +217,8 @@ class StreamRepositoryRefreshIptvTest {
             iptvClientFactory = factory,
             xtreamAccountStore = accountStore,
             xtreamStreamSource = source,
-            serverStreams = mockk(relaxed = true)
+            serverStreams = mockk(relaxed = true),
+            usenetSourceSettings = mockk<com.nuvio.tv.core.usenet.UsenetSourceSettings> { every { read(any()) } returns com.nuvio.tv.core.usenet.UsenetSourceConfiguration() }, builtInUsenetService = mockk(relaxed = true)
         )
     }
 }

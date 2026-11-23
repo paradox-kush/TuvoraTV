@@ -7,6 +7,7 @@ import android.os.StrictMode
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import com.nuvio.tv.core.image.CustomPosterFallbackInterceptor
+import com.nuvio.tv.core.image.HardwareBitmapSettingInterceptor
 import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.gif.GifDecoder
@@ -334,6 +335,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         }
         // Upstream's Sentry: inert without a SENTRY_DSN (the fork's crash reporter is PostHog);
         // kept wired so future upstream merges stay clean.
+        // Store builds ship without built-in Usenet: nothing to warm or stop.
+        if (com.nuvio.tv.core.build.AppFeaturePolicy.usenetEnabled) registerActivityLifecycleCallbacks(com.nuvio.tv.core.usenet.UsenetAppLifecycle())
         SentryInitializer.start(this, sentrySettingsDataStore)
         PluginRuntimeHooks.onApplicationCreate(this)
         // Process-wide starters: off Main, in every process (StartupWorkPolicy BACKGROUND).
@@ -479,6 +482,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
 
         return ImageLoader.Builder(this)
             .components {
+                // Upstream hardware-bitmap setting; prefs read per request (no injection on the startup path).
+                val imagePerformancePreferences = com.nuvio.tv.data.local.ImagePerformancePreferences(this@NuvioApplication)
+                add(HardwareBitmapSettingInterceptor { imagePerformancePreferences.hardwareBitmapsEnabled })
                 add(CustomPosterFallbackInterceptor())
                 if (Build.VERSION.SDK_INT >= 28) {
                     add(AnimatedImageDecoder.Factory())
