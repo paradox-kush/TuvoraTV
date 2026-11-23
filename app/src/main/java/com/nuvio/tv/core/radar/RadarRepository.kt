@@ -47,7 +47,11 @@ data class RadarUiState(
 
     /** May this fixture's score be shown right now? (hidden / delayed / shown) */
     fun scoreView(fixture: RadarFixture, nowMs: Long): ScoreView =
-        scores.scoreView(spoiler, fixture.id, fixture.id?.let { liveScores[it] }, nowMs)
+        scores.scoreView(spoiler, fixture, fixture.id?.let { liveScores[it] }, nowMs)
+
+    /** When the next buffered score becomes due (a local re-render, no fetch); null when nothing is pending. */
+    fun nextScoreDueAtMs(nowMs: Long): Long? =
+        spoiler.takeIf { it.shown }?.let { scores.nextChangeAtMs(nowMs, it.delayMs) }
 
     val followedLeagueIds: Set<String> get() = follows.map { it.leagueId }.toSet()
     val followedTeamIds: Set<String> get() = teamFollows.map { it.teamId }.toSet()
@@ -145,7 +149,6 @@ class RadarRepository @Inject constructor(
     private val json = Json { ignoreUnknownKeys = true }
 
     private val scoreObservations = ScoreObservations()
-    private var scoreJob: kotlinx.coroutines.Job? = null
     private val _uiState = MutableStateFlow(RadarUiState(scores = scoreObservations))
     val uiState: StateFlow<RadarUiState> = _uiState.asStateFlow()
 
@@ -190,7 +193,6 @@ class RadarRepository @Inject constructor(
                     _uiState.update {
                         it.copy(follows = local.follows, prefs = local.prefs, teamFollows = local.teams, scoreRev = it.scoreRev + 1)
                     }
-                    scheduleScoreRefresh()
                     val uncovered = local.follows.any { it.leagueId !in _uiState.value.fixturesByLeague } ||
                         local.teams.any { it.teamId !in _uiState.value.fixturesByTeam }
                     refreshFixtures(force = uncovered)
@@ -383,6 +385,7 @@ class RadarRepository @Inject constructor(
     fun setScoresShown(shown: Boolean) {
         scope.launch {
             val current = store.state.first()
+            syncService.noteLocalSpoilerChange()
             store.saveState(current.copy(prefs = current.prefs.copy(scoresShown = shown)))
             syncService.triggerRemoteSync()
         }
@@ -392,6 +395,7 @@ class RadarRepository @Inject constructor(
     fun setScoreDelaySeconds(seconds: Int) {
         scope.launch {
             val current = store.state.first()
+            syncService.noteLocalSpoilerChange()
             store.saveState(current.copy(prefs = current.prefs.copy(scoreDelayS = ScoreSpoilerSettings.sanitizeDelay(seconds))))
             syncService.triggerRemoteSync()
         }
@@ -404,23 +408,16 @@ class RadarRepository @Inject constructor(
             liveRows = response.livescore.values.flatten(),
             nowMs = RadarTime.nowMs(),
         )
-        _uiState.update { it.copy(scoreRev = it.scoreRev + 1) }
-        scheduleScoreRefresh()
+        bumpScoreRev()
     }
 
     /**
-     * One local re-render when the next buffered score becomes due: no network, no loop (a chain of
-     * single delays that ends as soon as nothing is pending).
+     * Asks collectors for one local re-render (a delayed snapshot became due). The TIMER lives with the
+     * visible screen ([RadarUiState.nextScoreDueAtMs] + repeatOnLifecycle), never here: nothing runs
+     * while no screen shows scores, and there is no shared job to race on.
      */
-    private fun scheduleScoreRefresh() {
-        scoreJob?.cancel()
-        val now = RadarTime.nowMs()
-        val due = scoreObservations.nextChangeAtMs(now, _uiState.value.spoiler.delayMs) ?: return
-        scoreJob = scope.launch {
-            kotlinx.coroutines.delay((due - now).coerceAtLeast(0L) + 50L)
-            _uiState.update { it.copy(scoreRev = it.scoreRev + 1) }
-            scheduleScoreRefresh()
-        }
+    fun bumpScoreRev() {
+        _uiState.update { it.copy(scoreRev = it.scoreRev + 1) }
     }
 
     /**

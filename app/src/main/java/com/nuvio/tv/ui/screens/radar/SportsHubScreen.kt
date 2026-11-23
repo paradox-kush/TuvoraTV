@@ -93,6 +93,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlin.math.abs
 
 /** Fast score tick: only leagues/teams with a live-or-imminent fixture, so it transfers a live
@@ -158,6 +161,22 @@ fun SportsHubScreen(
                     viewModel.repository.refreshLiveFixtures()
                 }
             }
+        }
+    }
+
+    // Hide-scores delay: ONE local re-render when the next buffered score is due. Owned by this visible screen
+    // (stops when backgrounded, restarts on return) - never by the repository's app scope.
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.repository.uiState
+                .map { it.scoreRev to it.spoiler }
+                .distinctUntilChanged()
+                .collectLatest {
+                    val now = RadarTime.nowMs()
+                    val due = viewModel.repository.uiState.value.nextScoreDueAtMs(now) ?: return@collectLatest
+                    delay((due - now).coerceAtLeast(0L) + 50L)
+                    viewModel.repository.bumpScoreRev()
+                }
         }
     }
 
@@ -1015,7 +1034,7 @@ private fun MatchCard(
     modifier: Modifier = Modifier.width(MatchCardWidth),
     liveScore: RadarLiveScore? = null,
     /** Hide-scores / score-delay decision for this card's score slots (see ScoreSpoilerPolicy). */
-    scoreView: ScoreView = ScoreView.ScoreShown(null),
+    scoreView: ScoreView,
 ) {
     var focused by remember { mutableStateOf(false) }
     // Back from the game screen returns focus to the card that opened it (not the first card).

@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.transformLatest
+import kotlinx.coroutines.delay
 
 /**
  * Pure mapping from the radar state Sports already holds to the Calendar's neutral games: fixtures of followed
@@ -130,11 +133,23 @@ class RadarCalendarSportsSource @Inject constructor(
     }
 
     override val changes: Flow<Unit>
-        get() = repository.uiState
-            .map { Triple(it.fixturesByLeague, it.fixturesByTeam, it.liveScores) to (it.follows to it.teamFollows to (it.spoiler to it.scoreRev)) }
-            .distinctUntilChanged()
-            .drop(1)
-            .map { }
+        get() = merge(
+            repository.uiState
+                .map { Triple(it.fixturesByLeague, it.fixturesByTeam, it.liveScores) to (it.follows to it.teamFollows to (it.spoiler to it.scoreRev)) }
+                .distinctUntilChanged()
+                .drop(1)
+                .map { },
+            // The delay's one-shot re-render, owned by whoever collects (the open Calendar): nothing runs otherwise.
+            repository.uiState
+                .map { it.scoreRev to it.spoiler }
+                .distinctUntilChanged()
+                .transformLatest {
+                    val now = RadarTime.nowMs()
+                    val due = repository.uiState.value.nextScoreDueAtMs(now) ?: return@transformLatest
+                    delay((due - now).coerceAtLeast(0L) + 50L)
+                    emit(Unit)
+                },
+        )
 
     override fun requestWatch(gameId: String) = pendingMatch.request(gameId)
 }
