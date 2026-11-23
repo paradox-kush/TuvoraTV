@@ -73,6 +73,9 @@ class RadarSyncService @Inject constructor(
         @SerialName("featured_event_id") val featuredEventId: String = "",
         @SerialName("opt_in_state") val optInState: String = RadarOptIn.UNSET,
         @SerialName("promo_dismissed") val promoDismissed: Boolean = false,
+        // Absent on a backend without the hide-scores migration: defaults apply.
+        @SerialName("scores_shown") val scoresShown: Boolean? = null,
+        @SerialName("score_delay_s") val scoreDelayS: Int? = null,
     )
 
     private suspend fun <T> withJwtRefreshRetry(block: suspend () -> T): T {
@@ -118,11 +121,7 @@ class RadarSyncService @Inject constructor(
                         }
                     }
                 })
-                putJsonObject("p_prefs") {
-                    put("featured_event_id", state.prefs.featuredEventId)
-                    put("opt_in_state", state.prefs.optInState)
-                    put("promo_dismissed", state.prefs.promoDismissed)
-                }
+                put("p_prefs", state.prefs.toSyncJson())
                 // Always sent, even when empty: the RPC reads a MISSING p_teams as "this
                 // client has nothing to say about teams" and leaves the remote rows alone, so
                 // omitting it here would make unfollowing your last club un-syncable.
@@ -206,7 +205,15 @@ class RadarSyncService @Inject constructor(
                                 custom = it.custom,
                             )
                         },
-                    prefs = prefsRow?.let { RadarPrefs(it.featuredEventId, it.optInState, it.promoDismissed) }
+                    prefs = prefsRow?.let {
+                        RadarPrefs(
+                            featuredEventId = it.featuredEventId,
+                            optInState = it.optInState,
+                            promoDismissed = it.promoDismissed,
+                            scoresShown = it.scoresShown ?: true,
+                            scoreDelayS = ScoreSpoilerSettings.sanitizeDelay(it.scoreDelayS ?: 0),
+                        )
+                    }
                         ?: store.state.first().prefs,
                     teams = teamRows.sortedBy { it.sortOrder }
                         .map {

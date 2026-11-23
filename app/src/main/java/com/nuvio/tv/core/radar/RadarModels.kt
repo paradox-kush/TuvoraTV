@@ -2,6 +2,7 @@ package com.nuvio.tv.core.radar
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.put
 
 /**
  * Sports Centre (Radar) domain models. The catalog comes from [RadarCatalogData]; fixtures
@@ -310,7 +311,23 @@ data class RadarPrefs(
     @SerialName("featured_event_id") val featuredEventId: String = "",
     @SerialName("opt_in_state") val optInState: String = RadarOptIn.UNSET,
     @SerialName("promo_dismissed") val promoDismissed: Boolean = false,
-)
+    /** Hide-scores setting (false = scores hidden everywhere). Missing in old blobs = shown. */
+    @SerialName("scores_shown") val scoresShown: Boolean = true,
+    /** Score delay in seconds (0, 15, 30, 60; anything else reads as 0). */
+    @SerialName("score_delay_s") val scoreDelayS: Int = 0,
+) {
+    val spoiler: ScoreSpoilerSettings
+        get() = ScoreSpoilerSettings(shown = scoresShown, delaySeconds = ScoreSpoilerSettings.sanitizeDelay(scoreDelayS))
+}
+
+/** The `p_prefs` payload of sync_push_radar. */
+fun RadarPrefs.toSyncJson(): kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.buildJsonObject {
+    put("featured_event_id", featuredEventId)
+    put("opt_in_state", optInState)
+    put("promo_dismissed", promoDismissed)
+    put("scores_shown", scoresShown)
+    put("score_delay_s", ScoreSpoilerSettings.sanitizeDelay(scoreDelayS))
+}
 
 /** The one locally-persisted blob (follows + prefs together; fixtures cache is separate). */
 @Serializable

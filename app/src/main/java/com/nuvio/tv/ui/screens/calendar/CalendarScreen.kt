@@ -750,7 +750,12 @@ private fun TeamBadge(url: String?) {
 
 @Composable
 private fun gameStateText(game: CalendarGameItem): String? {
-    val score = if (game.homeScore != null && game.awayScore != null) "${game.homeScore} – ${game.awayScore}" else null
+    // Hidden scores arrive as nulls (the row keeps "Final" / the clock); a delayed one reads "–" until a snapshot is due.
+    val score = when {
+        game.scorePending -> "–"
+        game.homeScore != null && game.awayScore != null -> "${game.homeScore} – ${game.awayScore}"
+        else -> null
+    }
     return when (game.state) {
         CalendarGameState.LIVE -> listOfNotNull(score, game.progress ?: stringResource(R.string.calendar_game_live)).joinToString(" · ")
         CalendarGameState.FINAL -> listOfNotNull(score, stringResource(R.string.calendar_game_final)).joinToString(" · ")

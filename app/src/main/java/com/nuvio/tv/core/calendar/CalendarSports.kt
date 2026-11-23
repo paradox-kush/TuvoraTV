@@ -28,6 +28,8 @@ data class CalendarGameItem(
     val state: CalendarGameState = CalendarGameState.SCHEDULED,
     val homeScore: String? = null,
     val awayScore: String? = null,
+    /** Score delay is on and no snapshot is old enough yet: the row shows "–" instead of a score. */
+    val scorePending: Boolean = false,
     /** The minute / period while LIVE ("67'"), as the feed gives it. */
     val progress: String? = null,
     val channelHintId: String? = null

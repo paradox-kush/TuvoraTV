@@ -114,6 +114,9 @@ fun GameDetailScreen(
     val watch by viewModel.watch.collectAsStateWithLifecycle()
     val preview by viewModel.preview.collectAsStateWithLifecycle()
     val moments by viewModel.moments.collectAsStateWithLifecycle()
+    val scoreMode by viewModel.scoreMode.collectAsStateWithLifecycle()
+    // While the "Scores hidden" chip holds focus, plain D-pad focus search drives it (the custom map below knows only the other controls).
+    var scoreChipFocused by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -242,7 +245,7 @@ fun GameDetailScreen(
                     else -> null
                 }
                 val from = focusedKey
-                if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown || dir == null || from == null || chipSections.isEmpty()) false
+                if (scoreChipFocused || e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown || dir == null || from == null || chipSections.isEmpty()) false
                 else {
                     val to = GameDetailFocus.move(from, dir, controls, shownSection?.let { FocusKey.of(it) })
                     if (to != null) { runCatching { requesters.getValue(to).requestFocus() }; true } else false
@@ -274,7 +277,11 @@ fun GameDetailScreen(
                         ),
                     )
                     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(if (plan.tightGaps) LeftColumnFit.TIGHT_GAP_DP.dp else LeftColumnFit.GAP_DP.dp)) {
-                        ScoreboardCard(model, s.stale, colors, moments)
+                        ScoreboardCard(
+                            model, s.stale, colors, moments, scoreMode,
+                            onRevealScores = { viewModel.setScoresShown(true) },
+                            onChipFocus = { scoreChipFocused = it },
+                        )
                         model.field?.let { FootballFieldStrip(it, model.sides, colors, moments) }
                         model.soccer?.let { SoccerStrip(it, model.sides, colors, moments) }
                         model.basketball?.let { BasketballStrip(it, model.sides, colors, moments) }
@@ -423,9 +430,15 @@ private fun StatePill(model: GameDetailTvModel) {
 }
 
 @Composable
-private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean, colors: TeamColors, moments: MomentBatch) {
+private fun ScoreboardCard(
+    model: GameDetailTvModel, stale: Boolean, colors: TeamColors, moments: MomentBatch,
+    scoreMode: GameScoreMode = GameScoreMode.SHOWN,
+    onRevealScores: () -> Unit = {},
+    onChipFocus: (Boolean) -> Unit = {},
+) {
     // Screen readers: only a score change is announced ("Dallas 2, Buffalo 0"), at most once per update; the description changes only with the score.
-    val scoreSpoken = model.sides.takeIf { it.size == 2 && model.isLive }?.joinToString(", ") { "${it.name} ${it.score.orEmpty()}" }
+    // Hidden / delayed-and-pending: never spoken (the spoken score is a spoiler too).
+    val scoreSpoken = model.sides.takeIf { it.size == 2 && model.isLive && scoreMode == GameScoreMode.SHOWN }?.joinToString(", ") { "${it.name} ${it.score.orEmpty()}" }
     Card(
         Modifier.semantics(mergeDescendants = true) {
             if (scoreSpoken != null) { contentDescription = scoreSpoken; liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }
@@ -438,6 +451,14 @@ private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean, colors: Tea
             )
             val note = if (stale) "Showing the last update" else model.updatedLabel
             note?.let { Text(it, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary); Spacer(Modifier.width(12.dp)) }
+            if (scoreMode == GameScoreMode.HIDDEN && model.state != com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
+                // One press reveals (flips the same global setting as the Sports header chip).
+                com.nuvio.tv.ui.screens.calendar.CalendarChip(
+                    label = "Scores hidden", selected = true, onClick = onRevealScores,
+                    modifier = Modifier.onFocusChanged { onChipFocus(it.isFocused) },
+                )
+                Spacer(Modifier.width(12.dp))
+            }
             StatePill(model)
         }
         Spacer(Modifier.height(10.dp))
@@ -445,9 +466,9 @@ private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean, colors: Tea
             val final = model.state == com.nuvio.tv.core.sports.detail.GameState.FINAL
             val a = model.sides[0].score?.toIntOrNull(); val b = model.sides[1].score?.toIntOrNull()
             val showScore = model.state != com.nuvio.tv.core.sports.detail.GameState.UPCOMING
-            TeamRow(model.sides[0], SideKey.HOME, colors.home, moments, extra = TeamExtra(scorerText(model.soccer?.homeScorers.orEmpty()), model.field?.homeTimeouts), dim = final && a != null && b != null && a < b, showScore = showScore)
+            TeamRow(model.sides[0], SideKey.HOME, colors.home, moments, extra = TeamExtra(scorerText(model.soccer?.homeScorers.orEmpty()), model.field?.homeTimeouts), dim = final && a != null && b != null && a < b, showScore = showScore, placeholder = scoreMode == GameScoreMode.PENDING)
             Spacer(Modifier.height(8.dp))
-            TeamRow(model.sides[1], SideKey.AWAY, colors.away, moments, extra = TeamExtra(scorerText(model.soccer?.awayScorers.orEmpty()), model.field?.awayTimeouts), dim = final && a != null && b != null && b < a, showScore = showScore)
+            TeamRow(model.sides[1], SideKey.AWAY, colors.away, moments, extra = TeamExtra(scorerText(model.soccer?.awayScorers.orEmpty()), model.field?.awayTimeouts), dim = final && a != null && b != null && b < a, showScore = showScore, placeholder = scoreMode == GameScoreMode.PENDING)
         } else {
             Text(model.title, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = NuvioTheme.colors.TextPrimary, maxLines = 2)
             model.liveLine?.let { Text(it, fontSize = 20.sp, color = NuvioTheme.colors.TextSecondary) }
@@ -459,7 +480,7 @@ private fun ScoreboardCard(model: GameDetailTvModel, stale: Boolean, colors: Tea
 private data class TeamExtra(val scorers: String?, val timeouts: Int?)
 
 @Composable
-private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentBatch, extra: TeamExtra, dim: Boolean, showScore: Boolean = true) {
+private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentBatch, extra: TeamExtra, dim: Boolean, showScore: Boolean = true, placeholder: Boolean = false) {
     Row(Modifier.fillMaxWidth().heightIn(min = 58.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.width(4.dp).height(40.dp).clip(RoundedCornerShape(2.dp)).background(teamColor))
         Spacer(Modifier.width(10.dp))
@@ -479,7 +500,8 @@ private fun TeamRow(side: Side, key: SideKey, teamColor: Color, moments: MomentB
             extra.scorers?.let { Text(it, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             TimeoutDots(extra.timeouts, teamColor)
         }
-        side.score?.takeIf { showScore }?.let {
+        // A delayed score with no snapshot old enough yet reads "–" (never a fresher number).
+        (side.score ?: "–".takeIf { placeholder })?.takeIf { showScore }?.let {
             AnimatedScore(
                 it, key, moments, Modifier.width(110.dp),
                 color = if (dim) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary, accent = teamColor, fontSize = 47,

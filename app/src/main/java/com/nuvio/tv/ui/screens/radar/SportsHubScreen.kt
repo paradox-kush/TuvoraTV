@@ -76,6 +76,8 @@ import com.nuvio.tv.core.radar.RadarCategory
 import com.nuvio.tv.core.radar.RadarTeam
 import com.nuvio.tv.core.radar.RadarChannelMatcher
 import com.nuvio.tv.core.radar.RadarFeaturedEvent
+import com.nuvio.tv.core.radar.ScoreSpoilerSettings
+import com.nuvio.tv.core.radar.ScoreView
 import com.nuvio.tv.core.radar.RadarFixture
 import com.nuvio.tv.core.radar.RadarLeague
 import com.nuvio.tv.core.radar.RadarLiveScore
@@ -256,12 +258,26 @@ fun SportsHubScreen(
             .fillMaxSize()
             .padding(top = NuvioTheme.spacing.xl),
     ) {
-        Text(
-            stringResource(R.string.nav_sports),
-            style = MaterialTheme.typography.headlineSmall,
-            color = NuvioTheme.colors.TextPrimary,
-            modifier = Modifier.padding(start = SportsRowStartPadding, bottom = NuvioTheme.spacing.md),
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = SportsRowStartPadding, end = SportsRowStartPadding, bottom = NuvioTheme.spacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.nav_sports),
+                style = MaterialTheme.typography.headlineSmall,
+                color = NuvioTheme.colors.TextPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            ScoreSpoilerChips(
+                settings = state.spoiler,
+                onToggleShown = { viewModel.repository.setScoresShown(!state.spoiler.shown) },
+                onCycleDelay = {
+                    viewModel.repository.setScoreDelaySeconds(ScoreSpoilerSettings.nextDelay(state.spoiler.delaySeconds))
+                },
+            )
+        }
         NuvioTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
@@ -330,6 +346,7 @@ fun SportsHubScreen(
                         upcoming,
                         state.isLiveCheck(nowMs),
                         liveScoreFor = { fx -> fx.id?.let { state.liveScores[it] } },
+                        scoreViewFor = { fx -> state.scoreView(fx, nowMs) },
                         onMatch = openGame,
                         // The featured rail owns first focus when it exists; otherwise the
                         // top match card does — a follows-only profile used to land nowhere.
@@ -359,6 +376,7 @@ fun SportsHubScreen(
                             fixtures,
                             state.isLiveCheck(nowMs),
                             liveScoreFor = { fx -> fx.id?.let { state.liveScores[it] } },
+                        scoreViewFor = { fx -> state.scoreView(fx, nowMs) },
                             onMatch = openGame,
                         )
                     }
@@ -378,6 +396,7 @@ fun SportsHubScreen(
                             fixtures,
                             state.isLiveCheck(nowMs),
                             liveScoreFor = { fx -> fx.id?.let { state.liveScores[it] } },
+                        scoreViewFor = { fx -> state.scoreView(fx, nowMs) },
                             onMatch = openGame,
                         )
                     }
@@ -900,6 +919,7 @@ private fun MatchRow(
     fixtures: List<RadarFixture>,
     isLive: (RadarFixture) -> Boolean,
     liveScoreFor: (RadarFixture) -> RadarLiveScore?,
+    scoreViewFor: (RadarFixture) -> ScoreView,
     onMatch: (RadarFixture) -> Unit,
     firstItemFocusRequester: FocusRequester? = null,
 ) {
@@ -954,6 +974,7 @@ private fun MatchRow(
                             } else Modifier
                         ),
                     liveScore = liveScoreFor(fx),
+                    scoreView = scoreViewFor(fx),
                 )
             }
         }
@@ -993,6 +1014,8 @@ private fun MatchCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier.width(MatchCardWidth),
     liveScore: RadarLiveScore? = null,
+    /** Hide-scores / score-delay decision for this card's score slots (see ScoreSpoilerPolicy). */
+    scoreView: ScoreView = ScoreView.ScoreShown(null),
 ) {
     var focused by remember { mutableStateOf(false) }
     // Back from the game screen returns focus to the card that opened it (not the first card).
@@ -1046,8 +1069,18 @@ private fun MatchCard(
         val away = fixture.away?.takeIf { it.isNotBlank() }
         Column(Modifier.heightIn(min = MatchCardTeamsMinHeight)) {
             if (home != null && away != null) {
-                val homeScore = (liveScore?.homeScore ?: fixture.homeScore)?.takeIf { it.isNotBlank() }
-                val awayScore = (liveScore?.awayScore ?: fixture.awayScore)?.takeIf { it.isNotBlank() }
+                // Hidden: no number and no winner emphasis; pending (delay): "–"; shown: the (possibly delayed) value.
+                val buffered = (scoreView as? ScoreView.ScoreShown)?.value
+                val homeScore: String?
+                val awayScore: String?
+                when (scoreView) {
+                    ScoreView.ScoreHidden -> { homeScore = null; awayScore = null }
+                    ScoreView.ScorePending -> { homeScore = "–"; awayScore = "–" }
+                    is ScoreView.ScoreShown -> {
+                        homeScore = (if (buffered != null) buffered.homeScore else liveScore?.homeScore ?: fixture.homeScore)?.takeIf { it.isNotBlank() }
+                        awayScore = (if (buffered != null) buffered.awayScore else liveScore?.awayScore ?: fixture.awayScore)?.takeIf { it.isNotBlank() }
+                    }
+                }
                 TeamRow(home, fixture.homeBadge, homeScore, dimScore = scoreTrails(homeScore, awayScore))
                 TeamRow(away, fixture.awayBadge, awayScore, dimScore = scoreTrails(awayScore, homeScore))
             } else {
@@ -1307,6 +1340,7 @@ private fun SportsFixturesPage(
                         .padding(vertical = NuvioTheme.spacing.xs)
                         .then(if (index == 0) Modifier.focusRequester(firstFocus) else Modifier),
                     liveScore = fixture.id?.let { state.liveScores[it] },
+                    scoreView = state.scoreView(fixture, RadarTime.nowMs()),
                 )
             }
         }
@@ -1394,6 +1428,7 @@ private fun LeagueFixturesPage(
                         modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xs)
                             .then(if (index == 0) Modifier.focusRequester(firstGameFocus) else Modifier),
                         liveScore = fx.id?.let { state.liveScores[it] },
+                        scoreView = state.scoreView(fx, nowMs),
                     )
                 }
             }
@@ -1413,6 +1448,7 @@ private fun LeagueFixturesPage(
                         modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTheme.spacing.xs)
                             .then(if (index == 0 && upcoming.isEmpty()) Modifier.focusRequester(firstGameFocus) else Modifier),
                         liveScore = fx.id?.let { state.liveScores[it] },
+                        scoreView = state.scoreView(fx, nowMs),
                     )
                 }
             }

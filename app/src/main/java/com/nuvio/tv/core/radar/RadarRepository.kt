@@ -38,7 +38,17 @@ data class RadarUiState(
     val teamFollows: List<RadarTeamFollow> = emptyList(),
     /** teamId -> that club's own schedule, from the team lane of radar-fixtures. */
     val fixturesByTeam: Map<String, List<RadarFixture>> = emptyMap(),
+    /** Hide-scores / score-delay bookkeeping, shared with the repository (recording happens there). */
+    val scores: ScoreObservations = ScoreObservations(),
+    /** Bumped whenever [scores] changed (a recording, or a delayed snapshot became due) so collectors re-render. */
+    val scoreRev: Int = 0,
 ) {
+    val spoiler: ScoreSpoilerSettings get() = prefs.spoiler
+
+    /** May this fixture's score be shown right now? (hidden / delayed / shown) */
+    fun scoreView(fixture: RadarFixture, nowMs: Long): ScoreView =
+        scores.scoreView(spoiler, fixture.id, fixture.id?.let { liveScores[it] }, nowMs)
+
     val followedLeagueIds: Set<String> get() = follows.map { it.leagueId }.toSet()
     val followedTeamIds: Set<String> get() = teamFollows.map { it.teamId }.toSet()
 
@@ -134,7 +144,9 @@ class RadarRepository @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val _uiState = MutableStateFlow(RadarUiState())
+    private val scoreObservations = ScoreObservations()
+    private var scoreJob: kotlinx.coroutines.Job? = null
+    private val _uiState = MutableStateFlow(RadarUiState(scores = scoreObservations))
     val uiState: StateFlow<RadarUiState> = _uiState.asStateFlow()
 
     private var lastFetchMark: TimeMark? = null
@@ -159,6 +171,8 @@ class RadarRepository @Inject constructor(
                 }
                 refreshCatalog()
                 store.loadFixtures()?.let { cached ->
+                    // Disk cache = old news: first-sight bookkeeping only, nothing is buffered.
+                    scoreObservations.noteCached(cached.fixtures.values.flatten() + cached.teamFixtures.values.flatten())
                     _uiState.update {
                         it.copy(
                             fixturesByLeague = cached.fixtures,
@@ -174,8 +188,9 @@ class RadarRepository @Inject constructor(
                 // switch to different follows) so it doesn't sit empty for a TTL.
                 store.state.collect { local ->
                     _uiState.update {
-                        it.copy(follows = local.follows, prefs = local.prefs, teamFollows = local.teams)
+                        it.copy(follows = local.follows, prefs = local.prefs, teamFollows = local.teams, scoreRev = it.scoreRev + 1)
                     }
+                    scheduleScoreRefresh()
                     val uncovered = local.follows.any { it.leagueId !in _uiState.value.fixturesByLeague } ||
                         local.teams.any { it.teamId !in _uiState.value.fixturesByTeam }
                     refreshFixtures(force = uncovered)
@@ -231,6 +246,7 @@ class RadarRepository @Inject constructor(
                 lastFetchMark = null // failed: retry on next entry instead of waiting out the TTL
                 return@launch
             }
+            recordScores(response)
             _uiState.update {
                 it.copy(
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
@@ -281,6 +297,7 @@ class RadarRepository @Inject constructor(
             ).filter { it in RADAR_LIVESCORE_SPORTS }.toSet()
         scope.launch {
             val response = fixturesClient.fetch(targets.leagueIds, sports, targets.teamIds) ?: return@launch
+            recordScores(response)
             _uiState.update {
                 it.copy(
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
@@ -362,6 +379,50 @@ class RadarRepository @Inject constructor(
         }
     }
 
+    /** Hide scores everywhere (false) or show them again. One global per-profile setting; synced. */
+    fun setScoresShown(shown: Boolean) {
+        scope.launch {
+            val current = store.state.first()
+            store.saveState(current.copy(prefs = current.prefs.copy(scoresShown = shown)))
+            syncService.triggerRemoteSync()
+        }
+    }
+
+    /** Score delay in seconds; anything outside [ScoreSpoilerSettings.ALLOWED_DELAYS] is stored as 0. */
+    fun setScoreDelaySeconds(seconds: Int) {
+        scope.launch {
+            val current = store.state.first()
+            store.saveState(current.copy(prefs = current.prefs.copy(scoreDelayS = ScoreSpoilerSettings.sanitizeDelay(seconds))))
+            syncService.triggerRemoteSync()
+        }
+    }
+
+    /** Record what a fetch brought into the delay buffer (fixtures first: first-sight bookkeeping). */
+    private fun recordScores(response: RadarFixturesResponse) {
+        scoreObservations.note(
+            fixtures = response.fixtures.values.flatten() + response.teamFixtures.values.flatten(),
+            liveRows = response.livescore.values.flatten(),
+            nowMs = RadarTime.nowMs(),
+        )
+        _uiState.update { it.copy(scoreRev = it.scoreRev + 1) }
+        scheduleScoreRefresh()
+    }
+
+    /**
+     * One local re-render when the next buffered score becomes due: no network, no loop (a chain of
+     * single delays that ends as soon as nothing is pending).
+     */
+    private fun scheduleScoreRefresh() {
+        scoreJob?.cancel()
+        val now = RadarTime.nowMs()
+        val due = scoreObservations.nextChangeAtMs(now, _uiState.value.spoiler.delayMs) ?: return
+        scoreJob = scope.launch {
+            kotlinx.coroutines.delay((due - now).coerceAtLeast(0L) + 50L)
+            _uiState.update { it.copy(scoreRev = it.scoreRev + 1) }
+            scheduleScoreRefresh()
+        }
+    }
+
     /**
      * On-demand fetch for a league the user is BROWSING (league/event page) — followed
      * leagues load via [refreshFixtures]; discovery must not depend on following.
@@ -372,6 +433,7 @@ class RadarRepository @Inject constructor(
         val sports = if (sport != null && sport in RADAR_LIVESCORE_SPORTS) setOf(sport) else emptySet()
         scope.launch {
             val response = fixturesClient.fetch(listOf(leagueId), sports) ?: return@launch
+            recordScores(response)
             _uiState.update {
                 it.copy(
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,

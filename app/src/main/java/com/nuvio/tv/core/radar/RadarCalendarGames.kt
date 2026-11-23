@@ -41,10 +41,29 @@ object RadarCalendarGames {
             .sortedBy { it.kickoffMs }
     }
 
+    private fun side(
+        view: ScoreView,
+        live: RadarLiveScore?,
+        fixtureScore: String?,
+        gameState: CalendarGameState,
+        pick: (RadarLiveScore) -> String?,
+    ): String? {
+        if (gameState != CalendarGameState.LIVE && gameState != CalendarGameState.FINAL) return null
+        val raw = when (view) {
+            ScoreView.ScoreHidden, ScoreView.ScorePending -> null
+            is ScoreView.ScoreShown -> view.value?.let(pick) ?: if (view.value != null) null else live?.let(pick) ?: fixtureScore
+        }
+        return raw?.takeIf(String::isNotBlank)
+    }
+
     fun item(fixture: RadarFixture, state: RadarUiState, nowMs: Long): CalendarGameItem? {
         val kickoff = fixture.startEpochMs ?: return null
         val gameState = state(fixture, state.isLive(fixture, nowMs))
         val live = fixture.id?.let { state.liveScores[it] }?.takeIf { gameState == CalendarGameState.LIVE }
+        // Hide scores / delay: the one policy decides what a score slot may show right now.
+        val view = if (gameState == CalendarGameState.LIVE || gameState == CalendarGameState.FINAL) {
+            state.scoreView(fixture, nowMs)
+        } else ScoreView.ScoreShown(null)
         val league = fixture.leagueId?.let(state::leagueById)
         return CalendarGameItem(
             id = gameId(fixture),
@@ -58,10 +77,9 @@ object RadarCalendarGames {
             event = fixture.event,
             kickoffMs = kickoff,
             state = gameState,
-            homeScore = (live?.homeScore ?: fixture.homeScore)?.takeIf(String::isNotBlank)
-                ?.takeIf { gameState == CalendarGameState.LIVE || gameState == CalendarGameState.FINAL },
-            awayScore = (live?.awayScore ?: fixture.awayScore)?.takeIf(String::isNotBlank)
-                ?.takeIf { gameState == CalendarGameState.LIVE || gameState == CalendarGameState.FINAL },
+            homeScore = side(view, live, fixture.homeScore, gameState) { it.homeScore },
+            awayScore = side(view, live, fixture.awayScore, gameState) { it.awayScore },
+            scorePending = view is ScoreView.ScorePending,
             progress = live?.progress?.takeIf(String::isNotBlank),
             channelHintId = fixture.id
         )
@@ -104,6 +122,7 @@ class RadarCalendarSportsSource @Inject constructor(
         val fromDisk = RadarUiState(
             follows = local.follows,
             teamFollows = local.teams,
+            prefs = local.prefs, // hide-scores must hold on the cold path too
             fixturesByLeague = cached.fixtures,
             fixturesByTeam = cached.teamFixtures
         )
@@ -112,7 +131,7 @@ class RadarCalendarSportsSource @Inject constructor(
 
     override val changes: Flow<Unit>
         get() = repository.uiState
-            .map { Triple(it.fixturesByLeague, it.fixturesByTeam, it.liveScores) to (it.follows to it.teamFollows) }
+            .map { Triple(it.fixturesByLeague, it.fixturesByTeam, it.liveScores) to (it.follows to it.teamFollows to (it.spoiler to it.scoreRev)) }
             .distinctUntilChanged()
             .drop(1)
             .map { }
