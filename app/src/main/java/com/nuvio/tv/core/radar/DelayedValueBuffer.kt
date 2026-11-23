@@ -2,9 +2,11 @@ package com.nuvio.tv.core.radar
 
 /**
  * Remembers recent snapshots per key so the UI can show the value as it was `delayMs` ago. Pure
- * (time is passed in), thread-safe, bounded. Recording happens where a fetch result lands.
+ * (time is passed in), thread-safe. Bounded by TIME only: the newest snapshot old enough to serve the
+ * longest delay plus everything newer. A count cap is deliberately absent: it could drop that anchor
+ * and leave a delayed score at "-" for good.
  */
-class DelayedValueBuffer<K, V>(private val maxPerKey: Int = 8) {
+class DelayedValueBuffer<K, V> {
     private class Snap<V>(val atMs: Long, val value: V)
 
     private val map = HashMap<K, ArrayList<Snap<V>>>()
@@ -19,7 +21,6 @@ class DelayedValueBuffer<K, V>(private val maxPerKey: Int = 8) {
         val cutoff = atMs - MAX_DELAY_MS
         val keepFrom = list.indexOfLast { it.atMs <= cutoff }
         if (keepFrom > 0) repeat(keepFrom) { list.removeAt(0) }
-        while (list.size > maxPerKey) list.removeAt(0)
     }
 
     /** Newest snapshot with `atMs <= nowMs - delayMs`; null if none is old enough. delayMs == 0 -> newest. */

@@ -78,12 +78,14 @@ class ScoreSpoilerPolicyTest {
 
     @Test
     fun `buffer dedupes identical values and stays bounded`() {
-        val buf = DelayedValueBuffer<String, Int>(maxPerKey = 8)
+        val buf = DelayedValueBuffer<String, Int>()
         buf.record("k", 1, 0L); buf.record("k", 1, 1_000L); buf.record("k", 1, 2_000L)
         assertEquals("dedupe", 1, buf.snapshotCount("k"))
-        for (i in 2..40) buf.record("k", i, i * 1_000L)
-        assertTrue("bounded", buf.snapshotCount("k") <= 8)
-        assertEquals("newest kept", 40, buf.valueAt("k", 40_000L, 0L))
+        for (i in 2..200) buf.record("k", i, i * 1_000L)
+        assertTrue("bounded by time (60 s window + anchor)", buf.snapshotCount("k") <= 62)
+        assertEquals("newest kept", 200, buf.valueAt("k", 200_000L, 0L))
+        assertEquals("still serves a 60 s delay after overflow", 140, buf.valueAt("k", 200_000L, 60_000L))
+        assertEquals("and a 15 s delay", 185, buf.valueAt("k", 200_000L, 15_000L))
     }
 
     @Test
