@@ -11,7 +11,8 @@ import javax.inject.Singleton
 /**
  * Turns a TMDB movie/episode into playable Xtream [Stream]s for one account — the bridge
  * that lets IPTV VOD show up next to addon/debrid streams on TMDB-driven detail screens.
- * Returns empty (never throws) when the account doesn't carry the title.
+ * Returns empty when the account doesn't carry the title. A lookup that FAILED is not "doesn't carry": a series'
+ * failed get_series_info throws [XtreamSeriesInfoException] (B134).
  */
 @Singleton
 class XtreamStreamSource @Inject constructor(
@@ -150,9 +151,18 @@ class XtreamStreamSource @Inject constructor(
         val allowed = IptvSourceCategoryPolicy.keep(acc, XtreamAccount.TYPE_SERIES, entries.toList()) { it.categoryId }
         val editions = XtreamSeriesEpisodePolicy.editionsForSeason(allowed, s)
             .take(MAX_SERIES_EDITIONS) // one get_series_info per edition — bound it
-        return editions.flatMap { ed ->
-            val detail = client.seriesInfo(acc, ed.sid).getOrNull() ?: return@flatMap emptyList<Stream>()
-            XtreamSeriesEpisodePolicy.pickEpisodes(ed, detail.episodes, s, e).map { ep ->
+        // B134: a failed get_series_info is its own outcome, never an empty list. It throws, and the stream
+        // repository's existing per-playlist catch shows it as a failed source; only the other three read as "nothing".
+        val outcome = SeriesSourcePolicy.resolve(editions, s, e) { ed ->
+            com.nuvio.tv.core.iptv.BoundedLoad.run(
+                surface = com.nuvio.tv.core.iptv.LoadSurface.SERIES_INFO,
+                report = mapOf("path" to "streams", "source_type" to acc.sourceType),
+            ) { client.seriesInfo(acc, ed.sid).getOrThrow() }.toResult()
+        }
+        return when (outcome) {
+            is SeriesSourceOutcome.InfoFailed -> throw XtreamSeriesInfoException(outcome.kind)
+            SeriesSourceOutcome.NoMatch, SeriesSourceOutcome.NoEpisodeForSE -> emptyList()
+            is SeriesSourceOutcome.Found -> outcome.picks.map { (ed, ep) ->
                 // edition catalog name as title so language/season variants are tellable apart
                 xtreamStream(acc = acc, label = "S${s}E${e} · ${ep.title}", url = ep.streamUrl, title = ed.name)
             }

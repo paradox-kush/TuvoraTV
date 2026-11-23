@@ -4,6 +4,7 @@ import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.network.NetworkResult
+import com.nuvio.tv.core.iptv.match.toResult
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.mediaserver.ServerCatalog
 import com.nuvio.tv.data.mediaserver.ServerItemRef
@@ -257,13 +258,33 @@ class MetaRepositoryImpl @Inject constructor(
             else -> buildXtreamVodMeta(item)
         }
 
+    /** [buildXtreamMeta] as a result: a failed series lookup becomes an Error the details screen retries (B134). */
+    private suspend fun xtreamMetaResult(item: com.nuvio.tv.core.iptv.XtreamResolvedItem): NetworkResult<Meta> =
+        try {
+            NetworkResult.Success(buildXtreamMeta(item))
+        } catch (e: com.nuvio.tv.core.iptv.match.XtreamSeriesInfoException) {
+            NetworkResult.Error(e.message ?: context.getString(R.string.error_meta_not_found))
+        }
+
     /** Series: fetch episodes (get_series_info), register each for playback, build a Meta with videos. */
     private suspend fun buildXtreamSeriesMeta(item: com.nuvio.tv.core.iptv.XtreamResolvedItem): Meta {
         val base = item.toMeta()
         val account = runCatching { xtreamAccountStore.accounts.first() }.getOrNull()
             ?.firstOrNull { it.id == item.accountId } ?: return base
         // Xtream: get_series_info. M3U: episodes grouped from the ingested catalog (same shape).
-        val detail = iptvClientFactory.clientFor(account).seriesInfo(account, item.streamId).getOrNull() ?: return base
+        // B134: a failed get_series_info is thrown (the details screen shows the error with Retry), never an
+        // empty episode list. Callers go through [xtreamMetaResult].
+        val info = com.nuvio.tv.core.iptv.BoundedLoad.run(
+            surface = com.nuvio.tv.core.iptv.LoadSurface.SERIES_INFO,
+            report = mapOf("path" to "meta", "source_type" to account.sourceType),
+        ) { iptvClientFactory.clientFor(account).seriesInfo(account, item.streamId).getOrThrow() }
+            .toResult()
+        val detail = info.getOrElse { error ->
+            if (error is kotlinx.coroutines.CancellationException && error !is kotlinx.coroutines.TimeoutCancellationException) throw error
+            throw com.nuvio.tv.core.iptv.match.XtreamSeriesInfoException(
+                com.nuvio.tv.core.iptv.match.SeriesSourcePolicy.classify(error), error,
+            )
+        }
         val videos = detail.episodes.map { ep ->
             val epId = com.nuvio.tv.core.iptv.XtreamItemRegistry.episodeId(account.id, ep.episodeId)
             xtreamRegistry.register(
@@ -356,7 +377,7 @@ class MetaRepositoryImpl @Inject constructor(
             // T2: a nameless registry entry (one rebuilt by the play path) is a miss here.
             val item = xtreamRegistry.get(id)?.takeIf { it.name.isNotBlank() }
                 ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, iptvClientFactory, iptvItemDisplay)
-            if (item != null) emit(NetworkResult.Success(buildXtreamMeta(item)))
+            if (item != null) emit(xtreamMetaResult(item))
             else emit(NetworkResult.Error("IPTV item is no longer available"))
             return@flow
         }
@@ -634,7 +655,7 @@ class MetaRepositoryImpl @Inject constructor(
             // T2: a nameless registry entry (one rebuilt by the play path) is a miss here.
             val item = xtreamRegistry.get(id)?.takeIf { it.name.isNotBlank() }
                 ?: xtreamRegistry.rebuildFromId(id, xtreamAccountStore, iptvClientFactory, iptvItemDisplay)
-            if (item != null) emit(NetworkResult.Success(buildXtreamMeta(item)))
+            if (item != null) emit(xtreamMetaResult(item))
             else emit(NetworkResult.Error("IPTV item is no longer available"))
             return@flow
         }
