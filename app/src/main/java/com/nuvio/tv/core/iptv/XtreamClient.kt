@@ -639,7 +639,8 @@ class XtreamClient @Inject constructor(
     override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail> = withContext(Dispatchers.IO) { call {
         // Fails over (Step 0.3); episode URLs are built on the server that served the list.
         val (served, root) = panel(acc, { api, a -> api.getRawCatalog(seriesInfoUrl(a, seriesId)) }) { a, body ->
-            a to body.use { com.google.gson.JsonParser.parseString(it.string()).asJsonObject }
+            // B134: an unparseable body is a typed XtreamParseException, never read as "no episodes".
+            a to body.use { parseXtreamSeriesInfoRoot(it.string()) }
         }
         val episodes = XtreamEpisodeRows.parse(root.get("episodes")).map { e ->
             XtreamEpisode(e.id, e.season, e.number, e.title, e.plot, e.still,
@@ -943,4 +944,23 @@ internal fun decodeXtreamBase64(s: String?): String {
     // and a blind decode ships mojibake — accepted only when base64-shaped AND readable came out.
     if (s.isNullOrBlank()) return ""
     return XtreamSimpleDataTable.decodeText(s)
+}
+
+/** The panel answered 200 but the body was not the JSON shape the call expects (B134). No body, host or message kept. */
+class XtreamParseException : IllegalStateException("Unparseable panel response")
+
+/**
+ * The `get_series_info` body as an object. A blank body or an empty array is the panel's "no such series" and
+ * reads as an empty object (no episodes). Anything else that is not a JSON object (HTML from a WAF, truncated
+ * JSON, a bare string) throws [XtreamParseException]. Never carries the body or the host.
+ */
+internal fun parseXtreamSeriesInfoRoot(text: String): com.google.gson.JsonObject {
+    if (text.isBlank()) return com.google.gson.JsonObject()
+    val element = try {
+        com.google.gson.JsonParser.parseString(text)
+    } catch (e: com.google.gson.JsonParseException) {
+        throw XtreamParseException()
+    }
+    if (element is com.google.gson.JsonArray && element.size() == 0) return com.google.gson.JsonObject()
+    return element as? com.google.gson.JsonObject ?: throw XtreamParseException()
 }
