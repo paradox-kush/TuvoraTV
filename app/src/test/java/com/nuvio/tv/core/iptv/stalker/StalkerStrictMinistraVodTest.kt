@@ -34,6 +34,8 @@ class StalkerStrictMinistraVodTest {
     @Volatile private var movieRow = ""
     @Volatile private var fileRows = "[]"
     @Volatile private var relativeReply = false
+    /** XC-emulator portal: create_link accepts a raw `ffmpeg http://...` cmd as-is. */
+    @Volatile private var xcRaw = false
 
     @Before
     fun setUp() {
@@ -72,7 +74,7 @@ class StalkerStrictMinistraVodTest {
         if (action == "get_modules") return """{"js":{"all_modules":[],"disabled_modules":[]}}"""
         if (action == "create_link") {
             val cmd = q["cmd"].orEmpty()
-            return if (Regex("^/media/(file_)?\\d+\\.mpg$").matches(cmd)) {
+            return if (Regex("^/media/(file_)?\\d+\\.mpg$").matches(cmd) || (xcRaw && cmd.startsWith("ffmpeg http"))) {
                 if (relativeReply) """{"js":{"cmd":"$cmd?token=abc"}}"""
                 else """{"js":{"cmd":"ffmpeg http://media.test/play$cmd"}}"""
             } else """{"js":{"cmd":"","error":"nothing_to_play"}}"""
@@ -142,6 +144,36 @@ class StalkerStrictMinistraVodTest {
         c.vodMovies(acc, "1").getOrThrow()
         assertNotNull("link", c.resolveStreamUrl(acc, "movie", 10, false))
         assertEquals("file id first, no movie-form mint", listOf<String?>("/media/file_100.mpg"), mints())
+    }
+
+    @Test
+    fun `XC emulator raw cmd is sent unchanged`() = runBlocking {
+        xcRaw = true
+        movieRow = """{"id":"10","name":"M","cmd":"ffmpeg http://localhost/ch/3","has_files":0,"category_id":"1","is_series":"0"}"""
+        val c = client()
+        c.vodMovies(acc, "1").getOrThrow()
+        assertNotNull("link", c.resolveStreamUrl(acc, "movie", 10, false))
+        assertEquals("the raw cmd, once", listOf<String?>("ffmpeg http://localhost/ch/3"), mints())
+        assertEquals("no file lookup", 0, requests.count { it["action"] == "get_ordered_list" && it["movie_id"] == "10" })
+    }
+
+    @Test
+    fun `G - a custom url cmd with no proof is sent first then falls back to the file row`() = runBlocking {
+        movieRow = """{"id":"10","name":"M","cmd":"http://cdn.test/a.mkv","has_files":0,"category_id":"1","is_series":"0"}"""
+        fileRows = """[{"id":"100","is_file":true,"protocol":"custom","cmd":"http://cdn.test/f.mkv"}]"""
+        val c = client()
+        c.vodMovies(acc, "1").getOrThrow()
+        assertNotNull("link", c.resolveStreamUrl(acc, "movie", 10, false))
+        assertEquals("raw first, then file id", listOf<String?>("http://cdn.test/a.mkv", "/media/file_100.mpg"), mints())
+    }
+
+    @Test
+    fun `H - with no file row the id cmd is the last resort`() = runBlocking {
+        movieRow = """{"id":"10","name":"M","cmd":"http://cdn.test/a.mkv","has_files":0,"category_id":"1","is_series":"0"}"""
+        val c = client()
+        c.vodMovies(acc, "1").getOrThrow()
+        assertNotNull("link", c.resolveStreamUrl(acc, "movie", 10, false))
+        assertEquals("raw first, then id", listOf<String?>("http://cdn.test/a.mkv", "/media/10.mpg"), mints())
     }
 
     @Test
