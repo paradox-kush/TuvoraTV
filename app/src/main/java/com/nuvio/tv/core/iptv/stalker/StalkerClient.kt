@@ -632,15 +632,19 @@ class StalkerClient @Inject constructor(
             }
             kind == "movie" -> {
                 val row = vodRowFields(acc, streamId)
-                // B02: the create_link cmd is built from ids, never a custom URL (StalkerVodCommandPolicy).
+                // B02: ids for proven Ministra custom rows; an unproven raw cmd goes unchanged first (StalkerVodCommandPolicy).
                 val plan = row?.let(StalkerVodCommandPolicy::decide) ?: StalkerVodCommandPolicy.Decision.ResolveFiles(null)
                 if (!forceFresh && row?.cmd != null) {
                     staticUrlOrNull(acc, "vod", streamId, row.cmd, false)?.let { return it }
                 }
                 when (plan) {
                     is StalkerVodCommandPolicy.Decision.Cmd -> {
-                        createLink(session, "vod", plan.cmd)?.let { return it }
-                        movieFileCmd(acc, streamId)?.let { createLink(session, "vod", it) }
+                        var refusal: com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError? = null
+                        createLink(session, "vod", plan.cmd, onRefusal = { refusal = it })?.let { return it }
+                        // A session cap cannot change on a second ask; anything else gets one fallback.
+                        if (refusal == com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.SESSION_LIMIT) return null
+                        val fileCmd = movieFileCmd(acc, streamId)?.takeIf { it != plan.cmd }
+                        (fileCmd ?: plan.fallback)?.let { createLink(session, "vod", it) }
                     }
                     is StalkerVodCommandPolicy.Decision.ResolveFiles -> {
                         movieFileCmd(acc, streamId)?.let { createLink(session, "vod", it)?.let { u -> return u } }

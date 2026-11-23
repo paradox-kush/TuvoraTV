@@ -42,17 +42,19 @@ class StalkerVodCommandPolicyTest {
         assertEquals("xc", Decision.Cmd("eyJ0eXBlIjoibW92aWUifQ=="),
             StalkerVodCommandPolicy.decide(Row(3, "eyJ0eXBlIjoibW92aWUifQ==")))
 
-    @Test fun `a raw url with has_files 0 is the movie id cmd`() =
-        assertEquals("has_files 0", Decision.Cmd("/media/10.mpg"),
-            StalkerVodCommandPolicy.decide(Row(10, "http://cdn.test/a.mkv", hasFiles = 0)))
-
-    @Test fun `a cold row with only a url resolves files then falls back to the movie cmd`() =
-        assertEquals("cold", Decision.ResolveFiles("/media/10.mpg"),
+    @Test fun `XC emulator raw cmd is sent unchanged`() {
+        assertEquals("has_files 0", Decision.Cmd("ffmpeg http://localhost/ch/3", "/media/10.mpg"),
+            StalkerVodCommandPolicy.decide(Row(10, "ffmpeg http://localhost/ch/3", hasFiles = 0)))
+        assertEquals("cold", Decision.Cmd("ffmpeg http://cdn.test/a.mkv", "/media/10.mpg"),
             StalkerVodCommandPolicy.decide(Row(10, "ffmpeg http://cdn.test/a.mkv")))
+    }
 
-    @Test fun `a raw url is never a Cmd decision`() {
-        listOf("http://a/b.mkv", "rtsp://a/b", "auto http://a/b.mkv").forEach {
-            assertEquals(it, true, StalkerVodCommandPolicy.decide(Row(1, it)) !is Decision.Cmd)
+    @Test fun `a raw url is rewritten only on proof of a stock custom row`() {
+        listOf(
+            Row(1, "http://a/b.mkv", rtspUrl = "http://a/b.mkv"), Row(1, "rtsp://a/b", hasFiles = 2), Row(1, "http://a/b", isFile = true),
+        ).forEach { r ->
+            val d = StalkerVodCommandPolicy.decide(r)
+            assertEquals("raw url sent for $r", false, d is Decision.Cmd && StalkerVodCommandPolicy.isRawUrl(d.cmd))
         }
     }
 

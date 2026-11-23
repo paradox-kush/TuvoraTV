@@ -6,8 +6,10 @@ package com.nuvio.tv.core.iptv.stalker
  * Stock Ministra (vod.class.php) accepts exactly two cmd shapes: `/media/<id>.mpg` and
  * `/media/file_<id>.mpg`. A row with a custom URL (`rtsp_url`, or a file row with
  * `protocol=custom`) carries that URL as its `cmd`; a real MAG box (c/player.js) rebuilds the
- * `/media/` form from the id instead of echoing the URL. Sending the URL makes the portal answer
- * `nothing_to_play`. Pure: no I/O.
+ * `/media/` form from the id instead of echoing the URL. Only PROOF of such a row (`is_file`, a
+ * non-blank `rtsp_url`, `has_files > 0`) rewrites the cmd; a raw URL without proof may be an
+ * XC-emulator cmd that create_link accepts as-is, so it is sent unchanged first and falls back
+ * (file rows, then `/media/<id>.mpg`) only if the portal gives no link. Pure: no I/O.
  */
 object StalkerVodCommandPolicy {
 
@@ -21,8 +23,11 @@ object StalkerVodCommandPolicy {
     )
 
     sealed interface Decision {
-        /** Send exactly this cmd. */
-        data class Cmd(val cmd: String) : Decision
+        /**
+         * Send exactly this cmd. [fallback] (the id form) is set only for an unproven raw URL: if create_link gives
+         * no link the file rows are tried, then [fallback].
+         */
+        data class Cmd(val cmd: String, val fallback: String? = null) : Decision
 
         /** Ask the portal for the file rows first, then mint `/media/file_<id>.mpg`. [fallback] is tried only if that finds no file. */
         data class ResolveFiles(val fallback: String?) : Decision
@@ -38,12 +43,8 @@ object StalkerVodCommandPolicy {
         }
         if (id != null && !row.rtspUrl.isNullOrBlank()) return Decision.Cmd(movieCmd(id))
         if (cmd.isBlank()) return Decision.ResolveFiles(fallback = id?.let(::movieCmd))
-        if (isRawUrl(cmd)) {
-            // has_files == 0 proves a single file: the id form is right. An unknown has_files (cold row)
-            // may still be multi-file: look at the files first, keep the id form as the last resort.
-            return if (row.hasFiles == 0 && id != null) Decision.Cmd(movieCmd(id))
-            else Decision.ResolveFiles(fallback = id?.let(::movieCmd))
-        }
+        // No proof (no rtsp_url, has_files 0 or unknown, cold row): may be an XC-emulator cmd. Unchanged first.
+        if (isRawUrl(cmd)) return Decision.Cmd(cmd, fallback = id?.let(::movieCmd))
         return Decision.Cmd(cmd)   // /media/<id>.mpg, XC base64 / opaque cmd: unchanged
     }
 
