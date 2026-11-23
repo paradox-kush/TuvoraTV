@@ -631,14 +631,22 @@ class StalkerClient @Inject constructor(
                 createLink(session, "itv", cmd)
             }
             kind == "movie" -> {
-                val cmd = vodCmd(acc, streamId)
-                if (!forceFresh && cmd != null) {
-                    staticUrlOrNull(acc, "vod", streamId, cmd, false)?.let { return it }
-                    createLink(session, "vod", cmd)?.let { return it }
+                val row = vodRowFields(acc, streamId)
+                // B02: the create_link cmd is built from ids, never a custom URL (StalkerVodCommandPolicy).
+                val plan = row?.let(StalkerVodCommandPolicy::decide) ?: StalkerVodCommandPolicy.Decision.ResolveFiles(null)
+                if (!forceFresh && row?.cmd != null) {
+                    staticUrlOrNull(acc, "vod", streamId, row.cmd, false)?.let { return it }
                 }
-                val fileCmd = movieFileCmd(acc, streamId)
-                if (fileCmd != null) createLink(session, "vod", fileCmd)
-                else if (forceFresh) cmd?.let { createLink(session, "vod", it) } else null
+                when (plan) {
+                    is StalkerVodCommandPolicy.Decision.Cmd -> {
+                        createLink(session, "vod", plan.cmd)?.let { return it }
+                        movieFileCmd(acc, streamId)?.let { createLink(session, "vod", it) }
+                    }
+                    is StalkerVodCommandPolicy.Decision.ResolveFiles -> {
+                        movieFileCmd(acc, streamId)?.let { createLink(session, "vod", it)?.let { u -> return u } }
+                        plan.fallback?.let { createLink(session, "vod", it) }
+                    }
+                }
             }
             else -> null
         }
@@ -767,7 +775,7 @@ class StalkerClient @Inject constructor(
         val files = runCatching { browse(acc, StalkerSeriesDialect.filesParams(seriesId, s.id, ep.node.id)) }.getOrNull()
         val cmd = ((files as? JsonObject)?.get("data") as? com.google.gson.JsonArray)
             ?.mapNotNull { it as? JsonObject }
-            ?.firstNotNullOfOrNull { f -> f.str("cmd")?.takeIf { it.isNotBlank() } }
+            ?.firstNotNullOfOrNull { f -> StalkerVodCommandPolicy.fileRowCmd(f.int("id"), f.str("cmd")) }
             ?: return null
         return createLink(playbackSession(acc), "vod", cmd)
     }
@@ -897,9 +905,9 @@ class StalkerClient @Inject constructor(
         val rows = (reply as? JsonObject)?.get("data") as? com.google.gson.JsonArray ?: return null
         return rows.mapNotNull { it as? JsonObject }.firstNotNullOfOrNull { file ->
             val flag = file.str("is_file")?.trim()
-            file.str("cmd")?.takeIf { cmd ->
-                cmd.isNotBlank() && (flag == "1" || flag.equals("true", true) || cmd.contains("/media/file_"))
-            }
+            val cmd = file.str("cmd").orEmpty()
+            val isFile = flag == "1" || flag.equals("true", true) || cmd.contains("/media/file_")
+            if (isFile) StalkerVodCommandPolicy.fileRowCmd(file.int("id"), cmd) else null
         }
     }
 
@@ -944,8 +952,16 @@ class StalkerClient @Inject constructor(
             }
             com.nuvio.tv.core.iptv.CatchUpFailure.StalkerLinkError.NONE -> lastResolveErrorInternal = null
         }
-        val rawCmd = obj.str("cmd") ?: return null
-        return StalkerProtocol.extractStreamUrl(rawCmd)
+        val url = StalkerVodCommandPolicy.resolveReply(obj.str("cmd"), session.portalOrigin, cmd)
+        if (url == null) {
+            // Never a silent null: the portal's own reason, by text only (never the cmd or a host).
+            val reason = obj.str("error")?.trim()?.takeIf { it.isNotEmpty() }
+            if (reason != null) {
+                lastResolveErrorInternal =
+                    if (type == "tv_archive") "The portal refused the link: $reason" else "The portal has nothing to play for this title ($reason)"
+            }
+        }
+        return url
     }
 
     /**
@@ -1003,13 +1019,23 @@ class StalkerClient @Inject constructor(
         linkFlags[key] = LinkFlags(tmpLink, loadBalancing)
     }
 
-    private suspend fun vodCmd(acc: XtreamAccount, streamId: Int): String? =
-        // Hot browse rows first, then the write-through store (anything EVER browsed on this
-        // device — the cold-start Library play that used to fall into a hopeless bounded scan),
-        // then the portal's own search / scan as the true cold miss.
-        rowCache[rowKey(acc.id, "vod", streamId)]?.str("cmd")
-            ?: contentDb.vodRow(acc.id, streamId)?.cmd
-            ?: row(acc, "vod", streamId)?.str("cmd")
+    /**
+     * The movie row's create_link evidence. Hot browse rows first (they carry rtsp_url / has_files /
+     * is_file), then the write-through store (cmd only — anything EVER browsed on this device; the
+     * policy resolves a URL-only cold row through the file list), then the portal's own scan.
+     */
+    private suspend fun vodRowFields(acc: XtreamAccount, streamId: Int): StalkerVodCommandPolicy.Row? {
+        fun fromJson(r: JsonObject) = StalkerVodCommandPolicy.Row(
+            id = streamId,
+            cmd = r.str("cmd"),
+            rtspUrl = r.str("rtsp_url"),
+            hasFiles = r.int("has_files"),
+            isFile = r.flag("is_file") == true,
+        )
+        rowCache[rowKey(acc.id, "vod", streamId)]?.let { return fromJson(it) }
+        contentDb.vodRow(acc.id, streamId)?.cmd?.let { return StalkerVodCommandPolicy.Row(streamId, it) }
+        return row(acc, "vod", streamId)?.let(::fromJson)
+    }
 
     private suspend fun seriesCmd(acc: XtreamAccount, seriesId: Int): String? =
         row(acc, "series", seriesId)?.str("cmd")

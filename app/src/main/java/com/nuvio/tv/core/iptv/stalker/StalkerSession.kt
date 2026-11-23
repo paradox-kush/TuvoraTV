@@ -125,6 +125,8 @@ class StalkerSession(
     private var watchdogJob: Job? = null
 
     private val baseUrl: String = StalkerProtocol.normalizePortalBase(account.portalUrl)
+    /** scheme://host[:port] of the portal — the base a relative create_link reply resolves against. */
+    internal val portalOrigin: String get() = baseUrl
     private val identity: StalkerProtocol.DeviceIdentity =
         StalkerProtocol.deriveDeviceIdentity(
             mac = account.macAddress,
