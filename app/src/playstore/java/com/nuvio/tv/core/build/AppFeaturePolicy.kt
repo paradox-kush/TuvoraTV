@@ -23,5 +23,11 @@ object AppFeaturePolicy {
     // Store builds keep add-ons for discovery (catalogs, metadata, subtitles) but never as playback
     // sources: add-ons sync in from tuvora.co / full builds (AddonSourcePolicy).
     val addonStreamSourcesEnabled: Boolean = false
+    // Store builds ship without built-in Usenet: the engine is a GPL-3 sidecar with a LAN setup
+    // server, the binary is not packaged (build.gradle.kts "full" source set) and nothing exposes it.
+    val usenetEnabled: Boolean = false
+    // Audio-based subtitle sync (speech model, ~290 MB recognizer pool) stays hidden in store builds
+    // until it is measured on a 2 GB box (Onn).
+    val audioSubtitleSyncEnabled: Boolean = false
     val debugBackendSwitcherEnabled: Boolean = BuildConfig.IS_DEBUG_BUILD
 }

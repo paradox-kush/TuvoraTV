@@ -17,6 +17,10 @@ import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.domain.model.pluginBingeGroup
 import com.nuvio.tv.core.plugin.resolvePluginSeasonEpisode
 import com.nuvio.tv.core.tmdb.TmdbService
+import com.nuvio.tv.core.usenet.BuiltInUsenetService
+import com.nuvio.tv.core.usenet.UnplayableReleases
+import com.nuvio.tv.core.usenet.UsenetSourceConfiguration
+import com.nuvio.tv.core.usenet.UsenetSourceSettings
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.mediaserver.ServerStreams
 import com.nuvio.tv.data.mediaserver.messageRes
@@ -39,6 +43,7 @@ import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.domain.repository.StreamRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -48,7 +53,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.net.URLEncoder
 import javax.inject.Inject
 
@@ -78,6 +87,8 @@ class StreamRepositoryImpl @Inject constructor(
     private val xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore,
     private val xtreamStreamSource: com.nuvio.tv.core.iptv.match.XtreamStreamSource,
     private val serverStreams: ServerStreams,
+    private val usenetSourceSettings: UsenetSourceSettings,
+    private val builtInUsenetService: BuiltInUsenetService,
     /** Step 0.3: moves a registered Xtream stream URL onto the playlist's ACTIVE server at play time. */
     private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover =
         com.nuvio.tv.core.iptv.PlaylistServerFailover.detached(),
@@ -113,7 +124,8 @@ class StreamRepositoryImpl @Inject constructor(
         val enabledScrapers: List<ScraperInfo>,
         val groupPluginsByRepository: Boolean,
         val pluginRepositories: List<PluginRepository>,
-        val debridSettings: DebridSettings
+        val debridSettings: DebridSettings,
+        val usenetSources: UsenetSourceConfiguration
     )
 
     /**
@@ -294,6 +306,7 @@ class StreamRepositoryImpl @Inject constructor(
                 pendingAddonUrls = if (isNativeServerRequest || !AppFeaturePolicy.addonStreamSourcesEnabled) emptySet() else sourceConfiguration.pendingAddonUrls,
                 forceRefresh = forceRefresh,
                 debridSettings = sourceConfiguration.debridSettings,
+                usenetSources = if (isNativeServerRequest) UsenetSourceConfiguration() else sourceConfiguration.usenetSources,
                 hasCompatiblePlugins = !isNativeServerRequest && sourceConfiguration.pluginsEnabled &&
                     sourceConfiguration.enabledScrapers.any { it.supportsType(type) },
                 serverSources = if (continuePluginOnly) {
@@ -308,13 +321,22 @@ class StreamRepositoryImpl @Inject constructor(
         }
         // Own-source matching can mint single-use links and has its own refresh policy.
         // Keep those searches scoped to their collector; reuse upstream searches only.
-        if (hasForkMatchSources(type)) emitAll(producer())
-        else emitAll(streamSearchSessions.observe(requestKey, forceRefresh, producer))
+        // Cached results predate releases tried since: label and arrange them on every delivery.
+        val arranged = { flow: Flow<NetworkResult<List<AddonStreams>>> ->
+            flow.map { result ->
+                if (result !is NetworkResult.Success) result
+                else NetworkResult.Success(BuiltInUsenetService.arrangeOutcomes(result.data, unplayable::contains, unplayable::played,
+                    sourceConfiguration.usenetSources.availableFirst, unplayable::sibling))
+            }
+        }
+        if (hasForkMatchSources(type)) emitAll(arranged(producer()))
+        else emitAll(arranged(streamSearchSessions.observe(requestKey, forceRefresh, producer)))
     }.withSourceQueryDeadline { NetworkResult.Error(context.getString(R.string.stream_source_query_timed_out)) }
 
     private suspend fun hasForkMatchSources(type: String): Boolean =
         xtreamAccountStore.accounts.first().any { it.availableOnDevice } || sourceStreams.matchSourceGroups(type).isNotEmpty()
 
+    private val unplayable by lazy { UnplayableReleases.get(context) }
     override suspend fun getCachedStreamsFromAllAddons(
         type: String, videoId: String, season: Int?, episode: Int?
     ): List<AddonStreams>? {
@@ -348,6 +370,7 @@ class StreamRepositoryImpl @Inject constructor(
                 .toString(),
             serverRevision = serverStreams.revision,
             pendingAddonUrls = sourceConfiguration.pendingAddonUrls,
+            usenetConfiguration = Json.encodeToString(sourceConfiguration.usenetSources).sha256(),
         ),
         searchMode = when {
             continuePluginOnly -> "continuePluginOnly"
@@ -374,6 +397,11 @@ class StreamRepositoryImpl @Inject constructor(
             val groupPluginsByRepository = pluginsEnabled && pluginManager.groupStreamsByRepository.first()
             val pluginRepositories = if (groupPluginsByRepository) pluginManager.repositories.first() else emptyList()
             val debridSettings = debridSettingsDataStore.settings.first()
+            // Reading the sources decrypts them with the keystore: keep it off the collector's thread.
+            // Store builds never search Usenet (AppFeaturePolicy.usenetEnabled = false in playstore).
+            val usenetSources = if (!AppFeaturePolicy.usenetEnabled) UsenetSourceConfiguration()
+                else withContext(Dispatchers.IO) { runCatching { usenetSourceSettings.read(profileId) } }
+                    .getOrDefault(UsenetSourceConfiguration())
 
             if (profileManager.activeProfileId.value != profileId) continue
 
@@ -385,7 +413,8 @@ class StreamRepositoryImpl @Inject constructor(
                 enabledScrapers = enabledScrapers,
                 groupPluginsByRepository = groupPluginsByRepository,
                 pluginRepositories = pluginRepositories,
-                debridSettings = debridSettings
+                debridSettings = debridSettings,
+                usenetSources = usenetSources
             )
         }
     }
@@ -400,6 +429,7 @@ class StreamRepositoryImpl @Inject constructor(
         pendingAddonUrls: Set<String>,
         forceRefresh: Boolean,
         debridSettings: DebridSettings,
+        usenetSources: UsenetSourceConfiguration,
         hasCompatiblePlugins: Boolean,
         serverSources: List<ServerStreamSource>,
         priorityBingeGroup: String?,
@@ -423,11 +453,12 @@ class StreamRepositoryImpl @Inject constructor(
             }
 
             // Convert IMDB ID to TMDB ID if needed for plugins
-            val tmdbId = if (hasCompatiblePlugins) tmdbService.ensureTmdbId(videoId, type) else null
-            Log.d(TAG, LogRedaction.text("Video ID: $videoId -> TMDB ID: $tmdbId (type: $type)"))
-            val pluginRequest = if (!hasCompatiblePlugins) null else buildPluginRequest(tmdbId, type, videoId)
+            // Upstream 8e58b554f (restored in sync 17): the plugin lane resolves its TMDB id INSIDE its own
+            // job, so add-on results never wait for that lookup.
+            val pluginLaneEnabled = hasCompatiblePlugins
             val attemptedAddonNames = (streamAddons.map { it.displayName } + serverSources.map { it.name } +
-                pendingAddonUrls.map { context.getString(R.string.stream_discovering_source) }).toMutableList()
+                pendingAddonUrls.map { context.getString(R.string.stream_discovering_source) } +
+                (if (usenetSources.ready) listOf(BuiltInUsenetService.GROUP_NAME) else emptyList())).toMutableList()
             val attemptedFailures = java.util.Collections.synchronizedList(
                 mutableListOf<StreamAttemptFailure>()
             )
@@ -455,17 +486,18 @@ class StreamRepositoryImpl @Inject constructor(
             val sourceMatchGroups = if (type == "movie" || type == "series") sourceStreams.matchSourceGroups(type) else emptyList()
 
             attemptedAddonNames += xtreamMatchTargets.map { it.name } + sourceMatchGroups.map { it.addonName }
-            if (pluginRequest != null) attemptedAddonNames += context.getString(R.string.stream_plugins_lane_label)
+            if (pluginLaneEnabled) attemptedAddonNames += context.getString(R.string.stream_plugins_lane_label)
             coroutineScope {
                 // Channel to receive results as they complete
                 val resultChannel = Channel<AddonStreams>(Channel.UNLIMITED)
 
                 // Track number of pending jobs
                 val totalJobs = streamAddons.size + pendingAddonUrls.size +
-                    (if (pluginRequest != null) 1 else 0) +
+                    (if (pluginLaneEnabled) 1 else 0) +
                     xtreamMatchTargets.size +
                     sourceMatchGroups.size +
-                    serverSources.size
+                    serverSources.size +
+                    1 // built-in Usenet job (finishes at once when not configured)
                 val completedJobs = java.util.concurrent.atomic.AtomicInteger(0)
 
                 // B63: the IPTV jobs wait past their budget only while these (addon + plugin)
@@ -476,6 +508,29 @@ class StreamRepositoryImpl @Inject constructor(
                 if (nonIptvJobs == 0) othersSettled.complete()
                 fun markNonIptvDone() {
                     if (nonIptvDone.incrementAndGet() >= nonIptvJobs) othersSettled.complete()
+                }
+
+                launch {
+                    try {
+                        if (!usenetSources.ready) return@launch
+                        builtInUsenetService.search(usenetSources, type, videoId, season, episode).collect { result ->
+                            result.group?.let { resultChannel.send(it) }
+                            result.failure?.let {
+                                attemptedFailures += StreamAttemptFailure(BuiltInUsenetService.GROUP_NAME,
+                                    StreamFailureKind.REQUEST_FAILED, it)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Like addon jobs: a failure here must not cancel the sibling searches.
+                        if (e is CancellationException) throw e
+                        Log.e(TAG, "Built-in Usenet search failed: ${e.javaClass.simpleName}")
+                        attemptedFailures += StreamAttemptFailure(BuiltInUsenetService.GROUP_NAME,
+                            StreamFailureKind.REQUEST_FAILED,
+                            context.getString(com.nuvio.tv.R.string.stream_error_detail_addon_request_failed))
+                    } finally {
+                        markNonIptvDone()
+                        if (completedJobs.incrementAndGet() >= totalJobs) resultChannel.close()
+                    }
                 }
 
                 // Launch addon jobs
@@ -709,7 +764,7 @@ class StreamRepositoryImpl @Inject constructor(
                 }
 
                 // Launch plugin jobs if we have a supported plugin id - each scraper sends its own result
-                if (pluginRequest != null) {
+                if (pluginLaneEnabled) {
                     // Counted exactly once however the lane ends (callback, catch, finally): a second count
                     // would close the channel while another lane is still sending and settle othersSettled early.
                     val pluginLane = OnceLane {
@@ -723,6 +778,10 @@ class StreamRepositoryImpl @Inject constructor(
                             // Stream plugins individually. NOT under a lane deadline: PluginManager owns the
                             // per-scraper budget (120 s), the preferred-first stagger and the 10-slot queue, all
                             // of which exceed any single lane deadline.
+                            val tmdbId = tmdbService.ensureTmdbId(videoId, type)
+                            Log.d(TAG, LogRedaction.text("Video ID: $videoId -> TMDB ID: $tmdbId (type: $type)"))
+                            // No id a plugin can use: the lane ends (finally) with nothing to send.
+                            val pluginRequest = buildPluginRequest(tmdbId, type, videoId) ?: return@launch
                             val (pluginSeason, pluginEpisode) = resolvePluginSeasonEpisode(
                                 videoId = videoId,
                                 season = season,
@@ -795,7 +854,8 @@ class StreamRepositoryImpl @Inject constructor(
         pluginRepositories: List<PluginRepository>,
         debridPresentationConfiguration: String,
         serverRevision: Int,
-        pendingAddonUrls: Set<String> = emptySet()
+        pendingAddonUrls: Set<String> = emptySet(),
+        usenetConfiguration: String = ""
     ): String = buildString {
         append("addons:")
         addons.forEach { addon ->
@@ -812,6 +872,7 @@ class StreamRepositoryImpl @Inject constructor(
             }
         }
         append("|debrid:").append(debridPresentationConfiguration)
+        append("|usenet:").append(usenetConfiguration)
         append("|servers:").append(serverRevision)
         pendingAddonUrls.sorted().forEach { append("|pending:").append(it) }
     }.sha256()
@@ -880,7 +941,8 @@ class StreamRepositoryImpl @Inject constructor(
         if (existingIndex >= 0) {
             val existing = accumulatedResults[existingIndex]
             val merged = existing.copy(
-                streams = mergeStreams(existing.streams, result.streams)
+                streams = if (result.addonName == BuiltInUsenetService.GROUP_NAME && result.streams.all { it.isUsenet() }) result.streams
+                    else mergeStreams(existing.streams, result.streams)
             )
             accumulatedResults[existingIndex] = presentStreams(merged, debridSettings)
         } else {

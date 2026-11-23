@@ -172,6 +172,21 @@ internal object PlayerPlaybackNetworking {
         }
     }
 
+    internal fun withHttp2On403Fallback(
+        http1Client: OkHttpClient,
+        singleUseLink: Boolean = false,
+        playlistDnsInUse: Boolean = false,
+    ): OkHttpClient {
+        // Same client (same interceptors, pool and dispatcher) but allowed to negotiate HTTP/2.
+        // It does not contain the retry interceptor below, so it cannot loop.
+        val http2Client = http1Client.newBuilder()
+            .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+            .build()
+        return http1Client.newBuilder()
+            .addInterceptor(Http2On403Interceptor(http2Client, singleUseLink, playlistDnsInUse))
+            .build()
+    }
+
     /**
      * [dns]: the IPTV playlist's own resolver (DNS-over-HTTPS) for its VOD; null keeps the default
      * IPv4-first system DNS.
@@ -205,14 +220,7 @@ internal object PlayerPlaybackNetworking {
             .build()
         if (proxyHeaders.isEmpty()) return http1Client
 
-        // Same client (same proxyHeaders network interceptor, pool and dispatcher) but allowed to
-        // negotiate HTTP/2. It does not contain the retry interceptor below, so it cannot loop.
-        val http2Client = http1Client.newBuilder()
-            .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
-            .build()
-        return http1Client.newBuilder()
-            .addInterceptor(Http2On403Interceptor(http2Client, singleUseLink, playlistDnsInUse = dns != null))
-            .build()
+        return withHttp2On403Fallback(http1Client, singleUseLink, playlistDnsInUse = dns != null)
     }
 
     @UnstableApi

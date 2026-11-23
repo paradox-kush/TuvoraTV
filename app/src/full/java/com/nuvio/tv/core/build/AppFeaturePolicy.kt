@@ -16,5 +16,9 @@ object AppFeaturePolicy {
     val p2pEnabled: Boolean = true
     val debridEnabled: Boolean = true
     val addonStreamSourcesEnabled: Boolean = true
+    // Built-in Usenet (GPL-3 sidecar engine + LAN setup server): GitHub builds only.
+    val usenetEnabled: Boolean = true
+    // Audio-based subtitle sync (on-device speech model): GitHub builds only until measured on a 2 GB box.
+    val audioSubtitleSyncEnabled: Boolean = true
     val debugBackendSwitcherEnabled: Boolean = BuildConfig.IS_DEBUG_BUILD
 }

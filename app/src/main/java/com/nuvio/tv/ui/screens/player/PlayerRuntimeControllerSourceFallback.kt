@@ -78,7 +78,8 @@ internal fun PlayerRuntimeController.showErrorUnlessSourceFallback(errorMessage:
 internal fun PlayerRuntimeController.tryFallbackToNextSourceAfterError(errorMessage: String): Boolean {
     if (sourceFallbackJob?.isActive == true) return true
     if (!streamAutoPlayFallbackActive || autoSwitchInternalPlayerOnErrorEnabled) return false
-    if (hasRenderedFirstFrame) return false
+    // Upstream (44549e9a0): a tunneled first frame that never really rendered may still fall back.
+    if (hasRenderedFirstFrame && !tunneledFirstFrameAssumed) return false
     // Fork: IPTV / Stalker, catch-up, matched IPTV copies and single-use links keep their own bounded reconnect.
     if (!SourceFallbackEligibility.mayFallBackFrom(
             iptvId = iptvClassifier?.refreshableIptvId(listOf(currentVideoId, contentId)),

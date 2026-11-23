@@ -566,9 +566,6 @@
     <string name="account_error_not_authenticated">Please sign in first.</string>
     <string name="account_error_service_unavailable">Service unavailable. Please try again later.</string>
     <string name="account_error_invalid_request">Invalid request. Please check your input.</string>
-    <string name="device_sources_error_signed_out">You are signed out. Sign in again to sync your sources.</string>
-    <string name="device_sources_error_timed_out">Your account took too long to answer. Check your connection and retry.</string>
-    <string name="device_sources_error_unreachable">Could not reach your account. Retry.</string>
     <string name="account_error_unexpected">An unexpected error occurred.</string>
     <string name="experience_mode_switch_to_essential">Switch to Essential</string>
     <string name="experience_mode_switch_to_essential_subtitle">Hide advanced setup surfaces without changing your saved values.</string>
@@ -596,6 +593,8 @@
     <string name="advanced_section_diagnostics">Diagnostics</string>
     <string name="advanced_sentry_reports">Crash &amp; usage reports</string>
     <string name="advanced_sentry_reports_subtitle">Send crash, ANR and anonymous usage reports with safe context. On by default — turn it off to stop sending anything from this device.</string>
+    <string name="advanced_playback_issue_reports">Playback issue reports</string>
+    <string name="advanced_playback_issue_reports_subtitle">Show report buttons during playback, long loading, and playback errors</string>
     <string name="advanced_player_stats_hud">Playback stats overlay</string>
     <string name="advanced_player_stats_hud_subtitle">Show a button in stream info to toggle live cpu, memory, buffer, bitrate and thermal readings during playback</string>
     <string name="sentry_enable_dialog_title">Turn on crash reports?</string>
@@ -628,6 +627,8 @@
     <string name="advanced_nuvio_focus_scroll_subtitle">Use Tuvora\'s custom global focus scroll animation and positioning.</string>
     <string name="advanced_rgb565">RGB565 image decoding</string>
     <string name="advanced_rgb565_subtitle">Use lower-memory 16-bit color for eligible opaque images. Changing this restarts the app.</string>
+    <string name="advanced_hardware_bitmaps">Hardware image decoding</string>
+    <string name="advanced_hardware_bitmaps_subtitle">Keep decoded images only in graphics memory. Uses less RAM, but loading new images can stutter on weaker GPUs.</string>
     <string name="advanced_memory_only_vertical_scroll">Memory-only Vertical Scrolling</string>
     <string name="advanced_memory_only_vertical_scroll_subtitle">Skip disk and network image requests while vertically scrolling home rows.</string>
     <string name="advanced_compose_highlighter">Compose Highlighter</string>
@@ -654,6 +655,7 @@
     <string name="settings_mdblist_subtitle">External ratings providers</string>
     <string name="settings_animeskip_subtitle">Anime intro/outro skip timestamps</string>
     <string name="settings_debrid_subtitle">Experimental cloud account sources</string>
+    <string name="settings_usenet_subtitle">Providers, indexers, playback and diagnostics</string>
 
     <string name="playback_title">Playback Settings</string>
     <string name="playback_subtitle">Configure video playback and subtitle options</string>
@@ -1338,7 +1340,7 @@
     <string name="mdblist_show_on_hero_title">Use Ratings on Hero</string>
     <string name="mdblist_show_on_hero_subtitle">Show MDBList ratings on hero carousel (modern and classic/grid)</string>
     <string name="mdblist_rating_order_title">Rating Order</string>
-    <string name="mdblist_rating_order_subtitle">First 3 enabled and available ratings are shown on the modern hero. Use arrows to reorder.</string>
+    <string name="mdblist_rating_order_subtitle">First 3 enabled and available ratings are shown on the modern hero. Use the reorder button to change their order.</string>
     <string name="mdblist_dialog_title">MDBList API Key</string>
     <string name="mdblist_dialog_subtitle">Enter your API key to fetch external ratings</string>
     <string name="mdblist_dialog_placeholder">Enter MDBList API key</string>
@@ -1854,6 +1856,9 @@
     <string name="catalog_order_disabled_on_home">Disabled on Home</string>
     <string name="catalog_order_enable">Enable</string>
     <string name="catalog_order_disable">Disable</string>
+    <string name="catalog_order_pinned">Pinned</string>
+    <string name="catalog_order_pinned_to_top">Pinned to top</string>
+    <string name="catalog_order_pin_to_move_toast">Remove pin to top from collection to move</string>
 
 
     <string name="stream_retry">Retry</string>
@@ -2070,6 +2075,7 @@
     <string name="subtitle_off">Off</string>
     <string name="subtitle_style_title">Subtitle Style</string>
     <string name="subtitle_style_customize">Customize</string>
+    <string name="subtitle_style_customize_ass">Customize ASS/SSA styling</string>
     <string name="subtitle_style_color">Color</string>
     <string name="subtitle_style_reset">Reset</string>
     <string name="subtitle_style_font_size">Font Size</string>
@@ -2142,7 +2148,6 @@
     <string name="search_voice_failed">Voice recognition failed. Try again.</string>
     <string name="search_voice_unavailable">Voice search is unavailable on this device.</string>
     <string name="search_no_results_title">No Results</string>
-    <string name="search_iptv_scope_empty">No IPTV matches for the selected types.</string>
     <string name="search_no_results_subtitle">Try searching with different keywords</string>
     <string name="search_error_no_catalogs">No searchable catalogs found in installed addons</string>
 
@@ -2457,6 +2462,7 @@
     <string name="cast_detail_error">Something went wrong</string>
     <string name="cast_detail_retry">Retry</string>
     <string name="cast_detail_filmography">Filmography</string>
+    <string name="cast_detail_filter_all">All</string>
     <string name="cast_detail_born">Born: %1$s</string>
     <string name="cast_detail_born_died">Born: %1$s — †%2$s</string>
     <string name="cast_detail_age">age %1$d</string>
@@ -2544,13 +2550,10 @@
     <string name="update_close">Close</string>
     <string name="update_open_settings">Open Settings</string>
     <string name="update_install">Install</string>
-    <string name="update_opening_installer">Opening installer…</string>
     <string name="update_ignore">Ignore</string>
 
     <!-- Update flow errors -->
     <string name="update_error_check_failed">Update check failed</string>
-    <string name="update_error_rate_limited">GitHub is limiting update checks from your network. Try again in %1$d min.</string>
-    <string name="update_error_forbidden">GitHub refused the update check (HTTP 403). Try again later or switch networks.</string>
     <string name="update_error_download_failed">Download failed</string>
     <string name="update_error_apk_missing">Downloaded file is missing</string>
 
@@ -2580,6 +2583,10 @@
     <string name="plugin_repo_added_with_providers">Added %1$s with %2$d providers</string>
     <string name="plugin_repo_removed">Repository removed</string>
     <string name="plugin_repo_refreshed">Repository refreshed</string>
+    <string name="plugin_repo_delete_confirm_title">Delete repository?</string>
+    <string name="plugin_repo_delete_confirm_message">Are you sure you want to delete it?</string>
+    <string name="plugin_repo_delete_no">No</string>
+    <string name="plugin_repo_delete_yes">Yes</string>
 
     <!-- Trakt errors -->
 
@@ -2650,6 +2657,7 @@
     <string name="cd_loading_logo">Loading logo</string>
     <string name="cd_move_up">Move up</string>
     <string name="cd_move_down">Move down</string>
+    <string name="cd_reorder">Reorder</string>
     <string name="cd_edit">Edit</string>
     <string name="cd_delete">Delete</string>
     <string name="cd_qr_code">QR Code</string>
@@ -2664,7 +2672,6 @@
     <string name="cd_emoji_option">Emoji %1$s</string>
     <string name="cd_trailer_controls">Trailer controls</string>
     <string name="cd_seek_bar">Seek bar</string>
-    <string name="player_replay_not_seekable">This provider\'s replays can\'t be skipped</string>
     <string name="cd_unlink">Unlink</string>
     <string name="cd_nuvio_logo">Tuvora</string>
     <string name="cd_trakt_logo">Trakt Logo</string>
@@ -2705,10 +2712,6 @@
     <string name="collections_import_no_data">No data to import</string>
     <string name="collections_import_invalid_or_empty">Invalid format or empty collections</string>
     <string name="collections_import_file_not_found_downloads">File not found in Downloads.\nExport collections first to create it.</string>
-    <!-- B09: Android 10+ lets an app read only the Downloads files it created itself. -->
-    <string name="collections_import_file_own_export_only">Couldn\'t open nuvio-collections.json.\nThis TV only lets Tuvora read a copy it exported here itself. A file copied into Downloads from a phone, computer or browser can\'t be opened. Use From URL instead.</string>
-    <!-- B09: below Android 10 the app holds no storage permission at all. -->
-    <string name="collections_import_file_unavailable">This TV doesn\'t let Tuvora read files from Downloads.\nUse From URL instead.</string>
     <string name="collections_import_failed_read_file">Failed to read file: %1$s</string>
     <string name="collections_cancel">Cancel</string>
     <string name="collections_mode_paste">Paste JSON</string>
@@ -2726,10 +2729,21 @@
     <string name="collections_valid_summary">%1$d collection(s), %2$d folder(s)</string>
     <string name="collections_confirm_import">Confirm Import</string>
     <string name="collections_folder_count">%1$d folder(s)</string>
+    <string name="collections_pinned">Pinned</string>
 
     <!-- Collection Editor -->
     <string name="collections_editor_row_title">Row Title</string>
     <string name="collections_editor_save">Save</string>
+    <string name="collections_editor_unsaved_title">Save changes?</string>
+    <string name="collections_editor_unsaved_subtitle">You have unsaved changes to this collection.</string>
+    <string name="collections_editor_unsaved_incomplete_title">Unsaved changes</string>
+    <string name="collections_editor_unsaved_missing_title_and_folder">Enter a title and add at least one folder to save this collection.</string>
+    <string name="collections_editor_unsaved_missing_title">Enter a collection title to save your changes.</string>
+    <string name="collections_editor_unsaved_missing_folder">Add at least one folder to save this collection.</string>
+    <string name="collections_editor_folder_unsaved_title">Save folder changes?</string>
+    <string name="collections_editor_folder_unsaved_subtitle">You have unsaved changes to this folder.</string>
+    <string name="collections_editor_folder_unsaved_incomplete_title">Unsaved folder changes</string>
+    <string name="collections_editor_folder_unsaved_missing_source">Add at least one source to save this folder.</string>
     <string name="collections_editor_backdrop">Backdrop Image</string>
     <string name="collections_editor_pin_above">Pin Above Catalogs</string>
     <string name="collections_editor_pin_above_desc">Show this collection above all regular home catalogs. Multiple pinned collections follow collection creation order.</string>
@@ -3029,12 +3043,9 @@
     <string name="player_error_stream_rate_limited">\n\nToo many requests to the stream source. Wait a moment and try again.</string>
     <string name="player_error_stream_unavailable">\n\nThe stream server is currently unavailable. Try a different source.</string>
     <string name="player_error_source_invalid_content">Source error: The stream source returned invalid or unplayable content. The link may have expired or the server returned an error page instead of video.\n\nTry a different source. [%1$s]</string>
-    <string name="player_error_catchup_no_answer">The provider didn’t start this replay in time. Press Retry to try again, or go back and pick another programme.</string>
     <string name="player_error_decoder">Decoder error</string>
     <string name="player_error_unsupported_format">This stream uses a format your device may not support. Try a different source. [%1$s]</string>
     <string name="player_error_initialize_failed">Failed to initialize player</string>
-    <string name="player_error_offline">No internet connection. Check your network; playback will retry when it is back, or press Retry.</string>
-    <string name="player_error_start_timeout">This stream didn\'t start in time. It may be slow, or its video output failed to start. Retry, or pick another source.</string>
     <string name="player_error_mpv_surface_failed">Failed to initialize libmpv surface</string>
     <string name="player_error_mpv_playback_failed">Failed to initialize libmpv playback</string>
     <string name="player_error_torrent">Torrent error: %1$s</string>
@@ -3479,6 +3490,14 @@
     <string name="stream_test_video_bitrate">Average Video Bitrate: %1$s</string>
     <string name="stream_test_error_connection">Connection failed. The last played stream link may have expired or is unreachable. Please play the video again and retry.</string>
 
+    <string name="player_finding_next_stream">Finding the next stream…</string>
+    <string name="player_trying_next_stream">Trying next stream (attempt %1$d)…</string>
+    <string name="player_stream_fallback_exhausted">No more working streams. Choose another source or retry.</string>
+    <string name="usenet_builtin_addon_title">Built-in Usenet</string>
+    <string name="usenet_builtin_addon_desc">Results from your own NNTP providers and Newznab indexers. Move it to choose where they are listed.</string>
+    <string name="usenet_fallback">Automatic Usenet fallback</string>
+    <string name="usenet_fallback_description">If a Usenet stream fails, try following Usenet sources up to your configured attempt limit. Torrent and other streams never switch automatically.</string>
+
     <string name="random_episode_title">Shuffle</string>
     <string name="layout_random_episode_sub">Shuffle episodes from any series. Turning this off pauses shuffle.</string>
     <string name="random_episode_unwatched">Unwatched episodes</string>
@@ -3510,10 +3529,38 @@
     <string name="autosync_tolerance_value">%1$d ms</string>
     <string name="autosync_thorough_title">Thorough Auto Sync Search</string>
     <string name="autosync_thorough_description">Keep comparing other subtitles and embedded tracks for a closer match before syncing. When off, the first strong match is used sooner. Only confident matches are ever applied.</string>
-    <string name="autosync_toast_no_fit">Sync failed: these subtitles don\'t match this version of the video.</string>
     <string name="autosync_label_synced">Auto synced</string>
+    <string name="autosync_status_title">Auto Sync Status</string>
+    <string name="autosync_status_synced">Synced</string>
+    <string name="autosync_status_not_needed">Not needed</string>
+    <string name="autosync_status_in_progress">In progress</string>
+    <string name="autosync_status_no_fit">May not match</string>
+    <string name="autosync_status_no_reference">No embedded subtitles</string>
+    <string name="autosync_status_failed">Failed</string>
     <string name="stream_resume_from_time">Resume from %1$s</string>
     <string name="stream_resume_from_percent">Resume from %1$d%%</string>
+    <string name="player_disc_titles">Disc titles</string>
+    <string name="player_disc_title_feature">Feature · %1$d min</string>
+    <string name="player_disc_title_extra">Extra · %1$d min</string>
+    <string name="player_disc_title_subtitles">Subtitles %1$s</string>
+    <string name="player_disc_title_failed">This title could not be played</string>
+    <plurals name="player_disc_title_clips">
+        <item quantity="one">%d clip</item>
+        <item quantity="other">%d clips</item>
+    </plurals>
+    <string name="device_sources_error_signed_out">You are signed out. Sign in again to sync your sources.</string>
+    <string name="device_sources_error_timed_out">Your account took too long to answer. Check your connection and retry.</string>
+    <string name="device_sources_error_unreachable">Could not reach your account. Retry.</string>
+    <string name="search_iptv_scope_empty">No IPTV matches for the selected types.</string>
+    <string name="update_opening_installer">Opening installer…</string>
+    <string name="update_error_rate_limited">GitHub is limiting update checks from your network. Try again in %1$d min.</string>
+    <string name="update_error_forbidden">GitHub refused the update check (HTTP 403). Try again later or switch networks.</string>
+    <string name="player_replay_not_seekable">This provider\'s replays can\'t be skipped</string>
+    <string name="collections_import_file_own_export_only">Couldn\'t open nuvio-collections.json.\nThis TV only lets Tuvora read a copy it exported here itself. A file copied into Downloads from a phone, computer or browser can\'t be opened. Use From URL instead.</string>
+    <string name="collections_import_file_unavailable">This TV doesn\'t let Tuvora read files from Downloads.\nUse From URL instead.</string>
+    <string name="player_error_catchup_no_answer">The provider didn’t start this replay in time. Press Retry to try again, or go back and pick another programme.</string>
+    <string name="player_error_offline">No internet connection. Check your network; playback will retry when it is back, or press Retry.</string>
+    <string name="player_error_start_timeout">This stream didn\'t start in time. It may be slow, or its video output failed to start. Retry, or pick another source.</string>
     <string name="player_zoom_title">Manual zoom</string>
     <string name="player_zoom_both">Zoom</string>
     <string name="player_zoom_width">Width</string>
@@ -3661,7 +3708,6 @@
     <string name="iptv_guide_search_row">Search channels</string>
     <string name="iptv_guide_no_guide_group">This playlist sent no guide.</string>
     <string name="iptv_guide_fix_guide">Fix guide</string>
-    <!-- Pin suggestion line (Live TV guide): the channels you keep coming back to are listed first. -->
     <plurals name="iptv_pin_suggestion_line">
         <item quantity="one">You keep coming back to this channel. It is listed first.</item>
         <item quantity="other">You keep coming back to these %1$d. They are listed first.</item>
@@ -3678,7 +3724,6 @@
     <string name="iptv_pin_suggestion_not_now_sub">Ask again in 2 weeks.</string>
     <string name="iptv_pin_suggestion_stop">Stop suggesting</string>
     <string name="iptv_pin_suggestion_stop_sub">Turn it back on in IPTV playlists settings.</string>
-    <!-- IPTV playlists settings: the suggestion's switch and the play counts behind it. -->
     <string name="iptv_pin_settings_section">Suggestions</string>
     <string name="iptv_pin_settings_switch">Suggest channels to pin</string>
     <string name="iptv_pin_settings_switch_sub">When you keep returning to the same channels, offer to pin them.</string>
@@ -3688,7 +3733,6 @@
     <string name="iptv_pin_settings_clear_value">Clear</string>
     <string name="iptv_pin_settings_cleared">Cleared</string>
     <string name="iptv_pin_settings_privacy">Play counts stay on this device. They are not synced or sent anywhere.</string>
-    <!-- B11 (IPTV redesign 2026-11-15): every empty view names its cause and holds one action. -->
     <string name="iptv_guide_empty_favorites_title">No favourites yet</string>
     <string name="iptv_guide_empty_recent_title">Nothing watched yet</string>
     <string name="iptv_guide_empty_recent_fact">Channels you watch show up here, newest first.</string>
@@ -3701,17 +3745,14 @@
     <string name="iptv_guide_empty_clear_search">Clear search</string>
     <string name="iptv_guide_empty_pick_group">Pick another group</string>
     <string name="iptv_guide_playlist_settings">Playlist settings</string>
-    <!-- Redesign change 7 + B1: number entry readout. -->
     <string name="iptv_number_match">%1$s · %2$s</string>
     <string name="iptv_number_no_match">No channel %1$s</string>
     <string name="iptv_number_no_previous">No previous channel</string>
     <string name="iptv_number_previous">Previous channel</string>
     <string name="iptv_number_previous_named">Back to %1$s · %2$s</string>
-    <!-- Redesign change 4: the zap banner while surfing a single-use playlist. -->
     <string name="iptv_zap_surf_still_watching">Still watching %1$s</string>
     <string name="iptv_zap_surf_switch_to">Switch to %1$s?</string>
     <string name="iptv_zap_surf_hint">OK tunes now · Back cancels</string>
-    <!-- Redesign change 3: the channel options panel. -->
     <string name="iptv_panel_watch_fullscreen">Watch full screen</string>
     <string name="iptv_panel_open_guide">Open the guide</string>
     <string name="iptv_panel_open_guide_sub">The picture keeps playing in the preview.</string>
@@ -3723,9 +3764,7 @@
     <string name="iptv_panel_section_guide">Guide</string>
     <string name="iptv_panel_section_tidy">Tidy</string>
     <string name="iptv_panel_section_info">Info</string>
-    <!-- Change 8: the shown group above the rows while the group column is closed. -->
     <string name="iptv_guide_group_label">%1$s · %2$d</string>
-    <!-- B12 / A7: the playful voice, quiet moments only; each quip sits beside a plain fact. -->
     <string name="iptv_voice_empty_favorites">Nothing starred yet. Your remote has commitment issues.</string>
     <string name="iptv_voice_empty_recent">No history yet. Your secret is safe.</string>
     <string name="iptv_voice_search_miss">No channel by that name. It may be hiding under a worse one.</string>
@@ -3734,15 +3773,12 @@
     <string name="iptv_voice_idle_preview">Quiet in here.</string>
     <string name="iptv_voice_no_guide">It forgot to pack one.</string>
     <string name="iptv_guide_idle_preview_fact">Press OK on a channel to watch it here.</string>
-    <!-- Change 10: the schedule pill. -->
     <string name="iptv_guide_schedule_pill">Schedule · %1$s %2$s · Back = now</string>
-    <!-- Change 15: Guide options. -->
     <string name="iptv_guide_options">Guide options</string>
     <string name="iptv_guide_options_opening">When the guide opens</string>
     <string name="iptv_guide_options_resume">Resume the last channel</string>
     <string name="iptv_guide_options_resume_off">Off: opening the guide plays nothing and spends no connection.</string>
     <string name="iptv_guide_options_resume_on">On: the last channel plays in the preview when the guide opens.</string>
-    <!-- B4: captions in the group column. -->
     <string name="iptv_guide_recent_groups">Recent groups</string>
     <string name="iptv_guide_all_groups">Groups</string>
     <string name="iptv_guide_history_loading">Loading this channel’s schedule…</string>
@@ -3966,8 +4002,6 @@
     <string name="iptv_guide_size_standard">Standard</string>
     <string name="iptv_guide_size_large">Large</string>
     <string name="iptv_guide_size_current">Current</string>
-
-    <!-- Recordings (catch-up saves). Plain words; a problem never shows an exception message or a host. -->
     <string name="rec_screen_title">Recordings</string>
     <string name="rec_hub_chip">Recordings</string>
     <string name="rec_hint_may_start_late">This device may start scheduled recordings a little late.</string>
@@ -4007,7 +4041,6 @@
     <string name="rec_problem_unsupported_format">This provider only offers HLS replay, which can’t be saved yet.</string>
     <string name="rec_problem_live_pending">Recording live TV isn’t available on this device yet.</string>
     <string name="rec_problem_unknown">Something went wrong while saving it.</string>
-    <!-- Guide programme sheet -->
     <string name="rec_sheet_record">Record</string>
     <string name="rec_sheet_record_series">Record series</string>
     <string name="rec_sheet_cancel">Cancel recording</string>
@@ -4019,7 +4052,6 @@
     <string name="rec_note_needs_catch_up">Can’t record this: the channel keeps no catch-up, and recording live isn’t available on this device yet.</string>
     <string name="rec_note_programme_over">Too late to record this: the provider no longer keeps it.</string>
     <string name="rec_badge">REC</string>
-    <!-- Confirmations (they say what will really happen) -->
     <string name="rec_notice_set">Recording set: %1$s</string>
     <string name="rec_notice_late">Recording set: %1$s. It may start a little late. If it can’t start in the background, it saves the next time you open Tuvora.</string>
     <string name="rec_notice_next_open">%1$s will be saved the next time you open Tuvora after it ends.</string>
@@ -4044,8 +4076,6 @@
         <item quantity="one">Series recording set: %2$d airing of %1$s. It may start a little late; if it can’t start in the background, it saves the next time you open Tuvora.</item>
         <item quantity="other">Series recording set: %2$d airings of %1$s. They may start a little late; if they can’t start in the background, they save the next time you open Tuvora.</item>
     </plurals>
-
-    <!-- Calendar + new-episode reminders -->
     <string name="nav_calendar">Calendar</string>
     <string name="calendar_title">Calendar</string>
     <string name="calendar_view_list">List</string>
@@ -4115,7 +4145,6 @@
     <string name="calendar_game_live">Live</string>
     <string name="calendar_game_final">FT</string>
     <string name="calendar_game_postponed">Postponed</string>
-    <!-- Multiview (several live channels on one screen) -->
     <string name="multiview_title">Multiview</string>
     <string name="multiview_entry">Multiview</string>
     <string name="multiview_empty_tile">Empty tile</string>
@@ -4195,7 +4224,6 @@
     <string name="multiview_notice_on_screen">%1$s is already on screen. Here it is.</string>
     <string name="multiview_notice_leave_guard">Press Back again to leave Multiview</string>
     <string name="iptv_guide_add_to_multiview">Add to Multiview</string>
-    <!-- Home: Recent Channels row and Reorder Home sections -->
     <string name="home_recent_channels">Recent Channels</string>
     <string name="home_live_badge">Live</string>
     <string name="home_order_title">Reorder Home</string>

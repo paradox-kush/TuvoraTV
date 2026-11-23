@@ -135,6 +135,8 @@ class FolderDetailViewModel @Inject constructor(
     private val trailerService: TrailerService,
     private val tmdbCollectionSourceResolver: TmdbCollectionSourceResolver,
     private val traktPublicListSourceResolver: TraktPublicListSourceResolver,
+    private val trailerPlayerPool: com.nuvio.tv.core.player.TrailerPlayerPool,
+    private val backgroundTrailerController: com.nuvio.tv.core.player.BackgroundTrailerController,
     val posterOptions: com.nuvio.tv.ui.components.posteroptions.PosterOptionsController
 ) : ViewModel() {
 
@@ -158,6 +160,8 @@ class FolderDetailViewModel @Inject constructor(
     val trailerPreviewAudioUrls: StateFlow<Map<String, String>> = _trailerPreviewAudioUrls.asStateFlow()
     private val trailerPreviewLoadingIds = mutableSetOf<String>()
     private val trailerPreviewNegativeCache = mutableSetOf<String>()
+    private val trailerPreviewYoutubeKeys = mutableMapOf<String, String>()
+    private var continueTrailerInDetails = false
     private val modernCarouselRowBuildCache = ModernCarouselRowBuildCache()
     private var activeTrailerPreviewItemId: String? = null
     private var trailerPreviewRequestVersion: Long = 0L
@@ -197,6 +201,11 @@ class FolderDetailViewModel @Inject constructor(
         observeWatchedStatusCombined()
         viewModelScope.launch {
             mdbListSettingsDataStore.settings.distinctUntilChanged().collect { currentMdbListSettings = it }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.focusedPosterTrailerContinueInDetails.collect { enabled ->
+                continueTrailerInDetails = enabled
+            }
         }
     }
 
@@ -1523,8 +1532,11 @@ class FolderDetailViewModel @Inject constructor(
                     }
                     _trailerPreviewUrls.update { it - itemId }
                     _trailerPreviewAudioUrls.update { it - itemId }
+                    trailerPreviewYoutubeKeys.remove(itemId)
                 } else {
                     _trailerPreviewUrls.update { it + (itemId to resolvedSource.videoUrl) }
+                    resolvedSource.youtubeKey?.let { trailerPreviewYoutubeKeys[itemId] = it }
+                        ?: trailerPreviewYoutubeKeys.remove(itemId)
                     val audioUrl = resolvedSource.audioUrl
                     if (audioUrl.isNullOrBlank()) {
                         _trailerPreviewAudioUrls.update { it - itemId }
@@ -1536,6 +1548,20 @@ class FolderDetailViewModel @Inject constructor(
                 trailerPreviewLoadingIds.remove(itemId)
             }
         }
+    }
+
+    fun beginTrailerHandoff(itemId: String) {
+        if (!continueTrailerInDetails) return
+        val videoUrl = _trailerPreviewUrls.value[itemId] ?: return
+        val audioUrl = _trailerPreviewAudioUrls.value[itemId]
+        val youtubeKey = trailerPreviewYoutubeKeys[itemId]
+        if (backgroundTrailerController.beginTransfer(itemId, videoUrl, audioUrl, youtubeKey)) return
+        trailerPlayerPool.beginHandoff(
+            itemId = itemId,
+            videoUrl = videoUrl,
+            audioUrl = audioUrl,
+            youtubeKey = youtubeKey
+        )
     }
 
     private fun extractYear(releaseInfo: String?): String? {

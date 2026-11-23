@@ -62,6 +62,8 @@ class TraktLibraryService @Inject constructor(
     private val snapshotState = MutableStateFlow(Snapshot())
     private val refreshingState = MutableStateFlow(false)
     private val refreshMutex = Mutex()
+    private val refreshJobMutex = Mutex()
+    private var refreshJob: kotlinx.coroutines.Deferred<Boolean>? = null
     private var lastRefreshMs: Long = 0L
 
     private val cacheTtlMs = 60_000L
@@ -313,7 +315,29 @@ class TraktLibraryService @Inject constructor(
         refresh(force = false)
     }
 
+    /**
+     * Upstream Mobile 1e4157492, ported: an automatic caller ([ensureFresh], run by every observed list,
+     * tab and per-item membership) never queues behind a refresh already in flight - it would retain a
+     * waiter per caller while the network hangs, and, with nothing cached, each would then run its own
+     * full fetch in turn. A forced caller (profile switch, explicit refresh) waits for the running one and
+     * then fetches itself, so it never takes a result that started before its change (e.g. another profile's).
+     */
     private suspend fun refresh(force: Boolean): Boolean {
+        while (true) {
+            val (job, started) = refreshJobMutex.withLock {
+                val running = refreshJob?.takeIf { it.isActive }
+                when {
+                    running == null -> scope.async { refreshOnce(force) }.also { refreshJob = it } to true
+                    !force -> return true
+                    else -> running to false
+                }
+            }
+            if (started) return job.await()
+            job.join()
+        }
+    }
+
+    private suspend fun refreshOnce(force: Boolean): Boolean {
         val now = System.currentTimeMillis()
         return refreshMutex.withLock {
             if (!force && now - lastRefreshMs <= cacheTtlMs && snapshotState.value.updatedAtMs > 0L) {

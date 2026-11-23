@@ -871,7 +871,6 @@
 
 
     <string name="mdblist_title">MDBList-bedømmelser</string>
-    <string name="mdblist_subtitle">Konfigurér eksterne bedømmelser vist i detalje-hero</string>
     <string name="mdblist_enable_title">Aktivér MDBList-bedømmelser</string>
     <string name="mdblist_enable_subtitle">Hent bedømmelser fra eksterne udbydere i metadata-detaljesiden</string>
     <string name="mdblist_api_key_title">API-nøgle</string>
@@ -1676,6 +1675,7 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Indlæser\u2026</string>
     <string name="account_sync_description">Synkroniser dit bibliotek, seerfremskridt, addons og plugins på tværs af enheder.</string>
+    <string name="account_sync_restart_note">Synkronisering sker ikke i realtid på tværs af aktive enheder. Genstart denne enhed efter login, eller for at hente ændringer foretaget andetsteds.</string>
     <string name="account_signin_qr_title">Log ind med QR</string>
     <string name="account_signin_qr_subtitle">Scan en QR-kode og gennemfør e-mail-login på din telefon</string>
     <string name="account_signed_in_label">Logget ind</string>

@@ -16,6 +16,9 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.Properties
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import java.net.URI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 fun File.sha256(): String = inputStream().use { input ->
     val digest = MessageDigest.getInstance("SHA-256")
@@ -446,6 +449,13 @@ android {
         getByName("main") {
             jniLibs.srcDirs("src/main/jniLibs")
         }
+        // Tuvora: the built-in Usenet engine (GPL-3 sidecar + LAN setup server) ships only in the
+        // full (GitHub) flavor. Store builds neither package the binary nor expose the feature
+        // (AppFeaturePolicy.usenetEnabled = false in src/playstore).
+        getByName("full") {
+            jniLibs.srcDir(layout.buildDirectory.dir("generated/usenet/jniLibs"))
+            assets.srcDir(rootProject.file("native/usenet/licenses"))
+        }
     }
 
     testOptions {
@@ -468,6 +478,9 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            keepDebugSymbols += "**/libnuvio_usenet.so"
+            // Audio Sync uses the JNI API; these unused native APIs duplicate runtime code.
+            excludes += listOf("lib/*/libsherpa-onnx-c-api.so", "lib/*/libsherpa-onnx-cxx-api.so")
             // Keep one consistent native set across dependencies.
             pickFirsts += listOf(
                 "lib/*/libc++_shared.so",
@@ -647,7 +660,37 @@ sentry {
     }
 }
 
+// Same pinned speech runtime as Reshaped tester. Download only during a build, never at
+// configuration time, and verify the upstream release before adding it to the classpath.
+val sherpaOnnxVersion = "1.13.8"
+val sherpaOnnxSha256 = "633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96"
+val sherpaOnnxAar = layout.buildDirectory.file("audio-sync/sherpa-onnx-$sherpaOnnxVersion.aar")
+val downloadAudioSyncRuntime by tasks.registering {
+    inputs.property("version", sherpaOnnxVersion)
+    inputs.property("sha256", sherpaOnnxSha256)
+    outputs.file(sherpaOnnxAar)
+    doLast {
+        val aar = sherpaOnnxAar.get().asFile
+        aar.parentFile.mkdirs()
+        val partial = File(aar.path + ".part")
+        val url = URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaOnnxVersion/sherpa-onnx-$sherpaOnnxVersion.aar")
+        try {
+            url.toURL().openConnection().apply {
+                connectTimeout = 30_000
+                readTimeout = 60_000
+            }.getInputStream().use { input -> partial.outputStream().use { input.copyTo(it) } }
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(partial.readBytes()).joinToString("") { "%02x".format(it) }
+            check(digest == sherpaOnnxSha256) { "Checksum mismatch for $url" }
+            Files.move(partial.toPath(), aar.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            partial.delete()
+        }
+    }
+}
+
 dependencies {
+    implementation(files(sherpaOnnxAar).builtBy(downloadAudioSyncRuntime))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     val composeBom = platform("androidx.compose:compose-bom:2026.05.01")
 
@@ -689,6 +732,8 @@ dependencies {
     implementation(libs.retrofit)
     implementation(libs.retrofit.moshi)
     implementation(libs.okhttp)
+    // Bounded-time matching for native stream profile rules.
+    implementation(libs.re2j)
     implementation(libs.okhttp.logging)
     implementation(libs.okhttp.dnsoverhttps)
     implementation(libs.moshi)
@@ -725,6 +770,8 @@ dependencies {
     implementation(libs.media3.decoder)
     implementation(libs.media3.session)
     implementation(libs.media3.container)
+    // Audio subtitle sync spot sampler (MediaExtractorCompat lives here since 1.10); version pinned by the rule above.
+    implementation("androidx.media3:media3-inspector:$approvedMedia3Version")
 
     // Transitive dependencies required by forked local AARs (not bundled in AARs):
     // - Guava: needed by lib-common (ImmutableList/ImmutableSet in Tracks, Player API)
@@ -819,8 +866,10 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.espresso.core)
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.lemonappdev:konsist:0.17.3")
+    testImplementation(kotlin("test"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("io.mockk:mockk:1.13.12")
     testImplementation("org.robolectric:robolectric:4.16.1")
@@ -849,3 +898,6 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
+extra["usenetSdkDirectory"] = android.sdkDirectory.absolutePath
+extra["usenetNdkVersion"] = android.ndkVersion
+apply(from = rootProject.file("native/usenet/android.gradle.kts"))

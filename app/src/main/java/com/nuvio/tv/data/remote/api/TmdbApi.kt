@@ -283,7 +283,18 @@ interface TmdbApi {
         @Query("api_key") apiKey: String,
         @Query("append_to_response") appendToResponse: String = "alternative_titles,translations"
     ): Response<TmdbTitleBundleResponse>
+
+    /** Upstream: a movie's title and year with every other name it goes by, in one request. */
+    @GET("movie/{movie_id}?append_to_response=alternative_titles,translations")
+    suspend fun getMovieNames(
+        @Path("movie_id") movieId: Int,
+        @Query("api_key") apiKey: String
+    ): Response<TmdbMovieNamesResponse>
 }
+
+/** Upstream's name for the fork's title bundle (same JSON shape, a superset of its fields). */
+typealias TmdbMovieNamesResponse = TmdbTitleBundleResponse
+typealias TmdbTranslation = TmdbTranslationItem
 
 @JsonClass(generateAdapter = true)
 data class TmdbTitleBundleResponse(
