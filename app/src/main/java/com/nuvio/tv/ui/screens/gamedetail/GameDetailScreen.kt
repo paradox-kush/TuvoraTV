@@ -328,7 +328,9 @@ fun GameDetailScreen(
                         if (model.state == com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
                             // Before kickoff only the market has a win chance (and its storylines): a small card above the kickoff.
                             if (model.winChance != null) SituationCard(model, colors, showChart = false)
-                            KickoffCard(model, Modifier.weight(1f))
+                            // With form there is a right pane, and the kickoff card sits under it there (the left column
+                            // has no room left for it beside a win-chance card: its date line was clipped).
+                            if (model.form == null) KickoffCard(model, Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
                         } else {
                             if (model.situation != null || model.winChance != null) SituationCard(model, colors, plan.showChart, plan.compactWinChance)
                             if (sectioned) Spacer(Modifier.weight(1f))
@@ -356,7 +358,8 @@ fun GameDetailScreen(
                     // An upcoming game with no form yet has nothing for a second pane: the left column carries it all.
                     if (!upcoming || model.form != null) Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         if (upcoming) {
-                            model.form?.let { FormCard(it, model, Modifier.weight(1f)) }
+                            model.form?.let { FormCard(it, model) }
+                            KickoffCard(model, Modifier.weight(1f))
                         } else {
                             val showPreview = preview !is PreviewSlot.Hidden
                             if (showPreview) PreviewBox(slot = preview, surfaceOwner = surfaceOwner, ready = previewReady)
