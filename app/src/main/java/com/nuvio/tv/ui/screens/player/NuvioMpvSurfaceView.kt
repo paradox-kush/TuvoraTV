@@ -65,7 +65,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     private var cachedTrackList: MpvTrackListCache? = null
     private var currentAspectMode: AspectMode = AspectMode.ORIGINAL
     private var pendingAspectRetryCount = 0
-    private var styledSubtitlesEnabled = false
+    @Volatile private var styledSubtitlesEnabled = false
     @Volatile private var lastAppliedSubtitleStyle: SubtitleStyleSettings = SubtitleStyleSettings()
     @Volatile private var lastAppliedAssSubtitleStyle: SubtitleStyleSettings =
         SubtitleStyleSettings(size = SubtitleStyleSettings.ASS_SIZE_DEFAULT)
@@ -281,10 +281,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         return mpv.getPropertyString(MPV_SUB_TEXT_PROPERTY)
     }
 
-    fun syncStyledSubtitles(enabled: Boolean): String? {
+    /** Reads and writes libmpv: call it on the mpv lane ([MpvReads]), never on Main. */
+    fun syncStyledSubtitles(enabled: Boolean): String? = synchronized(coreLock) {
         styledSubtitlesEnabled = enabled
-        if (!initialized) return null
-        return runCatching {
+        if (!initialized) return@synchronized null
+        runCatching {
             val codec = mpv.getPropertyString("current-tracks/sub/codec")?.lowercase(Locale.US)
             val isAss = isAssSubtitleCodec(codec)
             if (appliedStyleIsAss != isAss) {
