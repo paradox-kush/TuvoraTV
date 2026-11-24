@@ -65,7 +65,7 @@ class SportsAlertsChipViewModel @Inject constructor(
 }
 
 /**
- * Sports hub header, beside the Scores chip: "Alerts on" / "Alerts off". Signed out: "Sign in to get alerts" (shown,
+ * Sports hub header, beside the Scores chip: "Alerts on" / "Alerts off". Signed out: "Sign in for alerts" (shown,
  * not focusable: alerts need an account, and a dead control must not catch the D-pad).
  */
 @Composable
@@ -81,7 +81,7 @@ internal fun SportsAlertsHubChip(modifier: Modifier = Modifier, viewModel: Sport
 
 /**
  * Game page chip "Alerts: Default / All / Off", only for a game in a followed league or with a followed team.
- * Signed out: "Sign in to get alerts", not focusable. Null when the game is not followed (nothing to override).
+ * Signed out: "Sign in for alerts", not focusable. Null when the game is not followed (nothing to override).
  */
 @Composable
 internal fun GameAlertsChip(

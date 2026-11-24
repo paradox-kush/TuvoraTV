@@ -51,7 +51,7 @@ fun SportsAlertsSettingsContent(
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SettingsDetailHeader(
             title = ALERTS_TITLE,
-            subtitle = if (ui.signedIn) ALERTS_SUBTITLE else "Sign in to get alerts. These choices sync to your account once you do.",
+            subtitle = if (ui.signedIn) ALERTS_SUBTITLE else "Sign in for alerts. These choices sync to your account once you do.",
         )
         Box(modifier = Modifier.weight(1f)) {
             LazyColumn(
