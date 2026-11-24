@@ -26,6 +26,7 @@ class FirstRunFunnelServiceTest {
         var now: Long = 1_000_000L,
         supportCodeExisted: Boolean = false,
     ) {
+        val flushes = java.util.concurrent.atomic.AtomicInteger()
         val sent = CopyOnWriteArrayList<Map<String, Any>>()
         val events = CopyOnWriteArrayList<String>()
         val service = FirstRunFunnelService(
@@ -34,6 +35,7 @@ class FirstRunFunnelServiceTest {
             consentEnabled = { consent },
             sink = { event, props -> events += event; sent += props },
             supportCodeExistedAtStart = supportCodeExisted,
+            flush = { flushes.incrementAndGet() },
         )
         fun ready() = apply { service.markSdkReady() }
         fun steps() = sent.map { it["step"] }
@@ -178,5 +180,127 @@ class FirstRunFunnelServiceTest {
             done.await()
             assertEquals("round $round: exactly one first_playback", 1, rig.steps().count { it == "first_playback" })
         }
+    }
+
+    // ---- first_leave ----
+
+    private fun leaveRig(consent: Boolean = true): Rig {
+        val rig = Rig(consent = consent).ready()
+        rig.service.start { false }
+        return rig
+    }
+
+    @Test
+    fun firstLeaveFiresOnceOnTheFirstBackgroundAndFlushes() {
+        val rig = leaveRig()
+        rig.service.noteScreen("home")
+        rig.service.noteScreen("xtream_hub")
+        rig.now += 20_000
+        rig.service.onBackground()
+        val leave = rig.sent.last()
+        assertEquals("step", "first_leave", leave["step"])
+        assertEquals("last_screen", "xtream_hub", leave["last_screen"])
+        assertEquals("screens_seen", 2, leave["screens_seen"])
+        assertEquals("secs_in_app", 20, leave["secs_in_app"])
+        assertEquals("flushed once after capture", 1, rig.flushes.get())
+        rig.service.onForeground()
+        rig.now += 5_000
+        rig.service.onBackground()
+        assertEquals("never again", 1, rig.steps().count { it == "first_leave" })
+        assertEquals("and no second flush", 1, rig.flushes.get())
+    }
+
+    @Test
+    fun firstLeaveNeverFiresAfterFirstPlayback() {
+        val rig = leaveRig()
+        rig.service.step(FirstRunStep.FIRST_PLAYBACK, mapOf("kind" to "live", "engine" to "exo"))
+        rig.service.onBackground()
+        assertFalse("no leave", rig.steps().contains("first_leave"))
+        assertEquals("no flush for nothing", 0, rig.flushes.get())
+    }
+
+    @Test
+    fun firstLeaveNeverFiresForAnExistingInstall() {
+        val rig = Rig().ready()
+        rig.service.start { true }
+        rig.service.onBackground()
+        assertTrue("silent", rig.sent.isEmpty())
+        assertEquals("no flush", 0, rig.flushes.get())
+    }
+
+    @Test
+    fun firstLeaveWithConsentOffIsMarkedDoneAndNeverSent() {
+        val rig = leaveRig(consent = false)
+        rig.service.onBackground()
+        assertTrue("nothing sent", rig.sent.isEmpty())
+        assertTrue("marked done", "first_leave" in FirstRunStateCodec.decode(rig.store.value)!!.done)
+        rig.consent = true
+        rig.service.onBackground()
+        assertTrue("turning consent on later does not release or repeat it", rig.sent.isEmpty())
+    }
+
+    @Test
+    fun formAndSaveFactsAreCarriedAndSurviveARestart() {
+        val store = MemoryStore()
+        val first = Rig(store = store).ready()
+        first.service.start { false }
+        first.service.note(FirstRunNote.SourceFormOpened)
+        first.service.note(FirstRunNote.SaveTried)
+        first.service.note(FirstRunNote.SaveFailed("wrong_credentials"))
+        first.service.note(FirstRunNote.SaveFailed("unreachable"))
+
+        // Process killed before leaving; the person comes back and leaves in launch 2.
+        val second = Rig(store = store, now = 2_000_000L).ready()
+        second.service.start { error("decided in run 1") }
+        second.service.onBackground()
+        val leave = second.sent.last()
+        assertEquals("step", "first_leave", leave["step"])
+        assertEquals("launch_index", 2, leave["launch_index"])
+        assertEquals("form", true, leave["opened_source_form"])
+        assertEquals("tried", true, leave["tried_save"])
+        assertEquals("last failure", "unreachable", leave["save_error"])
+        assertEquals("no screens in a fresh process", "other", leave["last_screen"])
+    }
+
+    @Test
+    fun noFailureReportsNone() {
+        val rig = leaveRig()
+        rig.service.note(FirstRunNote.SourceFormOpened)
+        rig.service.onBackground()
+        assertEquals("none", rig.sent.last()["save_error"])
+        assertEquals(false, rig.sent.last()["tried_save"])
+    }
+
+    @Test
+    fun concurrentBackgroundSignalsEmitOneEvent() {
+        repeat(200) { round ->
+            val rig = leaveRig()
+            val barrier = CyclicBarrier(8)
+            val done = CountDownLatch(8)
+            repeat(8) {
+                thread {
+                    barrier.await()
+                    rig.service.onBackground()
+                    done.countDown()
+                }
+            }
+            done.await()
+            assertEquals("round $round: one first_leave", 1, rig.steps().count { it == "first_leave" })
+            assertEquals("round $round: one flush", 1, rig.flushes.get())
+        }
+    }
+
+    @Test
+    fun aThrowingFlushDoesNotBreakTheLeave() {
+        val rig = Rig().ready()
+        val service = FirstRunFunnelService(
+            store = rig.store, nowMs = { rig.now }, consentEnabled = { true },
+            sink = { _, props -> rig.sent += props }, supportCodeExistedAtStart = false,
+            flush = { error("sdk down") },
+        )
+        service.markSdkReady()
+        service.start { false }
+        service.onBackground()
+        assertTrue("sent", rig.sent.any { it["step"] == "first_leave" })
     }
 }

@@ -33,6 +33,34 @@ class BreadcrumbsTest {
     }
 
     @Test
+    fun screenChangedFeedsTheFirstLeaveVisit() {
+        arm()
+        val sent = mutableListOf<Map<String, Any>>()
+        val service = com.nuvio.tv.core.telemetry.FirstRunFunnelService(
+            store = object : com.nuvio.tv.core.telemetry.FirstRunStateStore {
+                override fun read(): String? = null
+                override fun write(value: String) = Unit
+            },
+            nowMs = { 1_000_000L }, consentEnabled = { true },
+            sink = { _, props -> sent += props }, supportCodeExistedAtStart = false,
+        )
+        service.markSdkReady()
+        service.start { false }
+        com.nuvio.tv.core.telemetry.FirstRun.service = service
+        try {
+            Breadcrumbs.screenChanged("home")
+            Breadcrumbs.screenChanged("home")
+            Breadcrumbs.screenChanged("settings")
+            service.onBackground()
+        } finally {
+            com.nuvio.tv.core.telemetry.FirstRun.service = null
+        }
+        val leave = sent.last()
+        assertEquals("last screen", "settings", leave["last_screen"])
+        assertEquals("distinct screens", 2, leave["screens_seen"])
+    }
+
+    @Test
     fun identicalStartsInsideTheDedupeWindowCollapse() {
         arm()
         Breadcrumbs.playbackStarted("live", "mpv", "player", "ts", nowMs = 0L)

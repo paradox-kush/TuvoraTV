@@ -39,6 +39,7 @@ class TelemetryService @Inject constructor(
         nowMs = System::currentTimeMillis,
         consentEnabled = { TelemetryHolder.consentEnabled },
         sink = { event, props -> PostHog.capture(event = event, properties = props) },
+        flush = { flushAnalyticsAsync() },
         supportCodeExistedAtStart = SupportCodeGenerator.isValid(
             runCatching { context.getSharedPreferences("telemetry", Context.MODE_PRIVATE).getString("support_code", null) }.getOrNull(),
         ),
@@ -85,6 +86,19 @@ class TelemetryService @Inject constructor(
      * of a build with the funnel. Events wait for [firstRunSdkReady].
      */
     fun startFirstRunFunnel(otherExistingSignals: () -> Boolean) = firstRun.start(otherExistingSignals)
+
+    /** The whole app went to / came back from the background (process lifecycle): drives `first_leave`. */
+    fun firstRunAppBackgrounded() = firstRun.onBackground()
+    fun firstRunAppForegrounded() = firstRun.onForeground()
+
+    /**
+     * `PostHog.flush()` (verified present in the resolved posthog 6.35.0 `PostHog` class) must not run on Main, where the
+     * background signal arrives. A short-lived thread, not the telemetry worker: playback stop clears that handler's queue.
+     * The capture was submitted to the SDK's own executor first, so this flush uploads it. Once per install at most.
+     */
+    private fun flushAnalyticsAsync() {
+        Thread({ runCatching { PostHog.flush() } }, "first-leave-flush").apply { isDaemon = true }.start()
+    }
 
     /** PostHog is set up: funnel events held until now go out (consent is checked as each is sent). */
     fun firstRunSdkReady() = firstRun.markSdkReady()

@@ -177,8 +177,10 @@ class AddonManagerViewModel @Inject constructor(
     }
 
     fun installAddon() {
+        com.nuvio.tv.core.telemetry.FirstRun.saveTried() // first_leave: install pressed
         val rawUrl = uiState.value.installUrl.trim()
         if (rawUrl.isBlank()) {
+            com.nuvio.tv.core.telemetry.FirstRun.saveFailed(com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER)
             val message = context.getString(R.string.addon_error_invalid_url)
             _uiState.update {
                 it.copy(
@@ -192,6 +194,7 @@ class AddonManagerViewModel @Inject constructor(
 
         val normalizedUrl = normalizeAddonUrl(rawUrl)
         if (normalizedUrl == null) {
+            com.nuvio.tv.core.telemetry.FirstRun.saveFailed(com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER)
             val message = context.getString(R.string.addon_error_invalid_scheme)
             _uiState.update {
                 it.copy(
@@ -228,6 +231,7 @@ class AddonManagerViewModel @Inject constructor(
                     }
                 }
                 is NetworkResult.Error -> {
+                    com.nuvio.tv.core.telemetry.FirstRun.saveFailed(com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER)
                     val message = result.message
                     _uiState.update {
                         it.copy(

@@ -54,6 +54,7 @@ fun EssentialAddonSetupScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val keyboardController = LocalSoftwareKeyboardController.current
+    androidx.compose.runtime.LaunchedEffect(Unit) { com.nuvio.tv.core.telemetry.FirstRun.sourceFormOpened() } // first_leave
 
     DisposableEffect(Unit) {
         onDispose { viewModel.stopQrMode() }

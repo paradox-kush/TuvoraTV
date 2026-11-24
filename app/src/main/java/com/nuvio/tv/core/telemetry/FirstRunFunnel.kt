@@ -16,6 +16,9 @@ enum class FirstRunStep(val wire: String) {
     SOURCE_ADDED("source_added"),
     FIRST_CONTENT_LOADED("first_content_loaded"),
     FIRST_PLAYBACK("first_playback"),
+
+    /** The first visit ended (the whole app left the foreground) before anything played. Fired by the service, never by a call site. */
+    FIRST_LEAVE("first_leave"),
 }
 
 /** Closed vocabularies for `source_kind` and `via`. Anything else is sent as `unknown`. */
@@ -33,6 +36,18 @@ object FirstRunVocab {
     const val VIA_SYNC = "sync"
     const val VIA_UNKNOWN = "unknown"
     val vias: Set<String> = setOf(VIA_MANUAL, VIA_SETUP_CODE, VIA_SYNC, VIA_UNKNOWN)
+
+    /**
+     * Closed vocabulary of `save_error`: the lower-cased names of [com.nuvio.tv.core.iptv.PlaylistSaveError], `other` for
+     * a failure outside it, `none` when no save failed (a test pins this to the enum so the two cannot drift).
+     */
+    const val SAVE_ERROR_OTHER = "other"
+    const val SAVE_ERROR_NONE = "none"
+    val saveErrors: Set<String> = setOf(
+        "missing_xtream_fields", "invalid_address", "unreachable", "wrong_credentials", "provider_blocked",
+        "secure_connection_failed", "account_inactive", "source_disabled_on_device", "source_disabled_for_account",
+        "signing_in", SAVE_ERROR_OTHER,
+    )
 
     /** Maps a playlist `sourceType` (TV: `xtream`, `url`, `file`, `stalker`; KMP spellings too) to a [sourceKinds] value. */
     fun kindOfPlaylist(sourceType: String?): String = when (sourceType) {
@@ -52,7 +67,29 @@ data class FirstRunState(
     val firstLaunchAtMs: Long = 0L,
     val launchIndex: Int = 0,
     val done: Set<String> = emptySet(),
+    /** First-visit facts for `first_leave`; persisted because the form may be opened in one launch and left in another. */
+    val openedSourceForm: Boolean = false,
+    val triedSave: Boolean = false,
+    val saveError: String? = null,
 )
+
+/**
+ * Facts about the first visit that [FirstRunStep.FIRST_LEAVE] summarises. Closed shapes only: a screen identifier
+ * from the app's own route names, never anything the person typed.
+ */
+sealed interface FirstRunNote {
+    /** A screen was shown ([name] = the `Breadcrumbs.screenChanged` identifier; reduced to the fixed vocabulary by the policy). */
+    data class Screen(val name: String) : FirstRunNote
+
+    /** An add-source form (Xtream / M3U / Stalker / add-on install / media server) was opened. */
+    data object SourceFormOpened : FirstRunNote
+
+    /** The person pressed save/add on such a form. */
+    data object SaveTried : FirstRunNote
+
+    /** A save failed; [kind] is the playlist-save error name lower-cased (anything outside the vocabulary becomes `other`). */
+    data class SaveFailed(val kind: String) : FirstRunNote
+}
 
 /** [state] to persist (null = nothing to persist) and the event props to emit (null = send nothing). */
 class FirstRunTransition(val state: FirstRunState?, val emit: Map<String, Any>?)
@@ -87,8 +124,28 @@ object FirstRunFunnel {
     /** A step happened. Emits it the first time on a new install, never otherwise (also before [start]: dropped). */
     fun record(state: FirstRunState?, step: FirstRunStep, nowMs: Long, extra: Map<String, Any>): FirstRunTransition {
         if (state == null || state.existing || step.wire in state.done) return FirstRunTransition(null, null)
+        // Someone who already played is not a drop-off: no leave summary (and nothing to mark done).
+        if (step == FirstRunStep.FIRST_LEAVE && FirstRunStep.FIRST_PLAYBACK.wire in state.done) return FirstRunTransition(null, null)
         val next = state.copy(done = state.done + step.wire)
         return FirstRunTransition(next, props(next, step, nowMs, extra))
+    }
+
+    /**
+     * A first-visit fact. Returns the state to persist, or null when nothing changes: no state yet, an existing install,
+     * the leave gate already closed (it fired, or playback happened), an unchanged flag, or a note that is not persisted
+     * (a screen lives in the per-process visit).
+     */
+    fun note(state: FirstRunState?, note: FirstRunNote): FirstRunState? {
+        if (state == null || state.existing) return null
+        if (FirstRunStep.FIRST_LEAVE.wire in state.done || FirstRunStep.FIRST_PLAYBACK.wire in state.done) return null
+        val next = when (note) {
+            is FirstRunNote.Screen -> return null
+            FirstRunNote.SourceFormOpened -> state.copy(openedSourceForm = true)
+            FirstRunNote.SaveTried -> state.copy(triedSave = true)
+            is FirstRunNote.SaveFailed ->
+                state.copy(saveError = note.kind.lowercase().takeIf { it in FirstRunVocab.saveErrors } ?: FirstRunVocab.SAVE_ERROR_OTHER)
+        }
+        return next.takeIf { it != state }
     }
 
     private fun props(state: FirstRunState, step: FirstRunStep, nowMs: Long, extra: Map<String, Any>): Map<String, Any> =
@@ -108,6 +165,14 @@ object FirstRunFunnel {
                     token(extra["engine"])?.let { put("engine", it) }
                 }
                 FirstRunStep.FIRST_LAUNCH -> Unit
+                FirstRunStep.FIRST_LEAVE -> {
+                    put("last_screen", FirstLeavePolicy.screenId(extra["last_screen"] as? String))
+                    put("secs_in_app", (extra["secs_in_app"] as? Int ?: 0).coerceAtLeast(0))
+                    put("screens_seen", (extra["screens_seen"] as? Int ?: 0).coerceAtLeast(0))
+                    put("opened_source_form", state.openedSourceForm)
+                    put("tried_save", state.triedSave)
+                    put("save_error", state.saveError ?: FirstRunVocab.SAVE_ERROR_NONE)
+                }
             }
         }
 
@@ -126,6 +191,9 @@ object FirstRunStateCodec {
         addProperty("firstLaunchAtMs", state.firstLaunchAtMs)
         addProperty("launchIndex", state.launchIndex)
         add("done", JsonArray().also { arr -> state.done.sorted().forEach { arr.add(it) } })
+        addProperty("openedSourceForm", state.openedSourceForm)
+        addProperty("triedSave", state.triedSave)
+        state.saveError?.let { addProperty("saveError", it) }
     }.toString()
 
     fun decode(text: String?): FirstRunState? {
@@ -137,6 +205,10 @@ object FirstRunStateCodec {
                 firstLaunchAtMs = o.get("firstLaunchAtMs")?.asLong ?: 0L,
                 launchIndex = o.get("launchIndex")?.asInt ?: 0,
                 done = o.get("done")?.asJsonArray?.mapNotNull { it.takeIf(JsonElement::isJsonPrimitive)?.asString }?.toSet().orEmpty(),
+                // Absent in a state written before first_leave existed: default (false / none).
+                openedSourceForm = o.get("openedSourceForm")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false,
+                triedSave = o.get("triedSave")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false,
+                saveError = o.get("saveError")?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it in FirstRunVocab.saveErrors },
             )
         }.getOrNull()
     }

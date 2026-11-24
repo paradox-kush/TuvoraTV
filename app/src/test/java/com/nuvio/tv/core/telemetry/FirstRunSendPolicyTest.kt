@@ -23,6 +23,19 @@ class FirstRunSendPolicyTest {
     }
 
     @Test
+    fun firstLeaveStillSends() {
+        val leave = mapOf<String, Any?>(
+            "step" to "first_leave", "schema_version" to 1, "launch_index" to 1, "secs_since_first_launch" to 30,
+            "last_screen" to "xtream_hub", "secs_in_app" to 25, "screens_seen" to 3,
+            "opened_source_form" to true, "tried_save" to true, "save_error" to "unreachable",
+        )
+        val d = TelemetrySendPolicy.decide("first_run_step", leave)
+        assertEquals("action", TelemetrySendPolicy.Action.SEND, d.action)
+        assertFalse("no trail", d.withTrail)
+        assertNull("no once-key", d.onceKey)
+    }
+
+    @Test
     fun aFailureLookingPropertyDoesNotMakeItAnError() {
         // Even an `outcome` or `surface` value that other events use for failures must not turn this into a trail event.
         val d = TelemetrySendPolicy.decide("first_run_step", props + mapOf("surface" to "hub_categories", "outcome" to "failed"))

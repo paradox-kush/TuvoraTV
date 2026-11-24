@@ -47,6 +47,7 @@ internal fun SiloSignInDialog(
 ) {
     val flow = viewModel.siloSignIn
     val state by flow.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { com.nuvio.tv.core.telemetry.FirstRun.sourceFormOpened() } // first_leave: a source form was opened
     LaunchedEffect(Unit) { flow.start(onConnected) }
     DisposableEffect(Unit) { onDispose { flow.close() } }
     val busy = state.busy || state.step == SiloSignInStep.SIGNING_IN

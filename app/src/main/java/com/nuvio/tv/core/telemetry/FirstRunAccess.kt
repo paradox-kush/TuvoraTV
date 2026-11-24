@@ -34,6 +34,20 @@ object FirstRun {
     /** Playback produced output (the `playback_started` chokepoint). */
     fun playback(kind: String, engine: String) = step(FirstRunStep.FIRST_PLAYBACK, mapOf("kind" to kind, "engine" to engine))
 
+    /** A screen was shown (the `Breadcrumbs.screenChanged` identifier): `first_leave` bookkeeping, per process. */
+    fun screen(name: String) { runCatching { service?.noteScreen(name) } }
+
+    /** An add-source form (Xtream / M3U / Stalker / add-on install / media server) was opened (add mode, not edit). */
+    fun sourceFormOpened() = note(FirstRunNote.SourceFormOpened)
+
+    /** The person pressed save/add on such a form. */
+    fun saveTried() = note(FirstRunNote.SaveTried)
+
+    /** A save failed; [kind] is `PlaylistSaveError.funnelKind()` or `other`. */
+    fun saveFailed(kind: String) = note(FirstRunNote.SaveFailed(kind))
+
+    private fun note(note: FirstRunNote) { runCatching { service?.note(note) } }
+
     private fun step(step: FirstRunStep, props: Map<String, Any>) {
         runCatching { service?.step(step, props) }
     }

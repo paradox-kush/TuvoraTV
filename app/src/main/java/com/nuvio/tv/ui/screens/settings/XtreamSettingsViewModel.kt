@@ -12,6 +12,7 @@ import com.nuvio.tv.core.iptv.LoadSurface
 import com.nuvio.tv.core.iptv.PlaylistEditVerifyPolicy
 import com.nuvio.tv.core.iptv.PlaylistSaveError
 import com.nuvio.tv.core.iptv.PlaylistSaveErrorPolicy
+import com.nuvio.tv.core.iptv.funnelKind
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamAccountInfo
 import com.nuvio.tv.core.iptv.XtreamCategory
@@ -306,8 +307,10 @@ class XtreamSettingsViewModel @Inject constructor(
 
     /** Add a Stalker portal playlist: persist + sync. Content loads live via the portal session on browse. */
     fun addStalker(fields: StalkerFields, name: String?, options: PlaylistOptions = PlaylistOptions(), onSuccess: () -> Unit) {
+        com.nuvio.tv.core.telemetry.FirstRun.saveTried()
         val account = stalkerAccountFrom(fields, name)?.withOptions(options)?.withBackups(options)
         if (account == null) {
+            com.nuvio.tv.core.telemetry.FirstRun.saveFailed(com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER)
             _uiState.update { it.copy(error = "Enter a portal URL and a MAC address") }
             return
         }
@@ -321,8 +324,10 @@ class XtreamSettingsViewModel @Inject constructor(
 
     /** Re-save an edited Stalker playlist: swap in place, preserve enable/content/category selections. */
     fun editStalker(old: XtreamAccount, fields: StalkerFields, name: String?, options: PlaylistOptions = old.toOptions(), onSuccess: () -> Unit) {
+        com.nuvio.tv.core.telemetry.FirstRun.saveTried()
         val candidate = stalkerAccountFrom(fields, name ?: old.name)?.withOptions(options)
         if (candidate == null) {
+            com.nuvio.tv.core.telemetry.FirstRun.saveFailed(com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER)
             _uiState.update { it.copy(error = "Enter a portal URL and a MAC address") }
             return
         }
@@ -370,6 +375,7 @@ class XtreamSettingsViewModel @Inject constructor(
         verifyAndSave(
             parseXtreamAccount(input, name)?.withOptions(options)?.withBackups(options),
             "Couldn't read a username & password from that URL",
+            com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER,
             onSuccess
         )
     }
@@ -386,6 +392,7 @@ class XtreamSettingsViewModel @Inject constructor(
         verifyAndSave(
             xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options)?.withBackups(options),
             manualFormError(serverUrl, username, password),
+            manualFormKind(serverUrl, username, password),
             onSuccess
         )
     }
@@ -397,6 +404,7 @@ class XtreamSettingsViewModel @Inject constructor(
      * a first hub/search access also triggers ingest if it hasn't run yet.
      */
     fun addM3UUrl(playlistUrl: String, userAgent: String?, name: String?, options: PlaylistOptions = PlaylistOptions(), onSuccess: () -> Unit) {
+        com.nuvio.tv.core.telemetry.FirstRun.saveTried()
         // An Xtream get.php / player_api.php paste is saved as the panel it is (catch-up, VOD
         // metadata, search index) — at ADD time only: m3uAccountFromUrl itself is untouched, so
         // edit, pairing and sync keep every existing `m3u:…` id. If the panel API refuses the
@@ -412,6 +420,7 @@ class XtreamSettingsViewModel @Inject constructor(
                 if (refusal != null) {
                     // The device guard refused this playlist: saving the same URL as a fresh m3u: playlist (new id)
                     // would sidestep the off switch. Show the refusal; add nothing.
+                    com.nuvio.tv.core.telemetry.FirstRun.saveFailed(PlaylistSaveErrorPolicy.classify(refusal).funnelKind())
                     _uiState.update { it.copy(error = PlaylistSaveErrorPolicy.messageFor(refusal)) }
                 } else if (verified) {
                     if (persistOrError { store.upsert(accountToStore(panel)) }) {
@@ -431,6 +440,7 @@ class XtreamSettingsViewModel @Inject constructor(
     /** Persist a built M3U URL account and kick off its ingest (see [addM3UUrl]). */
     private fun saveM3UUrl(account: XtreamAccount?, onSuccess: () -> Unit) {
         if (account == null) {
+            com.nuvio.tv.core.telemetry.FirstRun.saveFailed(com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER)
             _uiState.update { it.copy(error = "Enter a valid M3U playlist URL") }
             return
         }
@@ -446,8 +456,10 @@ class XtreamSettingsViewModel @Inject constructor(
 
     /** Re-save an edited M3U URL playlist: swap in place (same id — Step 0), force a re-ingest. */
     fun editM3UUrl(old: XtreamAccount, playlistUrl: String, userAgent: String?, options: PlaylistOptions = old.toOptions(), onSuccess: () -> Unit) {
+        com.nuvio.tv.core.telemetry.FirstRun.saveTried()
         val candidate = m3uAccountFromUrl(playlistUrl, userAgent, old.name)?.withOptions(options)
         if (candidate == null) {
+            com.nuvio.tv.core.telemetry.FirstRun.saveFailed(com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER)
             _uiState.update { it.copy(error = "Enter a valid M3U playlist URL") }
             return
         }
@@ -475,6 +487,7 @@ class XtreamSettingsViewModel @Inject constructor(
      * keeping its id + saved content.
      */
     fun addM3UFile(uri: Uri, fileName: String, name: String?, options: PlaylistOptions = PlaylistOptions(), reimportFor: XtreamAccount? = null, onSuccess: () -> Unit) {
+        com.nuvio.tv.core.telemetry.FirstRun.saveTried()
         val playlistId = reimportFor?.id ?: newM3UFilePlaylistId(fileName)
         val displayName = reimportFor?.name ?: name
         val account = m3uAccountFromFile(playlistId, fileName, displayName).withOptions(
@@ -490,6 +503,7 @@ class XtreamSettingsViewModel @Inject constructor(
             val copied = runCatching { fileStore.importFrom(playlistId, uri) }
             _uiState.update { it.copy(isValidating = false) }
             copied.onFailure { e ->
+                com.nuvio.tv.core.telemetry.FirstRun.saveFailed(com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER)
                 _uiState.update { it.copy(error = e.message ?: "Couldn't read the selected file") }
                 return@launch
             }
@@ -524,6 +538,7 @@ class XtreamSettingsViewModel @Inject constructor(
             throw c
         } catch (e: Throwable) {
             Log.e("XtreamSettingsVM", "playlist save failed", e)
+            com.nuvio.tv.core.telemetry.FirstRun.saveFailed(com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER)
             _uiState.update {
                 it.copy(isValidating = false, error = "Couldn't save the playlist on this device. Free up space and try again.")
             }
@@ -532,8 +547,10 @@ class XtreamSettingsViewModel @Inject constructor(
         return true
     }
 
-    private fun verifyAndSave(account: XtreamAccount?, parseError: String, onSuccess: () -> Unit) {
+    private fun verifyAndSave(account: XtreamAccount?, parseError: String, parseKind: String, onSuccess: () -> Unit) {
+        com.nuvio.tv.core.telemetry.FirstRun.saveTried()
         if (account == null) {
+            com.nuvio.tv.core.telemetry.FirstRun.saveFailed(parseKind)
             _uiState.update { it.copy(error = parseError) }
             return
         }
@@ -549,6 +566,7 @@ class XtreamSettingsViewModel @Inject constructor(
                     onSuccess()
                 }
             }.onFailure { e ->
+                com.nuvio.tv.core.telemetry.FirstRun.saveFailed(PlaylistSaveErrorPolicy.classify(e).funnelKind())
                 // UX20: a mapped sentence (unreachable vs wrong credentials vs TLS), never e.message.
                 _uiState.update { it.copy(error = PlaylistSaveErrorPolicy.messageFor(e)) }
             }
@@ -557,7 +575,7 @@ class XtreamSettingsViewModel @Inject constructor(
 
     /** Re-verify + replace an existing account from a pasted portal/M3U URL (playlist edit). */
     fun editFromUrl(old: XtreamAccount, input: String, options: PlaylistOptions = old.toOptions(), onSuccess: () -> Unit) {
-        verifyAndReplace(old, parseXtreamAccount(input, old.name)?.withOptions(options), options, "Couldn't read a username & password from that URL", onSuccess)
+        verifyAndReplace(old, parseXtreamAccount(input, old.name)?.withOptions(options), options, "Couldn't read a username & password from that URL", com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER, onSuccess)
     }
 
     /** Re-verify + replace an existing account from manually-edited fields (playlist edit). */
@@ -575,6 +593,7 @@ class XtreamSettingsViewModel @Inject constructor(
             xtreamAccountFromFields(serverUrl, username, password, name)?.withOptions(options),
             options,
             manualFormError(serverUrl, username, password),
+            manualFormKind(serverUrl, username, password),
             onSuccess
         )
     }
@@ -583,6 +602,9 @@ class XtreamSettingsViewModel @Inject constructor(
      * UX21: the sentence for a manual Xtream form that didn't build an account — empty fields keep
      * "Enter a server URL…", a filled form with an unparseable address (bad port) says so instead.
      */
+    private fun manualFormKind(serverUrl: String, username: String, password: String): String =
+        (PlaylistSaveErrorPolicy.formError(serverUrl, username, password) ?: PlaylistSaveError.INVALID_ADDRESS).funnelKind()
+
     private fun manualFormError(serverUrl: String, username: String, password: String): String =
         PlaylistSaveErrorPolicy.message(
             PlaylistSaveErrorPolicy.formError(serverUrl, username, password) ?: PlaylistSaveError.INVALID_ADDRESS
@@ -602,9 +624,12 @@ class XtreamSettingsViewModel @Inject constructor(
         candidate: XtreamAccount?,
         options: PlaylistOptions,
         parseError: String,
+        parseKind: String,
         onSuccess: () -> Unit,
     ) {
+        com.nuvio.tv.core.telemetry.FirstRun.saveTried()
         if (candidate == null) {
+            com.nuvio.tv.core.telemetry.FirstRun.saveFailed(parseKind)
             _uiState.update { it.copy(error = parseError) }
             return
         }

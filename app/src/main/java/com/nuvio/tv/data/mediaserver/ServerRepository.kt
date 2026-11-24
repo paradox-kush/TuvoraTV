@@ -214,17 +214,33 @@ class ServerRepository(
         connect(provider) { provider.signIn(address, username, password) }
 
     /** Saves the connection [signIn] returns, for servers that sign in some other way than with a password. */
-    suspend fun connect(provider: ServerProvider, signIn: suspend () -> ServerSignIn): ServerConnection {
+    suspend fun connect(provider: ServerProvider, signIn: suspend () -> ServerSignIn): ServerConnection = userSave {
         ensureLoaded()
         val startedGeneration = generation
         val profileId = loadedProfileId ?: activeProfileId
-        return storeSignIn(provider, signIn(), startedGeneration, profileId)
+        storeSignIn(provider, signIn(), startedGeneration, profileId)
     }
 
     /** Stores a sign-in made elsewhere (Quick Connect): the token it carries is this device's own. */
-    suspend fun connect(provider: ServerProvider, signIn: ServerSignIn): ServerConnection {
+    suspend fun connect(provider: ServerProvider, signIn: ServerSignIn): ServerConnection = userSave {
         ensureLoaded()
-        return storeSignIn(provider, signIn, generation, loadedProfileId ?: activeProfileId)
+        storeSignIn(provider, signIn, generation, loadedProfileId ?: activeProfileId)
+    }
+
+    /**
+     * A person pressed connect: first-visit summary bookkeeping (`first_leave`). A failure is reported as `other`, never
+     * by its message. The managed (bridge) sign-in does not go through here: nobody pressed anything.
+     */
+    private suspend fun <T> userSave(block: suspend () -> T): T {
+        com.nuvio.tv.core.telemetry.FirstRun.saveTried()
+        try {
+            return block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            com.nuvio.tv.core.telemetry.FirstRun.saveFailed(com.nuvio.tv.core.telemetry.FirstRunVocab.SAVE_ERROR_OTHER)
+            throw error
+        }
     }
 
     suspend fun reconnectManaged() { managedSessionRefresher?.invoke(activeProfileId, true) }
