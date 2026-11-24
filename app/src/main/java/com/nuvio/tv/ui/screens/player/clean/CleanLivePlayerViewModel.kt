@@ -140,6 +140,7 @@ internal class CleanLivePlayerViewModel private constructor(
     private val livePauseFactory: LivePauseControlFactory,
     telemetry: TelemetryPort,
     reportDispatcher: CoroutineDispatcher,
+    private val playingChannels: com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannels,
 ) : ViewModel() {
     @Inject
     internal constructor(
@@ -152,6 +153,7 @@ internal class CleanLivePlayerViewModel private constructor(
         livePicture: LivePicturePreferences,
         livePauseFactory: LivePauseControlFactory,
         telemetry: TelemetryService,
+        playingChannels: com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannels,
     ) : this(
         appContext = context.applicationContext,
         launchConsumer = CleanLiveDestinationLaunchConsumer(launchStore::consume),
@@ -166,6 +168,7 @@ internal class CleanLivePlayerViewModel private constructor(
         livePauseFactory = livePauseFactory,
         telemetry = telemetry,
         reportDispatcher = Dispatchers.IO,
+        playingChannels = playingChannels,
     )
 
     internal constructor(
@@ -183,6 +186,7 @@ internal class CleanLivePlayerViewModel private constructor(
         picturePort: LivePicturePort = LivePicturePort.Unremembered,
         livePauseFactory: LivePauseControlFactory = LivePauseControlFactory { null },
         telemetry: TelemetryPort = UnsentTelemetryPort,
+        playingChannels: com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannels = com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannels(),
         @Suppress("UNUSED_PARAMETER") testOnly: Unit = Unit,
     ) : this(
         appContext = context.applicationContext,
@@ -198,6 +202,7 @@ internal class CleanLivePlayerViewModel private constructor(
         livePauseFactory = livePauseFactory,
         telemetry = telemetry,
         reportDispatcher = ownerDispatcher,
+        playingChannels = playingChannels,
     )
 
     private val ownerJob = SupervisorJob()
@@ -232,9 +237,14 @@ internal class CleanLivePlayerViewModel private constructor(
     /** The error on screen cleared: its report result goes with it. */
     fun clearReport() = reportController.clear()
 
+    /** The channel this player published to sports alerts; it clears only its own. */
+    private var publishedChannel: String? = null
+
     private fun followPicture(channelId: String) {
         // Sports alerts: the channel now playing, so no banner spoils the game being watched.
-        com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannel.contentId = channelId
+        publishedChannel?.let(playingChannels::clear)
+        playingChannels.set(channelId)
+        publishedChannel = channelId
         pictureFollower.follow(channelId) { choice -> command { it.applyPicture(choice.aspectMode, choice.zoom) } }
     }
 
@@ -638,7 +648,8 @@ internal class CleanLivePlayerViewModel private constructor(
     override fun onCleared() {
         // Leaving the destination ends the viewing even if the release barrier has to retry.
         playbackBreadcrumbs.stop()
-        com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannel.contentId = null
+        publishedChannel?.let(playingChannels::clear)
+        publishedChannel = null
         if (!ownerJob.isActive || clearedReleaseLoopStarted) return
         clearedReleaseLoopStarted = true
         ownerScope.launch {

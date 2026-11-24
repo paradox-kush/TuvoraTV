@@ -334,7 +334,9 @@ fun RadarPrefs.toSyncJson(): kotlinx.serialization.json.JsonObject = kotlinx.ser
     put("promo_dismissed", promoDismissed)
     put("scores_shown", scoresShown)
     put("score_delay_s", ScoreSpoilerSettings.sanitizeDelay(scoreDelayS))
-    put("alerts", alerts.toJson())
+    // Only while dirty: a clean device never overwrites what another device (or the web) stored; the backend keeps
+    // the stored value when the key is absent.
+    if (alertsDirty) put("alerts", alerts.toJson())
 }
 
 /** The one locally-persisted blob (follows + prefs together; fixtures cache is separate). */

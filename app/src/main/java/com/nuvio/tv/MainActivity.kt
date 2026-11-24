@@ -392,6 +392,7 @@ open class MainActivity : ComponentActivity() {
         // does not re-open it. markInteractiveReached() fires from the first screen breadcrumb.
         com.nuvio.tv.core.journal.StartupJournal.markUiLaunchStarted()
         isFirstResumeAfterCreate = true
+        sportsAlertController.replaySink = { dispatchKeyEventToApp(it) }
         window?.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
 
         // Wire the Activity-level launcher to the tracker
@@ -1515,8 +1516,8 @@ open class MainActivity : ComponentActivity() {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (ambientIdleController.consumeKeyEvent(event)) return true
-        // Sports alert banner up: a HOLD of OK runs its action and swallows the rest of that press; a short press
-        // (and every other key) returns false here and flows on exactly as without a banner.
+        // Sports alert banner up: the OK down is held back; a HOLD runs the banner's action and swallows the press, a
+        // short press is replayed whole through dispatchKeyEventToApp. Every other key flows on untouched.
         if (sportsAlertController.onKeyEvent(event)) return true
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (longPressBackHeld.value) {
@@ -1535,6 +1536,9 @@ open class MainActivity : ComponentActivity() {
         }
         return super.dispatchKeyEvent(event)
     }
+
+    /** The normal dispatch path, for the alert banner to give a held-back OK press back to the app. */
+    private fun dispatchKeyEventToApp(event: KeyEvent): Boolean = super.dispatchKeyEvent(event)
 
     override fun onStart() {
         // Returning from an external player: raise the auto-next loader before the player's
@@ -1557,6 +1561,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        sportsAlertController.replaySink = null
         super.onDestroy()
         PluginRuntimeHooks.onActivityDestroy()
     }

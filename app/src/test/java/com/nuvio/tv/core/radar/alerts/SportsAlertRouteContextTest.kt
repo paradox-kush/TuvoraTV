@@ -33,14 +33,4 @@ class SportsAlertRouteContextTest {
         assertEquals("null", SportsAlertRouteContext(), ctx(null))
         assertEquals("blank game id", null, ctx("game_detail/{gameId}", game = " ").openGameEventId)
     }
-
-    @Test
-    fun `the clean live player's channel fills the playing content id`() {
-        val clean = ctx("clean-live/{launchToken}")
-        assertEquals("route alone knows nothing", null, clean.playingContentId)
-        assertEquals("filled from the session", "xtream:7", clean.withCleanLiveChannel("xtream:7").playingContentId)
-        assertEquals("still live tv", PlaybackContext.LiveTv, clean.withCleanLiveChannel("xtream:7").playback)
-        assertEquals("a film route ignores it", null, ctx("player/{a}", "movie", null).withCleanLiveChannel("xtream:7").playingContentId)
-        assertEquals("a player route's own id wins", "tt1", ctx("player/{a}", "live", "tt1").withCleanLiveChannel("xtream:7").playingContentId)
-    }
 }

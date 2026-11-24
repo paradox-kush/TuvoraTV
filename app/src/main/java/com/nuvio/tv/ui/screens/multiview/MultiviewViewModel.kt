@@ -65,6 +65,7 @@ internal class MultiviewViewModel @Inject constructor(
     private val displayLookup: com.nuvio.tv.core.iptv.IptvItemDisplayLookup,
     private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
     private val xmltv: com.nuvio.tv.core.iptv.epg.XmltvClient,
+    private val playingChannels: com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannels,
 ) : ViewModel() {
     private val ownerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val surfaces = TileSurfaceRegistry(appContext)
@@ -153,10 +154,22 @@ internal class MultiviewViewModel @Inject constructor(
     val accounts: StateFlow<List<XtreamAccount>> = accountStore.accounts
         .stateIn(ownerScope, SharingStarted.Eagerly, emptyList())
 
+    /** Every tile's channel is "playing" for sports alerts; this screen clears only what it published. */
+    private var publishedChannels: Set<String> = emptySet()
+
     init {
         ownerScope.launch {
-            controller.state.collect { state -> surfaces.retain(state.tileIds.toSet()) }
+            controller.state.collect { state ->
+                surfaces.retain(state.tileIds.toSet())
+                publishPlayingChannels(state.tiles.mapNotNull { it.channelKey }.toSet())
+            }
         }
+    }
+
+    private fun publishPlayingChannels(now: Set<String>) {
+        (publishedChannels - now).forEach(playingChannels::clear)
+        (now - publishedChannels).forEach(playingChannels::set)
+        publishedChannels = now
     }
 
     /** The screen's host, before any tile opens. */
@@ -180,6 +193,7 @@ internal class MultiviewViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        publishPlayingChannels(emptySet())
         controller.release()
         coordinator.release()
         ownerScope.cancel()

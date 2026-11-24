@@ -19,9 +19,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * "Does the game page's Watch lookup find a channel for this game?", asked once when a banner appears. It reuses the
- * game page's own matcher and deadline (no new matching logic) and never throws: any failure, a missing fixture or no
- * confirmed channel simply means "Open game" stays the action. It never fetches fixtures itself.
+ * "Which channel carries this game?", asked at most once per game per 15 minutes (negatives cached too). It reuses the
+ * game page's own matcher and deadline and never throws; it never fetches fixtures itself. Two consumers:
+ *  - gate 3 reads [statesFor] (any matched channel counts: is the viewer ON this game?);
+ *  - the banner's Watch action reads [hit] (only a CONFIRMED match earns "Watch").
  */
 @Singleton
 class SportsAlertWatchLookup @Inject constructor(
@@ -31,51 +32,65 @@ class SportsAlertWatchLookup @Inject constructor(
     private val profileManager: ProfileManager,
     private val accountStore: XtreamAccountStore,
 ) {
-    /** A found channel plus the matched lineup, so channel up/down works after the player opens. */
+    /** The best CONFIRMED channel plus the matched lineup, so channel up/down works after the player opens. */
     class Hit(val contentId: String, val lineup: List<XtreamLiveChannelIdentity>)
 
-    /** eventId -> channels this lookup matched. Only ever read (never started) to decide "is the viewer watching it?". */
-    private val cache = ConcurrentHashMap<String, Hit>()
+    private val cache = WatchResultCache()
+    private val hits = ConcurrentHashMap<String, Hit>()
 
-    fun cachedContentIds(): Map<String, String> = cache.mapValues { it.value.contentId }
+    fun statesFor(playing: Set<String>, nowMs: Long): Map<String, WatchState> = cache.statesFor(playing, nowMs)
 
-    suspend fun find(eventId: String): Hit? {
-        cache[eventId]?.let { return it }
+    /** The Watch target, only while the cached answer is still fresh. */
+    fun hit(eventId: String, nowMs: Long): Hit? =
+        hits[eventId]?.takeIf { cache.stateFor(eventId, emptySet(), nowMs) != WatchState.Unknown }
+
+    /**
+     * Makes sure the game has a cached answer. True = answered (found, or a cached "none": no playlist, finished,
+     * nothing matched); false = could not tell (no fixture held, timeout, error): nothing is cached then.
+     */
+    suspend fun resolve(eventId: String, nowMs: () -> Long = System::currentTimeMillis): Boolean {
+        if (cache.stateFor(eventId, emptySet(), nowMs()) != WatchState.Unknown) return true
         return try {
             val state = repository.uiState.value
             val fixture = (state.fixturesByLeague.values.asSequence() + state.fixturesByTeam.values.asSequence())
-                .flatten().firstOrNull { RadarCalendarGames.gameId(it) == eventId } ?: return null
-            if (fixture.isFinishedOrOff) return null
-            if (accountStore.accounts.first().none { it.enabled }) return null
+                .flatten().firstOrNull { RadarCalendarGames.gameId(it) == eventId } ?: return false
+            if (fixture.isFinishedOrOff || accountStore.accounts.first().none { it.enabled }) {
+                cache.putNone(eventId, nowMs()); return true
+            }
             val league = fixture.leagueId?.let { state.leagueById(it) }
             val matches = withTimeoutOrNull(WatchResolver.LOOKUP_DEADLINE_MS) {
                 matcher.match(fixture, league, stationLookup = { repository.tvStations(fixture.id) })
-            }.orEmpty()
-            // Only a confirmed (time-aligned / event-identity) match earns "Watch"; weaker evidence stays on "Open game".
-            val best = matches.filter { it.confidence == MatchConfidence.CONFIRMED }
-                .minWithOrNull(compareBy<RadarChannelMatcher.ChannelMatch> { it.confidence.ordinal }.thenByDescending { it.score })
-                ?: return null
+            } ?: return false
+            val ids = matches.map { it.channel.contentId }.distinct()
+            if (ids.isEmpty()) { cache.putNone(eventId, nowMs()); return true }
+            cache.putFound(eventId, ids, nowMs())
             val lineup = matches.distinctBy { it.channel.contentId }.mapNotNull {
                 XtreamLiveChannelIdentity.from(contentId = it.channel.contentId, title = it.channel.name, logo = it.channel.logo)
             }
-            if (lineup.none { it.contentId.value == best.channel.contentId }) return null
-            Hit(best.channel.contentId, lineup).also { cache[eventId] = it }
+            matches.filter { it.confidence == MatchConfidence.CONFIRMED }
+                .minWithOrNull(compareBy<RadarChannelMatcher.ChannelMatch> { it.confidence.ordinal }.thenByDescending { it.score })
+                ?.takeIf { best -> lineup.any { it.contentId.value == best.channel.contentId } }
+                ?.let { hits[eventId] = Hit(it.channel.contentId, lineup) }
+            true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w("SportsAlertWatchLookup", "watch lookup failed", e)
-            null
+            false
         }
     }
 
     /** Publishes the matched lineup as the current live lineup (the playback layer resolves a channel only through it). */
     fun publishLineup(eventId: String): Boolean {
-        val hit = cache[eventId] ?: return false
+        val hit = hits[eventId] ?: return false
         return runCatching {
             livePlaylist.set(PlaybackProfileId(profileManager.activeProfileId.value.toString()), hit.lineup)
         }.isSuccess
     }
 
     /** A profile switch invalidates what was matched under the old profile's playlists. */
-    fun clear() = cache.clear()
+    fun clear() {
+        hits.clear()
+        cache.clear()
+    }
 }

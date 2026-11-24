@@ -50,6 +50,7 @@ class SportsAlertController @Inject constructor(
     private val store: RadarStore,
     private val revealedGames: RevealedGames,
     private val watchLookup: SportsAlertWatchLookup,
+    private val playingChannels: SportsAlertPlayingChannels,
 ) {
     private val scope = CoroutineScope(
         SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> Log.e(TAG, "alert handling failed", e) },
@@ -59,6 +60,8 @@ class SportsAlertController @Inject constructor(
     private var timerJob: Job? = null
     private var dismissJob: Job? = null
     private var lookupJob: Job? = null
+    /** One lookup per game at a time (the hold's lookup and the banner's Watch lookup share it). */
+    private val checkJobs = HashMap<String, Job>()
     private var bannerSeq = 0L
 
     private val _banner = MutableStateFlow<AlertBanner?>(null)
@@ -86,23 +89,23 @@ class SportsAlertController @Inject constructor(
 
     /** One broadcast payload from a joined channel. Never throws. */
     fun onPayload(payload: JsonObject) {
-        val alert = SportsAlertPayload.parse(payload, System.currentTimeMillis()) ?: return
+        val alert = SportsAlertPayload.parse(payload) ?: return
         scope.launch { lock.withLock { handle(alert) } }
     }
 
     private fun context(nowMs: Long): AlertContext {
         val s = state.value
         val cal = Calendar.getInstance().apply { timeInMillis = nowMs }
-        val r = route.withCleanLiveChannel(SportsAlertPlayingChannel.contentId)
-        val watching = r.playingContentId?.let { playing ->
-            watchLookup.cachedContentIds().entries.firstOrNull { it.value == playing }?.key
-        }
+        val r = route
+        // Every channel playing now: the clean live player's, each multiview tile, and the legacy player's live channel.
+        val playing = playingChannels.ids.value + listOfNotNull(r.playingContentId.takeIf { r.playback == PlaybackContext.LiveTv })
         return AlertContext(
             nowMs = nowMs,
             localMinuteOfDay = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE),
             playback = r.playback,
             openGameEventId = r.openGameEventId,
-            watchingEventId = watching,
+            playingChannelIds = playing,
+            watchStates = watchLookup.statesFor(playing, nowMs),
             followedLeagueIds = s.follows.map { it.leagueId }.toSet(),
             followedTeamIds = s.teams.map { it.teamId }.toSet(),
             spoiler = s.prefs.spoiler,
@@ -117,9 +120,34 @@ class SportsAlertController @Inject constructor(
         ledger = next
         when (decision) {
             is AlertDecision.ShowNow -> { telemetry(SportsAlertTelemetry.shown(decision.banner)); show(decision.banner) }
-            is AlertDecision.HoldUntil -> { telemetry(SportsAlertTelemetry.held(alert, decision.reason)); rescheduleTimer() }
-            is AlertDecision.Drop -> telemetry(SportsAlertTelemetry.dropped(alert, decision.reason))
+            is AlertDecision.HoldUntil -> {
+                if (decision.reason == HoldReason.WatchCheck) startWatchCheck(alert.eventId)
+                rescheduleTimer()
+            }
+            is AlertDecision.Drop -> Unit
         }
+    }
+
+    /**
+     * The "is this the game I am watching?" lookup for a held alert. When it answers, the hold is released at once
+     * (gates 3-5 re-run on the answer); when it cannot, the timer ends the hold at its deadline (score dropped, final
+     * shown without numbers).
+     */
+    private fun startWatchCheck(eventId: String) {
+        if (checkJobs[eventId]?.isActive == true) return
+        checkJobs[eventId] = scope.launch {
+            val answered = watchLookup.resolve(eventId)
+            if (answered) lock.withLock { flush(resolved = setOf(eventId)) }
+        }
+    }
+
+    /** Runs the policy's flush (due holds, plus the watch checks that just got an answer) and shows what comes out. */
+    private fun flush(resolved: Set<String> = emptySet()) {
+        val ctx = context(System.currentTimeMillis())
+        val (banner, next) = SportsAlertPolicy.onTimer(state.value.prefs.alerts, ctx, ledger, resolved)
+        ledger = next
+        if (banner != null) { telemetry(SportsAlertTelemetry.shown(banner)); show(banner) }
+        rescheduleTimer()
     }
 
     /** One-shot local timer to the earliest held alert. No polling, no network. */
@@ -128,13 +156,7 @@ class SportsAlertController @Inject constructor(
         val due = SportsAlertPolicy.nextTimerAtMs(ledger) ?: return
         timerJob = scope.launch {
             delay((due - System.currentTimeMillis()).coerceAtLeast(0L))
-            lock.withLock {
-                val ctx = context(System.currentTimeMillis())
-                val (banner, next) = SportsAlertPolicy.onTimer(state.value.prefs.alerts, ctx, ledger)
-                ledger = next
-                if (banner != null) { telemetry(SportsAlertTelemetry.shown(banner)); show(banner) }
-                rescheduleTimer()
-            }
+            lock.withLock { flush() }
         }
     }
 
@@ -143,18 +165,23 @@ class SportsAlertController @Inject constructor(
         _watchContentId.value = null
         _banner.value = banner
         lookupJob?.cancel()
-        // Final / summary banners never offer Watch: a finished game has nothing to watch, a summary opens Sports.
+        // Score/Start banners may offer Watch; a Final (or summary) banner offers Open game and never looks anything up.
         val eventId = banner.eventId
-        if (eventId != null && banner.kind != AlertKind.Final) {
+        if (eventId != null && SportsAlertWatchPolicy.bannerLookupWanted(banner)) {
             lookupJob = scope.launch {
-                val hit = watchLookup.find(eventId)
-                if (hit != null && bannerSeq == seq && _banner.value == banner) _watchContentId.value = hit.contentId
+                if (watchLookup.resolve(eventId)) {
+                    val hit = watchLookup.hit(eventId, System.currentTimeMillis())
+                    if (hit != null && bannerSeq == seq && _banner.value == banner) _watchContentId.value = hit.contentId
+                }
             }
         }
         dismissJob?.cancel()
         dismissJob = scope.launch {
             delay(BANNER_SHOWN_MS)
-            if (bannerSeq == seq) dismiss()
+            if (bannerSeq == seq) {
+                telemetry(SportsAlertTelemetry.action(banner, SportsAlertTelemetry.ACTION_DISMISSED))
+                dismiss()
+            }
         }
     }
 
@@ -163,6 +190,8 @@ class SportsAlertController @Inject constructor(
         dismissJob?.cancel()
         _banner.value = null
         _watchContentId.value = null
+        // A press that was waiting to become a hold gets its OK back.
+        handler.post { bannerGone() }
     }
 
     /** Runs the banner's action (hold OK). */
@@ -193,42 +222,67 @@ class SportsAlertController @Inject constructor(
         }
     }
 
-    // ---- hold OK (activity key dispatch, main thread) ----
+    // ---- hold OK (activity key dispatch, main thread; the decisions live in AlertHoldKeyPolicy) ----
 
     private var hold = AlertHoldKeyPolicy.State()
+    /** The swallowed OK down of the tracked press, kept so a short press (or a vanished banner) can give it back. */
+    private var heldDown: KeyEvent? = null
+    private var replaying = false
     private val handler by lazy { Handler(Looper.getMainLooper()) }
+
+    /** Re-delivers a key to the app exactly as the activity would have (set by MainActivity: `super.dispatchKeyEvent`). */
+    @Volatile var replaySink: ((KeyEvent) -> Boolean)? = null
+
     private val holdTimer = Runnable {
         val step = AlertHoldKeyPolicy.onTimer(hold, _banner.value != null, SystemClock.uptimeMillis())
+        apply(step, up = null)
+    }
+
+    private fun bannerGone() = apply(AlertHoldKeyPolicy.onBannerGone(hold), up = null)
+
+    private fun apply(step: AlertHoldKeyPolicy.Step, up: KeyEvent?) {
         hold = step.state
-        if (step.fire) runAction()
+        if (step.state.downAtMs == null) handler.removeCallbacks(holdTimer)
+        if (step.replay != AlertHoldKeyPolicy.Replay.None) replay(step.replay, up)
+        if (step.fire) { heldDown = null; runAction() }
+    }
+
+    private fun replay(kind: AlertHoldKeyPolicy.Replay, up: KeyEvent?) {
+        val down = heldDown
+        heldDown = null
+        val sink = replaySink ?: return
+        replaying = true
+        try {
+            down?.let { sink(it) }
+            if (kind == AlertHoldKeyPolicy.Replay.DownUp && up != null) sink(up)
+        } finally {
+            replaying = false
+        }
     }
 
     /**
-     * Called first thing in `MainActivity.dispatchKeyEvent`. Returns true when the event must be swallowed (the rest of
-     * a held OK after the action fired). A short press, and any other key, returns false and flows on untouched.
+     * Called first thing in `MainActivity.dispatchKeyEvent`. Returns true when the event must be swallowed: an OK down
+     * while a banner is up (it may be the start of a hold), the rest of a held OK, and a short press's up (the press is
+     * replayed whole through [replaySink]). Any other key, and OK with no banner, returns false and flows on untouched.
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
+        if (replaying) return false
         val phase = when (event.action) {
             KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) AlertHoldKeyPolicy.Phase.Down else AlertHoldKeyPolicy.Phase.Repeat
             KeyEvent.ACTION_UP -> AlertHoldKeyPolicy.Phase.Up
             else -> return false
         }
-        val isOk = AlertHoldKeyPolicy.isOkKey(event.keyCode)
         // Fast path: no banner and no press being tracked means nothing to do (the common case).
         if (_banner.value == null && hold.downAtMs == null && !hold.fired) return false
-        val step = AlertHoldKeyPolicy.onKey(hold, _banner.value != null, isOk, phase, event.eventTime)
-        hold = step.state
-        if (isOk) {
-            when (phase) {
-                AlertHoldKeyPolicy.Phase.Down -> {
-                    handler.removeCallbacks(holdTimer)
-                    if (hold.downAtMs != null) handler.postDelayed(holdTimer, AlertHoldKeyPolicy.HOLD_MS)
-                }
-                AlertHoldKeyPolicy.Phase.Up -> handler.removeCallbacks(holdTimer)
-                AlertHoldKeyPolicy.Phase.Repeat -> Unit
-            }
+        val step = AlertHoldKeyPolicy.onKey(hold, _banner.value != null, AlertHoldKeyPolicy.isOkKey(event.keyCode), phase, event.eventTime)
+        val startsTracking = phase == AlertHoldKeyPolicy.Phase.Down && step.state.downAtMs != null && step.consume
+        if (startsTracking) {
+            if (replaySink == null) return false // nothing could give the press back: leave it alone
+            heldDown = KeyEvent(event)
+            handler.removeCallbacks(holdTimer)
+            handler.postDelayed(holdTimer, AlertHoldKeyPolicy.HOLD_MS)
         }
-        if (step.fire) runAction()
+        apply(step, up = event.takeIf { phase == AlertHoldKeyPolicy.Phase.Up })
         return step.consume
     }
 

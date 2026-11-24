@@ -23,6 +23,12 @@ class AlertsPrefsSyncTest {
         RadarPrefsMerge.merge(local, "ev", RadarOptIn.ACCEPTED, true, null, null, alerts)
 
     @Test
+    fun `alerts are pushed only while dirty`() {
+        assertFalse("clean device sends no alerts key", RadarPrefs(alerts = custom).toSyncJson().containsKey("alerts"))
+        assertTrue("dirty device sends it", RadarPrefs(alerts = custom, alertsDirty = true).toSyncJson().containsKey("alerts"))
+    }
+
+    @Test
     fun `the sync payload carries the alerts object and never the dirty flag`() {
         val payload = RadarPrefs(alerts = custom, alertsDirty = true).toSyncJson()
         val alerts = payload["alerts"] as JsonObject

@@ -75,10 +75,17 @@ data class SportsAlertSettings(
     }
 
     fun toggleMutedLeague(id: String): SportsAlertSettings =
-        copy(mutedLeagues = if (id in mutedLeagues) mutedLeagues - id else mutedLeagues + id)
+        copy(mutedLeagues = toggled(mutedLeagues, id))
 
     fun toggleMutedTeam(id: String): SportsAlertSettings =
-        copy(mutedTeams = if (id in mutedTeams) mutedTeams - id else mutedTeams + id)
+        copy(mutedTeams = toggled(mutedTeams, id))
+
+    // Past the cap a new mute is ignored (the synced object must stay small); removing always works.
+    private fun toggled(set: Set<String>, id: String): Set<String> = when {
+        id in set -> set - id
+        set.size >= MAX_MUTED_IDS -> set
+        else -> set + id
+    }
 
     fun toJson(): JsonObject = buildJsonObject {
         put("enabled", enabled)
@@ -90,8 +97,8 @@ data class SportsAlertSettings(
         put("max_per_hour", sanitizeMaxPerHour(maxPerHour))
         put("batch_s", sanitizeBatch(batchSeconds))
         put("during_playback", duringPlayback.wire)
-        put("muted_leagues", buildJsonArray { mutedLeagues.sorted().forEach { add(JsonPrimitive(it)) } })
-        put("muted_teams", buildJsonArray { mutedTeams.sorted().forEach { add(JsonPrimitive(it)) } })
+        put("muted_leagues", buildJsonArray { mutedLeagues.sorted().take(MAX_MUTED_IDS).forEach { add(JsonPrimitive(it)) } })
+        put("muted_teams", buildJsonArray { mutedTeams.sorted().take(MAX_MUTED_IDS).forEach { add(JsonPrimitive(it)) } })
         put("games", buildJsonArray {
             games.forEach { g ->
                 add(buildJsonObject { put("id", g.id); put("level", g.level); put("exp", g.expMs) })
@@ -102,7 +109,9 @@ data class SportsAlertSettings(
     companion object {
         const val DEFAULT_QUIET_START = 1320
         const val DEFAULT_QUIET_END = 480
-        const val MAX_GAME_OVERRIDES = 100
+        const val MAX_GAME_OVERRIDES = 50
+        /** Per list (leagues, teams): keeps the synced object under [MAX_SYNC_BYTES]. */
+        const val MAX_MUTED_IDS = 100
         const val MAX_SYNC_BYTES = 8 * 1024
         val ALLOWED_MAX_PER_HOUR: List<Int> = listOf(3, 6, 12, 0)
         val ALLOWED_BATCH_SECONDS: List<Int> = listOf(0, 60, 300)
@@ -132,7 +141,7 @@ data class SportsAlertSettings(
             fun bool(name: String, default: Boolean) = prim(name)?.booleanOrNull ?: default
             fun int(name: String): Int? = prim(name)?.takeIf { !it.isString }?.intOrNull
             fun ids(name: String): Set<String> =
-                (obj[name] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }?.toSet().orEmpty()
+                (obj[name] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }?.take(MAX_MUTED_IDS)?.toSet().orEmpty()
             val games = (obj["games"] as? JsonArray)?.mapNotNull { el ->
                 val g = el as? JsonObject ?: return@mapNotNull null
                 val id = (g["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null

@@ -71,18 +71,20 @@ data class SportsAlert(
 
 /** Tolerant decode of the broadcast payload: anything that does not fit the v1 contract is dropped, never thrown. */
 object SportsAlertPayload {
-    fun parse(obj: JsonObject, receivedAtMs: Long): SportsAlert? {
+    /**
+     * v1 contract: `v` must be 1, `at` (server epoch ms) is required, `away` is optional (a blank away is shown as the
+     * home name alone). Anything else that does not fit is dropped, never thrown.
+     */
+    fun parse(obj: JsonObject): SportsAlert? {
         fun str(name: String): String? = (obj[name] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
         fun int(name: String): Int? = (obj[name] as? JsonPrimitive)?.let { it.intOrNull ?: it.contentOrNull?.trim()?.toIntOrNull() }
-        val version = int("v")
-        if (version != null && version != 1) return null
+        if (int("v") != 1) return null
         val key = str("key") ?: return null
         val eventId = str("eventId") ?: return null
         val kind = AlertKind.parse(str("kind")) ?: return null
         val sport = str("sport") ?: return null
         val home = str("home") ?: return null
-        val away = str("away") ?: return null
-        val atMs = (obj["at"] as? JsonPrimitive)?.let { it.longOrNull ?: it.contentOrNull?.toLongOrNull() } ?: receivedAtMs
+        val atMs = (obj["at"] as? JsonPrimitive)?.let { it.longOrNull ?: it.contentOrNull?.toLongOrNull() } ?: return null
         return SportsAlert(
             key = key,
             eventId = eventId,
@@ -93,7 +95,7 @@ object SportsAlertPayload {
             homeId = str("homeId"),
             awayId = str("awayId"),
             home = home,
-            away = away,
+            away = str("away").orEmpty(),
             homeScore = int("homeScore"),
             awayScore = int("awayScore"),
             progress = str("progress"),
@@ -123,10 +125,21 @@ enum class DropReason(val wire: String) {
     Disabled("disabled"), Duplicate("duplicate"), Stale("stale"),
     NotFollowed("not_followed"), Muted("muted"), KindOff("kind_off"),
     WatchingThisGame("watching_this_game"), QuietHours("quiet_hours"), DuringPlayback("during_playback"),
-    ScoresHidden("scores_hidden"), HourlyCap("hourly_cap"),
+    ScoresHidden("scores_hidden"), HourlyCap("hourly_cap"), WatchUnknown("watch_unknown"),
 }
 
-enum class HoldReason(val wire: String) { Delay("delay"), Batch("batch") }
+/** [WatchCheck]: live TV is playing and nobody knows yet whether it is this game; the lookup has until the hold's end. */
+enum class HoldReason(val wire: String) { Delay("delay"), Batch("batch"), WatchCheck("watch_check") }
+
+/** Whether the viewer's playing channel is this game's channel, as far as the cached lookup says. */
+sealed interface WatchState {
+    /** No lookup result for this game (never asked, expired, timed out). */
+    data object Unknown : WatchState
+    /** The game's matched channel (the playing one when it is among the matches). */
+    data class Channel(val id: String) : WatchState
+    /** Looked up (cached): no channel, no playlist, nothing found. */
+    data object NoChannel : WatchState
+}
 
 sealed interface AlertDecision {
     data class ShowNow(val banner: AlertBanner) : AlertDecision
@@ -143,6 +156,8 @@ data class AlertLedger(
     val seenKeys: Set<String> = emptySet(),
     val pending: List<Held> = emptyList(),
     val lastBannerAtMs: Long? = null,
+    /** Count-only outcomes ("dropped:quiet_hours", "held:delay", ...). Never sent; for diagnostics and support code. */
+    val counts: Map<String, Int> = emptyMap(),
 )
 
 /** Everything the policy needs to know about "now" that is not a setting. */
@@ -151,7 +166,10 @@ data class AlertContext(
     val localMinuteOfDay: Int,
     val playback: PlaybackContext,
     val openGameEventId: String?,
-    val watchingEventId: String?,
+    /** Every channel being played now (one for a player, all tiles for multiview). */
+    val playingChannelIds: Set<String>,
+    /** eventId -> cached lookup state; a game that is absent is [WatchState.Unknown]. */
+    val watchStates: Map<String, WatchState>,
     val followedLeagueIds: Set<String>,
     val followedTeamIds: Set<String>,
     val spoiler: com.nuvio.tv.core.radar.ScoreSpoilerSettings,

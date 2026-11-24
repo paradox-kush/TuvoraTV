@@ -96,4 +96,41 @@ class SportsAlertSettingsTest {
         val back = s.toggleMutedLeague("L1").toggleMutedTeam("T1")
         assertEquals("unmuted", SportsAlertSettings(), back)
     }
+
+    @Test
+    fun `overrides keep the last 50 and muted ids are capped`() {
+        var s = SportsAlertSettings()
+        repeat(60) { i -> s = s.withGameChoice("e$i", GameAlertChoice.Off, expMs = 10_000L + i, nowMs = 1_000L) }
+        assertEquals("50 kept", 50, s.games.size)
+        assertEquals("the newest survive", "e59", s.games.last().id)
+        assertEquals("the oldest are gone", "e10", s.games.first().id)
+        var m = SportsAlertSettings()
+        repeat(150) { i -> m = m.toggleMutedLeague("L$i").toggleMutedTeam("T$i") }
+        assertEquals("leagues capped", SportsAlertSettings.MAX_MUTED_IDS, m.mutedLeagues.size)
+        assertEquals("teams capped", SportsAlertSettings.MAX_MUTED_IDS, m.mutedTeams.size)
+        assertTrue("removing always works at the cap", m.toggleMutedLeague("L0").mutedLeagues.size == SportsAlertSettings.MAX_MUTED_IDS - 1)
+    }
+
+    @Test
+    fun `a decoded blob is capped too`() {
+        val ids = (1..300).joinToString(",") { "\"$it\"" }
+        val games = (1..300).joinToString(",") { """{"id":"g$it","level":"off","exp":$it}""" }
+        val s = SportsAlertSettings.decode(obj("""{"muted_leagues":[$ids],"muted_teams":[$ids],"games":[$games]}"""))
+        assertEquals("leagues", SportsAlertSettings.MAX_MUTED_IDS, s.mutedLeagues.size)
+        assertEquals("teams", SportsAlertSettings.MAX_MUTED_IDS, s.mutedTeams.size)
+        assertEquals("games", SportsAlertSettings.MAX_GAME_OVERRIDES, s.games.size)
+        assertEquals("takeLast", "g300", s.games.last().id)
+    }
+
+    @Test
+    fun `the worst-case serialized object stays under 8 KB`() {
+        val long = "123456789012"
+        val s = SportsAlertSettings(
+            mutedLeagues = (1..SportsAlertSettings.MAX_MUTED_IDS).map { "$long$it".take(14) }.toSet(),
+            mutedTeams = (1..SportsAlertSettings.MAX_MUTED_IDS).map { "$long$it".take(14) }.toSet(),
+            games = (1..SportsAlertSettings.MAX_GAME_OVERRIDES).map { GameAlertOverride("$long$it".take(14), "off", 1_800_000_000_000L + it) },
+        )
+        val bytes = s.toJson().toString().toByteArray().size
+        assertTrue("$bytes bytes", bytes < SportsAlertSettings.MAX_SYNC_BYTES)
+    }
 }

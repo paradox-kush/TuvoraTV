@@ -8,10 +8,6 @@ data class SportsAlertRouteContext(
     /** The game whose page is open (Screen.GameDetail). */
     val openGameEventId: String? = null,
 ) {
-    /** The clean live player's route has no content id: fill it from the player's own session state. */
-    fun withCleanLiveChannel(contentId: String?): SportsAlertRouteContext =
-        if (playingContentId == null && playback == PlaybackContext.LiveTv && contentId != null) copy(playingContentId = contentId) else this
-
     companion object {
         /**
          * [route] is the NavDestination route PATTERN ("player/{streamUrl}/...", "clean-live/{launchToken}",
@@ -33,7 +29,3 @@ data class SportsAlertRouteContext(
     }
 }
 
-/** The channel the clean live player is playing now (published by its view model, cleared when it leaves). */
-object SportsAlertPlayingChannel {
-    @Volatile var contentId: String? = null
-}

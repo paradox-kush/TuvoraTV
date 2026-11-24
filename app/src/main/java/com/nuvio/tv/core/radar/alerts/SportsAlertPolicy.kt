@@ -2,17 +2,28 @@ package com.nuvio.tv.core.radar.alerts
 
 /**
  * The one decision point for "show, hold or drop this alert". Pure: no clock, no network, no Android. Twin of the
- * Mobile/Desktop `SportsAlertPolicy`; the eight gates and their order are the contract (see
- * research/sports-alerts-spec-2026-11-24.md section 3).
+ * Mobile/Desktop `SportsAlertPolicy`; the gates and their order are the contract (research/sports-alerts-spec-2026-11-24.md
+ * section 3 plus the review-round-1 rulings).
  */
 object SportsAlertPolicy {
     const val MAX_ALERT_AGE_MS = 5 * 60 * 1000L
+    /** An `at` further ahead of the device clock than this is clock skew: age is then measured from receipt. */
+    const val CLOCK_SKEW_MS = 60 * 1000L
     const val SEEN_KEYS_CAP = 200
     const val CAP_WINDOW_MS = 60 * 60 * 1000L
     const val SUMMARY_MAX_LINES = 3
+    /** How long a Score/Final waits for the "is this the game I am watching?" lookup while live TV plays. */
+    const val WATCH_CHECK_MS = 6_000L
 
     /** Sports whose score alert reads "Goal". Every other sport reads "Score". */
     private val GOAL_SPORTS = setOf("soccer", "ice_hockey")
+
+    private sealed interface Gate {
+        data object Pass : Gate
+        data class Drop(val reason: DropReason) : Gate
+        /** Live TV is playing and the watch state is unknown: hold for the lookup. */
+        data object Check : Gate
+    }
 
     fun onAlert(
         alert: SportsAlert,
@@ -24,43 +35,91 @@ object SportsAlertPolicy {
         if (!settings.enabled) return reject(DropReason.Disabled, ledger)
         if (alert.key in ledger.seenKeys) return reject(DropReason.Duplicate, ledger)
         val seen = ledger.copy(seenKeys = (ledger.seenKeys + alert.key).trimmedToCap())
-        if (ctx.nowMs - alert.atMs > MAX_ALERT_AGE_MS) return reject(DropReason.Stale, seen)
+        if (ageMs(alert, ctx) > MAX_ALERT_AGE_MS) return reject(DropReason.Stale, seen)
 
         // Gate 2: follows, mutes, level.
         gate2(alert, settings, ctx)?.let { return reject(it, seen) }
         // Gates 3-5: watching, quiet hours, during playback.
-        gateRelease(alert, settings, ctx)?.let { return reject(it, seen) }
-
-        // Gate 6: spoilers.
         val hidden = scoresHidden(alert, ctx)
+        when (val g = gateRelease(alert, settings, ctx)) {
+            is Gate.Drop -> return reject(g.reason, seen)
+            Gate.Check -> {
+                if (hidden && alert.kind == AlertKind.Score) return reject(DropReason.ScoresHidden, seen)
+                val due = ctx.nowMs + WATCH_CHECK_MS
+                return AlertDecision.HoldUntil(due, HoldReason.WatchCheck) to
+                    seen.copy(pending = seen.pending + Held(alert, due, HoldReason.WatchCheck)).count("held:${HoldReason.WatchCheck.wire}")
+            }
+            Gate.Pass -> Unit
+        }
+        return afterWatch(alert, settings, ctx, seen, hidden)
+    }
+
+    /** Gate 6 onwards for an alert that cleared gates 1-5. */
+    private fun afterWatch(
+        alert: SportsAlert,
+        settings: SportsAlertSettings,
+        ctx: AlertContext,
+        seen: AlertLedger,
+        hidden: Boolean,
+    ): Pair<AlertDecision, AlertLedger> {
+        // Gate 6: spoilers.
         if (hidden && alert.kind == AlertKind.Score) return reject(DropReason.ScoresHidden, seen)
         val delayMs = if (hidden) 0L else ctx.spoiler.delayMs
         if (delayMs > 0 && alert.kind != AlertKind.Start) {
             val due = ctx.nowMs + delayMs
             return AlertDecision.HoldUntil(due, HoldReason.Delay) to
-                seen.copy(pending = seen.pending + Held(alert, due, HoldReason.Delay))
+                seen.copy(pending = seen.pending + Held(alert, due, HoldReason.Delay)).count("held:${HoldReason.Delay.wire}")
         }
         return admit(alert, settings, ctx, seen)
     }
 
-    /** Flushes whatever is due: delayed alerts re-run gates 3-5, batched alerts become one banner (or a summary). */
+    /**
+     * Flushes whatever is due: delayed and watch-check alerts re-run gates 2-5, batched alerts become one banner (or a
+     * summary). [resolvedEventIds] releases those games' watch-check holds early (their lookup answered).
+     */
     fun onTimer(
         settings: SportsAlertSettings,
         ctx: AlertContext,
         ledger: AlertLedger,
+        resolvedEventIds: Set<String> = emptySet(),
     ): Pair<AlertBanner?, AlertLedger> {
-        val due = ledger.pending.filter { it.dueAtMs <= ctx.nowMs }
+        val due = ledger.pending.filter {
+            it.dueAtMs <= ctx.nowMs || (it.reason == HoldReason.WatchCheck && it.alert.eventId in resolvedEventIds)
+        }
         if (due.isEmpty()) return null to ledger
         var rest = ledger.pending - due.toSet()
+        var counts = ledger.counts
+        fun dropped(reason: DropReason) {
+            if (reason.wire in SportsAlertTelemetry.COUNT_ONLY_REASONS) counts = counts.bump("dropped:${reason.wire}")
+        }
         val ready = mutableListOf<SportsAlert>()
         due.forEach { held ->
             if (!settings.enabled) return@forEach
-            val alert = held.alert
-            if (gateRelease(alert, settings, ctx) != null) return@forEach
+            var alert = held.alert
+            // Follows and mutes may have changed while it waited.
+            if (gate2(alert, settings, ctx) != null) return@forEach
+            when (val g = gateRelease(alert, settings, ctx)) {
+                is Gate.Drop -> { dropped(g.reason); return@forEach }
+                Gate.Check -> if (held.reason == HoldReason.WatchCheck) {
+                    // Still unknown at the end of the check: a score would spoil, a final is shown without numbers.
+                    if (alert.kind == AlertKind.Score) { dropped(DropReason.WatchUnknown); return@forEach }
+                    alert = alert.copy(homeScore = null, awayScore = null)
+                }
+                Gate.Pass -> Unit
+            }
+            val hidden = scoresHidden(alert, ctx)
             // A game hidden since it was held loses its score alerts; a hidden final loses its numbers at render.
-            if (alert.kind == AlertKind.Score && scoresHidden(alert, ctx)) return@forEach
-            if (held.reason == HoldReason.Delay) {
-                // Delay elapsed: now only the batch window can still hold it.
+            if (alert.kind == AlertKind.Score && hidden) { dropped(DropReason.ScoresHidden); return@forEach }
+            if (held.reason == HoldReason.WatchCheck) {
+                val delayMs = if (hidden) 0L else ctx.spoiler.delayMs
+                if (delayMs > 0 && alert.kind != AlertKind.Start) {
+                    rest = rest + Held(alert, ctx.nowMs + delayMs, HoldReason.Delay)
+                    counts = counts.bump("held:${HoldReason.Delay.wire}")
+                    return@forEach
+                }
+            }
+            if (held.reason != HoldReason.Batch) {
+                // Delay / watch check done: now only the batch window can still hold it.
                 val batchDue = batchDueAt(settings, ctx, ledger.copy(pending = rest))
                 if (batchDue != null) {
                     rest = rest + Held(alert, batchDue, HoldReason.Batch)
@@ -69,10 +128,14 @@ object SportsAlertPolicy {
             }
             ready += alert
         }
-        var next = ledger.copy(pending = rest)
+        var next = ledger.copy(pending = rest, counts = counts)
         if (ready.isEmpty()) return null to next
-        if (capReached(settings, ctx, next)) return null to next
+        if (capReached(settings, ctx, next)) {
+            return null to next.copy(counts = next.counts.bump("dropped:${DropReason.HourlyCap.wire}", ready.size))
+        }
         val banner = banner(ready, ctx)
+        val superseded = ready.size - ready.map { it.eventId }.distinct().size
+        if (superseded > 0) next = next.copy(counts = next.counts.bump("dropped:superseded", superseded))
         next = next.copy(
             shownAtMs = recentShown(next, ctx.nowMs) + ctx.nowMs,
             lastBannerAtMs = ctx.nowMs,
@@ -83,7 +146,15 @@ object SportsAlertPolicy {
     /** When the one-shot local timer should fire next, or null when nothing is held. No network. */
     fun nextTimerAtMs(ledger: AlertLedger): Long? = ledger.pending.minOfOrNull { it.dueAtMs }
 
+    /** The games with a watch-check hold, for which the controller must run the lookup. */
+    fun watchCheckEventIds(ledger: AlertLedger): Set<String> =
+        ledger.pending.filter { it.reason == HoldReason.WatchCheck }.map { it.alert.eventId }.toSet()
+
     // ---- gates ----
+
+    /** Age of the moment; an `at` more than a minute ahead of this device's clock is skew, measured from receipt. */
+    private fun ageMs(alert: SportsAlert, ctx: AlertContext): Long =
+        if (alert.atMs - ctx.nowMs > CLOCK_SKEW_MS) 0L else ctx.nowMs - alert.atMs
 
     private fun gate2(alert: SportsAlert, settings: SportsAlertSettings, ctx: AlertContext): DropReason? {
         val followedTeams = listOfNotNull(alert.homeId, alert.awayId).filter { it in ctx.followedTeamIds }
@@ -91,6 +162,7 @@ object SportsAlertPolicy {
         if (followedTeams.isEmpty() && !leagueFollowed) return DropReason.NotFollowed
         val override = settings.gameOverride(alert.eventId, ctx.nowMs)
         if (override?.isOff == true) return DropReason.Muted
+        // A mute (league or team) wins over a per-game "all".
         val teamActive = followedTeams.any { it !in settings.mutedTeams }
         val leagueActive = leagueFollowed && alert.leagueId !in settings.mutedLeagues
         if (!teamActive && !leagueActive) return DropReason.Muted
@@ -103,15 +175,22 @@ object SportsAlertPolicy {
     }
 
     /** Gates 3-5. Re-run when a held alert is released: the viewer may have opened the game or started a film meanwhile. */
-    private fun gateRelease(alert: SportsAlert, settings: SportsAlertSettings, ctx: AlertContext): DropReason? {
-        if (ctx.openGameEventId == alert.eventId || ctx.watchingEventId == alert.eventId) return DropReason.WatchingThisGame
-        if (inQuietHours(settings, ctx.localMinuteOfDay)) return DropReason.QuietHours
+    private fun gateRelease(alert: SportsAlert, settings: SportsAlertSettings, ctx: AlertContext): Gate {
+        if (ctx.openGameEventId == alert.eventId) return Gate.Drop(DropReason.WatchingThisGame)
+        val watch = ctx.watchStates[alert.eventId] ?: WatchState.Unknown
+        if (watch is WatchState.Channel && watch.id in ctx.playingChannelIds) return Gate.Drop(DropReason.WatchingThisGame)
+        if (inQuietHours(settings, ctx.localMinuteOfDay)) return Gate.Drop(DropReason.QuietHours)
         val blocked = when (settings.duringPlayback) {
             DuringPlayback.Always -> false
             DuringPlayback.Never -> ctx.playback != PlaybackContext.None
             DuringPlayback.LiveTvOnly -> ctx.playback == PlaybackContext.Vod
         }
-        return if (blocked) DropReason.DuringPlayback else null
+        if (blocked) return Gate.Drop(DropReason.DuringPlayback)
+        // Live TV is up, a channel is playing, and nobody knows whether it is THIS game: a goal could spoil it.
+        if (watch == WatchState.Unknown && ctx.playback == PlaybackContext.LiveTv && ctx.playingChannelIds.isNotEmpty() &&
+            alert.kind != AlertKind.Start
+        ) return Gate.Check
+        return Gate.Pass
     }
 
     /** Gates 7 and 8 for an alert that has cleared everything else. */
@@ -125,7 +204,7 @@ object SportsAlertPolicy {
         val batchDue = batchDueAt(settings, ctx, ledger)
         if (batchDue != null) {
             return AlertDecision.HoldUntil(batchDue, HoldReason.Batch) to
-                ledger.copy(pending = ledger.pending + Held(alert, batchDue, HoldReason.Batch))
+                ledger.copy(pending = ledger.pending + Held(alert, batchDue, HoldReason.Batch)).count("held:${HoldReason.Batch.wire}")
         }
         val banner = banner(listOf(alert), ctx)
         return AlertDecision.ShowNow(banner) to ledger.copy(
@@ -186,10 +265,10 @@ object SportsAlertPolicy {
         sport = alert.sport,
     )
 
-    /** One line of text for an alert, numbers only when the policy lets them show. */
+    /** One line of text for an alert, numbers only when the policy lets them show. A blank away shows the home name alone. */
     fun line(alert: SportsAlert, ctx: AlertContext): String {
-        val teams = "${alert.home} v ${alert.away}"
-        val withScore = if (alert.homeScore != null && alert.awayScore != null && !scoresHidden(alert, ctx)) {
+        val teams = if (alert.away.isBlank()) alert.home else "${alert.home} v ${alert.away}"
+        val withScore = if (alert.homeScore != null && alert.awayScore != null && alert.away.isNotBlank() && !scoresHidden(alert, ctx)) {
             "${alert.home} ${alert.homeScore}–${alert.awayScore} ${alert.away}"
         } else teams
         return when (alert.kind) {
@@ -206,7 +285,13 @@ object SportsAlertPolicy {
     }
 
     private fun reject(reason: DropReason, ledger: AlertLedger): Pair<AlertDecision, AlertLedger> =
-        AlertDecision.Drop(reason) to ledger
+        AlertDecision.Drop(reason) to (
+            if (reason.wire in SportsAlertTelemetry.COUNT_ONLY_REASONS) ledger.count("dropped:${reason.wire}") else ledger
+            )
+
+    private fun AlertLedger.count(key: String): AlertLedger = copy(counts = counts.bump(key))
+
+    private fun Map<String, Int>.bump(key: String, by: Int = 1): Map<String, Int> = this + (key to ((this[key] ?: 0) + by))
 
     private fun Set<String>.trimmedToCap(): Set<String> =
         if (size <= SEEN_KEYS_CAP) this else drop(size - SEEN_KEYS_CAP).toCollection(LinkedHashSet())
