@@ -43,7 +43,7 @@ object SportsAlertLabels {
     /** Game page chip: "Alerts: Default" / "Alerts: All" / "Alerts: Off". */
     fun gameChip(choice: GameAlertChoice): String = "Alerts: ${choice.label}"
 
-    const val SIGN_IN_CHIP = "Sign in to get alerts"
+    const val SIGN_IN_CHIP = "Sign in for alerts"
 }
 
 /** The bundled (no network) catalog's league names and sports, for follows that carry neither. */
