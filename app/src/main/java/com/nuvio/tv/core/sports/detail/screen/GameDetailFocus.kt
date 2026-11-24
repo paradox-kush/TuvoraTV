@@ -37,6 +37,9 @@ object GameDetailFocus {
         else -> emptySet()
     }
 
+    /** On open, a hidden LIVE/FINAL game puts focus on the reveal control (chip or card button), not on a section. */
+    fun revealFirst(chip: GameRevealChip, userMoved: Boolean): Boolean = chip == GameRevealChip.SHOW_THIS && !userMoved
+
     fun initial(state: GameDetailUiState, watch: WatchUi, preview: PreviewSlot = PreviewSlot.Hidden): FocusKey? = repair(null, controls(state, watch, preview))
 
     /**

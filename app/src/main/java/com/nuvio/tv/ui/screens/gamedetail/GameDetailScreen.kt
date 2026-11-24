@@ -222,7 +222,23 @@ fun GameDetailScreen(
     val controls = GameDetailFocus.controls(ui, watch, preview, chipSections)
     // The primary action usually appears after the channel match finished, when Channels already holds focus:
     // until the viewer moves focus themselves, Play/Switch takes it the moment it exists.
+    // A hidden LIVE/FINAL game opens on its reveal control (the scoreboard chip), not on a section or Play.
+    val revealRequester = remember { FocusRequester() }
+    val revealFirst = loadedModel != null && GameDetailFocus.revealFirst(GameRevealChip.of(globallyHidden, revealed, loadedModel.state), userMoved)
+    val revealFirstNow by androidx.compose.runtime.rememberUpdatedState(revealFirst)
+    LaunchedEffect(loadedModel != null, revealFirst) {
+        if (!revealFirst) return@LaunchedEffect
+        autoFocusing = true
+        repeat(6) { attempt ->
+            withFrame()
+            runCatching { revealRequester.requestFocus() }
+            kotlinx.coroutines.delay(80L * (attempt + 1))
+            if (scoreChipFocused) return@repeat
+        }
+        autoFocusing = false
+    }
     LaunchedEffect(controls) {
+        if (revealFirstNow) return@LaunchedEffect
         val target = GameDetailFocus.target(focusedKey, userMoved, controls)
         if (target != null && target != focusedKey) {
             autoFocusing = true
@@ -284,6 +300,7 @@ fun GameDetailScreen(
                         ScoreboardCard(
                             model, s.stale, colors, moments, scoreMode,
                             revealChip = GameRevealChip.of(globallyHidden, revealed, model.state),
+                            revealRequester = revealRequester,
                             onReveal = viewModel::revealThisGame,
                             onHideAgain = viewModel::hideThisGameAgain,
                             onChipFocus = { scoreChipFocused = it },
@@ -454,6 +471,7 @@ private fun ScoreboardCard(
     model: GameDetailTvModel, stale: Boolean, colors: TeamColors, moments: MomentBatch,
     scoreMode: GameScoreMode = GameScoreMode.SHOWN,
     revealChip: GameRevealChip = GameRevealChip.NONE,
+    revealRequester: FocusRequester = remember { FocusRequester() },
     onReveal: () -> Unit = {},
     onHideAgain: () -> Unit = {},
     onChipFocus: (Boolean) -> Unit = {},
@@ -479,7 +497,7 @@ private fun ScoreboardCard(
                     label = if (revealChip == GameRevealChip.SHOW_THIS) "Show this game's score" else "Hide again",
                     selected = revealChip == GameRevealChip.SHOW_THIS,
                     onClick = if (revealChip == GameRevealChip.SHOW_THIS) onReveal else onHideAgain,
-                    modifier = Modifier.onFocusChanged { onChipFocus(it.isFocused) },
+                    modifier = Modifier.focusRequester(revealRequester).onFocusChanged { onChipFocus(it.isFocused) },
                 )
                 Spacer(Modifier.width(12.dp))
             }

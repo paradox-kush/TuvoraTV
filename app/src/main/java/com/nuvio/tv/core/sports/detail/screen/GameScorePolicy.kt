@@ -21,11 +21,10 @@ sealed interface GameRender {
 
 /** Removes everything on the game page that tells the result or the score. Pure. */
 object GameSpoilerFilter {
-    // ALLOW-list (twin of Mobile): a started game keeps only what cannot tell the result. A block type added later
-    // is hidden until someone decides it is safe.
-    private val safeBlocks = setOf(
-        BlockType.WATCH, BlockType.STANDINGS, BlockType.STANDINGS_TABLE, BlockType.LINEUP, BlockType.FORM, BlockType.NEXT,
-    )
+    // ALLOW-list (twin of Mobile): a started game keeps only what cannot tell the result. Standings (streaks, W-L, GB
+    // move with the result) and form (recent results) are NOT safe. A block type added later stays hidden until
+    // someone decides it is safe.
+    private val safeBlocks = setOf(BlockType.WATCH, BlockType.LINEUP, BlockType.NEXT)
 
     fun scrub(detail: GameDetail): GameDetail {
         if (detail.state != GameState.LIVE && detail.state != GameState.FINAL) return detail
@@ -38,7 +37,7 @@ object GameSpoilerFilter {
     }
 
     // The win-loss record moves with every result, so it is a spoiler as well.
-    private fun Side.noScore(): Side = copy(score = null, record = null)
+    private fun Side.noScore(): Side = copy(score = null, record = null, form = null)
 }
 
 /** The game page's per-game reveal control (the global setting is only ever changed from the hub). */

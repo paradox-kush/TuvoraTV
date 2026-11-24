@@ -35,13 +35,13 @@ class GameScorePolicyTest {
     )
 
     @Test
-    fun `scrub removes scores and spoiler blocks but keeps status lineups and form`() {
+    fun `scrub removes scores and spoiler blocks but keeps status and lineups`() {
         val s = GameSpoilerFilter.scrub(detail(GameState.LIVE, "2", "1"))
         val t = s.header as GameHeader.Teams
         assertNull("home score", t.home.score)
         assertNull("away score", t.away.score)
         val types = s.blocks.map { it.type }.toSet()
-        assertEquals("kept", setOf(BlockType.LINEUP, BlockType.FORM), types)
+        assertEquals("kept", setOf(BlockType.LINEUP), types)
         assertEquals("clock stays", "40'", s.live?.clock)
         assertEquals("state stays", GameState.LIVE, s.state)
         assertEquals("availability stays", Availability.FULL, s.availability)
@@ -89,9 +89,40 @@ class GameScorePolicyTest {
     }
 
     @Test
-    fun `scrub is an allow-list - results and highlights go, standings lineup and form stay`() {
+    fun `scrub is an allow-list - results highlights standings and form go, lineup stays`() {
         val types = GameSpoilerFilter.scrub(withBlocks(GameState.FINAL)).blocks.map { it.type }.toSet()
-        assertEquals("only the safe ones", setOf(BlockType.STANDINGS, BlockType.STANDINGS_TABLE, BlockType.LINEUP, BlockType.FORM), types)
+        assertEquals("standings streaks and form give the winner away", setOf(BlockType.LINEUP), types)
+    }
+
+    @Test
+    fun `scrub blanks each side's form and record`() {
+        val d = withBlocks(GameState.FINAL)
+        val withForm = d.copy(header = GameHeader.Teams(Side("Home", score = "2", record = "1-0", form = listOf("W", "W")), Side("Away", score = "1", form = listOf("L"))))
+        val h = GameSpoilerFilter.scrub(withForm).header as GameHeader.Teams
+        assertNull("home form", h.home.form)
+        assertNull("away form", h.away.form)
+    }
+
+    @Test
+    fun `an upcoming game keeps standings and form`() {
+        val types = GameSpoilerFilter.scrub(withBlocks(GameState.UPCOMING)).blocks.map { it.type }.toSet()
+        assertTrue("standings kept", BlockType.STANDINGS in types && BlockType.FORM in types)
+    }
+
+    @Test
+    fun `a revealed game keeps its standings and form`() {
+        val d = withBlocks(GameState.FINAL)
+        val r = GameScorePolicy.render(ScoreSpoilerSettings(shown = true), "g1", DelayedValueBuffer(), d, false, 0L) as GameRender.Shown
+        assertTrue("standings kept", r.detail.blocks.any { it.type == BlockType.STANDINGS })
+        assertTrue("form kept", r.detail.blocks.any { it.type == BlockType.FORM })
+    }
+
+    @Test
+    fun `initial focus is the reveal control while hidden and not after the viewer moved`() {
+        assertTrue("hidden, nothing moved", GameDetailFocus.revealFirst(GameRevealChip.SHOW_THIS, false))
+        assertEquals("viewer moved", false, GameDetailFocus.revealFirst(GameRevealChip.SHOW_THIS, true))
+        assertEquals("revealed", false, GameDetailFocus.revealFirst(GameRevealChip.HIDE_AGAIN, false))
+        assertEquals("not hidden", false, GameDetailFocus.revealFirst(GameRevealChip.NONE, false))
     }
 
     @Test
