@@ -57,7 +57,7 @@ class SportsAlertSubscription @Inject constructor(
         }
         // Held alerts are worth nothing once the app is not being looked at: going to the background clears them.
         backgroundJob = scope.launch {
-            foreground.isForeground.distinctUntilChanged().collect { if (!it) controller.onBackground() }
+            foreground.isForeground.collect { if (!it) controller.onBackground() }
         }
         job = scope.launch {
             combine(
