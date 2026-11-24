@@ -22,13 +22,23 @@ object XtreamSeriesEpisodePolicy {
     // can't match; the LAST marker wins (titles put the season after the name).
     private val SEASON_IN_NAME = Regex("\\b(?:season\\s*|s)(\\d{1,2})\\b")
 
+    // A pack entry: "Show S01-S05", "Show Season 1-5", "Show S1 to S4". It holds SEVERAL seasons, so it is not a
+    // split-season entry for any one of them.
+    private val SEASON_RANGE_IN_NAME =
+        Regex("\\b(?:seasons?\\s*|s)\\d{1,2}\\s*(?:-|\u2013|\u2014|to)\\s*(?:seasons?\\s*|s)?\\d{1,2}\\b")
+
     /**
      * The season a catalog ENTRY stands for, read from its name — `5` for "Breaking Bad S5 En",
      * `null` for a whole-series entry like "Breaking Bad" (no season marker).
      */
     fun seasonInName(name: String): Int? {
+        val lower = name.lowercase()
+        // A range names no single season. Reading its LAST marker ("S01-S05" -> 5) hid the pack from seasons 1-4 and, for
+        // season 5, matched episodes by number alone against its real-numbered list. As a whole-series entry it matches
+        // on its own internal season numbers, which is what such a pack carries.
+        if (SEASON_RANGE_IN_NAME.containsMatchIn(lower)) return null
         var found: Int? = null
-        for (m in SEASON_IN_NAME.findAll(name.lowercase())) found = m.groupValues[1].toIntOrNull()
+        for (m in SEASON_IN_NAME.findAll(lower)) found = m.groupValues[1].toIntOrNull()
         return found
     }
 
