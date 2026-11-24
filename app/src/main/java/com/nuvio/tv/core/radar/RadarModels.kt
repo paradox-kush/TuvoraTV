@@ -315,6 +315,8 @@ data class RadarPrefs(
     @SerialName("scores_shown") val scoresShown: Boolean = true,
     /** Score delay in seconds (0, 15, 30, 60; anything else reads as 0). */
     @SerialName("score_delay_s") val scoreDelayS: Int = 0,
+    /** Device-local, never sent: a hide/delay change not yet pushed. A pull must not overwrite it. */
+    @SerialName("spoiler_dirty") val spoilerDirty: Boolean = false,
 ) {
     val spoiler: ScoreSpoilerSettings
         get() = ScoreSpoilerSettings(shown = scoresShown, delaySeconds = ScoreSpoilerSettings.sanitizeDelay(scoreDelayS))

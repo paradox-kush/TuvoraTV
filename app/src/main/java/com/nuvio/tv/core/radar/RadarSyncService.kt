@@ -41,12 +41,6 @@ class RadarSyncService @Inject constructor(
     private var pushJob: Job? = null
 
     @Volatile var isSyncingFromRemote: Boolean = false
-    private val spoilerPush = SpoilerPushTracker()
-    // A push requested while a pull was applying: run it as soon as the pull ends instead of losing it.
-    @Volatile private var pushRequestedDuringPull = false
-
-    /** A hide/delay change was made locally: it beats a pull until it has been pushed. */
-    fun noteLocalSpoilerChange() = spoilerPush.noteChange()
 
     @Serializable
     private data class FollowRow(
@@ -96,7 +90,7 @@ class RadarSyncService @Inject constructor(
     /** Debounced push after a local change (called from RadarRepository). */
     fun triggerRemoteSync() {
         if (!authManager.canSync) return
-        if (isSyncingFromRemote) { pushRequestedDuringPull = true; return }
+        if (isSyncingFromRemote) return
         pushJob?.cancel()
         pushJob = scope.launch {
             delay(600)
@@ -107,7 +101,6 @@ class RadarSyncService @Inject constructor(
     suspend fun pushToRemote(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val profileId = profileManager.activeProfileId.value
-            val pushToken = spoilerPush.beginPush()
             val state = store.state.first()
             val params = buildJsonObject {
                 put("p_profile_id", profileId)
@@ -151,19 +144,13 @@ class RadarSyncService @Inject constructor(
                 })
             }
             withJwtRefreshRetry { postgrest.rpc("sync_push_radar", params) }
-            spoilerPush.pushSucceeded(pushToken)
+            // Clear the dirty flag only if the setting still equals what was pushed (a later toggle stays dirty).
+            store.updateState { it.copy(prefs = SpoilerSync.clearIfPushed(it.prefs, state.prefs.scoresShown, state.prefs.scoreDelayS)) }
             Log.d(TAG, "Pushed ${state.follows.size} radar follows, ${state.teams.size} teams for profile $profileId")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to push radar state", e)
             Result.failure(e)
-        }
-    }
-
-    private fun flushPushRequestedDuringPull() {
-        if (pushRequestedDuringPull) {
-            pushRequestedDuringPull = false
-            triggerRemoteSync()
         }
     }
 
@@ -202,11 +189,12 @@ class RadarSyncService @Inject constructor(
             }
             if (followRows.isEmpty() && teamRows.isEmpty() && prefsRow == null) {
                 val local = store.state.first()
-                if (local.follows.isNotEmpty() || local.teams.isNotEmpty() || local.prefs != RadarPrefs()) pushToRemote()
+                if (local.follows.isNotEmpty() || local.teams.isNotEmpty() || local.prefs != RadarPrefs() || SpoilerSync.shouldPushAfterPull(local.prefs)) pushToRemote()
                 return@withContext Result.success(Unit)
             }
             isSyncingFromRemote = true
-            store.saveState(
+            var pushAfter = false
+            store.updateState { local ->
                 RadarLocalState(
                     follows = followRows.sortedBy { it.sortOrder }
                         .map {
@@ -221,19 +209,16 @@ class RadarSyncService @Inject constructor(
                                 custom = it.custom,
                             )
                         },
-                    prefs = store.state.first().prefs.let { local ->
-                        prefsRow?.let {
-                            RadarPrefsMerge.merge(
-                                local = local,
-                                featuredEventId = it.featuredEventId,
-                                optInState = it.optInState,
-                                promoDismissed = it.promoDismissed,
-                                scoresShown = it.scoresShown,
-                                scoreDelayS = it.scoreDelayS,
-                                localSpoilerChangePending = spoilerPush.pending,
-                            )
-                        } ?: local
-                    },
+                    prefs = prefsRow?.let {
+                        RadarPrefsMerge.merge(
+                            local = local.prefs,
+                            featuredEventId = it.featuredEventId,
+                            optInState = it.optInState,
+                            promoDismissed = it.promoDismissed,
+                            scoresShown = it.scoresShown,
+                            scoreDelayS = it.scoreDelayS,
+                        )
+                    } ?: local.prefs,
                     teams = teamRows.sortedBy { it.sortOrder }
                         .map {
                             RadarTeamFollow(
@@ -247,15 +232,15 @@ class RadarSyncService @Inject constructor(
                                 sortOrder = it.sortOrder,
                             )
                         },
-                )
-            )
+                ).also { pushAfter = SpoilerSync.shouldPushAfterPull(it.prefs) }
+            }
             isSyncingFromRemote = false
-            flushPushRequestedDuringPull()
+            // A hide/delay change still unpushed (failed/offline push, or a toggle during this pull) goes out now.
+            if (pushAfter) triggerRemoteSync()
             Log.d(TAG, "Pulled ${followRows.size} radar follows, ${teamRows.size} teams for profile $profileId")
             Result.success(Unit)
         } catch (e: Exception) {
             isSyncingFromRemote = false
-            flushPushRequestedDuringPull()
             Log.e(TAG, "Failed to pull radar state", e)
             Result.failure(e)
         }

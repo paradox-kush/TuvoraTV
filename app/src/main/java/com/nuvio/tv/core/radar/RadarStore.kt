@@ -39,6 +39,16 @@ class RadarStore @Inject constructor(
         store().edit { prefs -> prefs[stateKey] = json.encodeToString(state) }
     }
 
+    /** Atomic read-modify-write of the local state (one DataStore transaction). Returns the new state. */
+    suspend fun updateState(transform: (RadarLocalState) -> RadarLocalState): RadarLocalState {
+        var result = RadarLocalState()
+        store().edit { prefs ->
+            result = transform(parseState(prefs[stateKey]))
+            prefs[stateKey] = json.encodeToString(result)
+        }
+        return result
+    }
+
     suspend fun loadFixtures(): RadarFixturesResponse? =
         runCatching {
             store().data.first()[fixturesKey]?.let { json.decodeFromString<RadarFixturesResponse>(it) }
