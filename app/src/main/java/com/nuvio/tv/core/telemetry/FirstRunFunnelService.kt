@@ -20,6 +20,8 @@ interface FirstRunStateStore {
  * @param sink where the event goes (production: `PostHog.capture`, which the gate then sends explicitly).
  * @param consentEnabled the "Crash & usage reports" switch, read at delivery.
  * @param supportCodeExistedAtStart a support code was already on disk before this process generated one.
+ * @param flush asks the analytics SDK to upload what it holds (production: `PostHog.flush()` off the main thread). Called
+ * right after a `first_leave` was captured, because the process may be suspended or killed any moment after backgrounding.
  */
 class FirstRunFunnelService(
     private val store: FirstRunStateStore,
@@ -27,10 +29,12 @@ class FirstRunFunnelService(
     private val consentEnabled: () -> Boolean,
     private val sink: (String, Map<String, Any>) -> Unit,
     private val supportCodeExistedAtStart: Boolean,
+    private val flush: () -> Unit = {},
 ) {
     private val lock = Any()
     private var state: FirstRunState? = null
     private var started = false
+    private val visit = FirstLeaveVisit(nowMs())
 
     private val sdkReady = AtomicBoolean(false)
     private val held = ArrayList<Map<String, Any>>()
@@ -60,6 +64,38 @@ class FirstRunFunnelService(
             commit(state, t)
         }
         emit?.let(::deliver)
+    }
+
+    /** A first-visit fact for `first_leave`. Persisted ones go through the same lock and store as the steps; nothing is sent here. */
+    fun note(note: FirstRunNote) {
+        synchronized(lock) {
+            if (note is FirstRunNote.Screen) { visit.screen(note.name); return }
+            val before = state
+            val next = FirstRunFunnel.note(before, note) ?: return
+            commit(before, FirstRunTransition(next, null))
+        }
+    }
+
+    fun noteScreen(name: String) = note(FirstRunNote.Screen(name))
+
+    /** The whole app came back to the foreground: a new foreground stint starts (`secs_in_app`). */
+    fun onForeground() {
+        val now = nowMs()
+        synchronized(lock) { visit.foreground(now) }
+    }
+
+    /**
+     * The whole app left the foreground. The first time this happens on a new install before anything played, the
+     * `first_leave` summary is captured under the lock (two concurrent signals emit one), delivered, and the SDK is asked
+     * to flush. Once-gate, consent and the existing-install rule are the funnel's.
+     */
+    fun onBackground() {
+        val now = nowMs()
+        val emit = synchronized(lock) {
+            commit(state, FirstRunFunnel.record(state, FirstRunStep.FIRST_LEAVE, now, visit.props(now)))
+        } ?: return
+        deliver(emit)
+        runCatching(flush)
     }
 
     /** The analytics SDK is set up: events held so far are delivered (consent checked now). */

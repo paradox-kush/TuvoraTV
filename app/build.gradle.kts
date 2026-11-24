@@ -716,6 +716,8 @@ dependencies {
     implementation(libs.androidx.tv.material)
     implementation(libs.androidx.tvprovider)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    // ProcessLifecycleOwner: the whole-app foreground signal for the first_leave funnel step.
+    implementation(libs.androidx.lifecycle.process)
     implementation("androidx.activity:activity-compose:1.11.0")
 
     // Hilt
