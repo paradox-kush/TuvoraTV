@@ -22,7 +22,7 @@ object FirstLeavePolicy {
         "sports_hub", "game_detail", "recordings", "multiview", "catalog_order", "plugins", "experience_mode_selection",
         "layout_selection", "layout_settings", "account", "manage_profiles", "auth_sign_in", "auth_qr_sign_in",
         "sync_code_generate", "sync_code_claim", "catalog_see_all", "collections", "collection_editor", "folder_detail",
-        "profile_selection", "cast_detail", "tmdb_entity_browse",
+        "profile_selection", "cast_detail", "tmdb_entity_browse", "sports_alerts_settings",
     )
 
     /**

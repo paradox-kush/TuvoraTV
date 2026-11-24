@@ -54,7 +54,6 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.CalendarMonth
 import com.nuvio.tv.ui.screens.calendar.CalendarCornerNoteHost
-import com.nuvio.tv.ui.components.SportsAlertBannerHost
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.runtime.Composable
@@ -348,7 +347,10 @@ open class MainActivity : ComponentActivity() {
     lateinit var partyRepository: PartyRepository
 
     @Inject
-    lateinit var sportsAlertController: com.nuvio.tv.core.radar.alerts.SportsAlertController
+    lateinit var sportsAlertController: com.nuvio.tv.core.contracts.SportsAlertsHost
+
+    @Inject
+    lateinit var sportsAlertsUi: com.nuvio.tv.core.contracts.SportsAlertsUi
 
     private val pendingDeepLinkUrl = MutableStateFlow<String?>(null)
     private val pendingLaunchIntent = MutableStateFlow<Intent?>(null)
@@ -974,12 +976,10 @@ open class MainActivity : ComponentActivity() {
                         val entry = navBackStackEntry
                         val args = entry?.arguments
                         sportsAlertController.onRoute(
-                            com.nuvio.tv.core.radar.alerts.SportsAlertRouteContext.from(
-                                route = entry?.destination?.route,
-                                contentType = args?.getString("contentType"),
-                                contentId = args?.getString("contentId"),
-                                gameId = args?.getString("gameId"),
-                            )
+                            route = entry?.destination?.route,
+                            contentType = args?.getString("contentType"),
+                            contentId = args?.getString("contentId"),
+                            gameId = args?.getString("gameId"),
                         )
                     }
                     val currentRoute = optimisticRoute ?: actualRoute
@@ -1383,9 +1383,7 @@ open class MainActivity : ComponentActivity() {
                             )
 
                             // Sports alerts: top-right, not focusable, never moves focus (hold OK acts, see dispatchKeyEvent).
-                            val sportsAlertViewModel: com.nuvio.tv.ui.components.SportsAlertBannerViewModel =
-                                hiltViewModel(this@MainActivity)
-                            SportsAlertBannerHost(viewModel = sportsAlertViewModel)
+                            sportsAlertsUi.BannerHost(this@Box)
 
                             val isTrailerPlaying by trailerPlayerPool.isTrailerPlaying.collectAsState()
                             LaunchedEffect(isTrailerPlaying) {

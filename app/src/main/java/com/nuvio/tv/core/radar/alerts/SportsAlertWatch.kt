@@ -12,14 +12,14 @@ import javax.inject.Singleton
  * (every tile). Each publisher clears only what IT set, so one player leaving never erases another's channel.
  */
 @Singleton
-class SportsAlertPlayingChannels @Inject constructor() {
+class SportsAlertPlayingChannels @Inject constructor() : com.nuvio.tv.core.contracts.SportsAlertsPlayingChannels {
     private val state = MutableStateFlow<Set<String>>(emptySet())
     val ids: StateFlow<Set<String>> = state.asStateFlow()
 
     // Atomic: two players (clean live + a multiview tile) can publish at the same moment.
-    fun set(id: String) { state.update { it + id } }
+    override fun set(id: String) { state.update { it + id } }
 
-    fun clear(id: String) { state.update { it - id } }
+    override fun clear(id: String) { state.update { it - id } }
 }
 
 /**

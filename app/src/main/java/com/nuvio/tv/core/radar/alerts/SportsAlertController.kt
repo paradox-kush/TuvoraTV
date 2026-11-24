@@ -5,6 +5,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
+import com.nuvio.tv.core.contracts.AlertAction
 import com.nuvio.tv.core.radar.RadarLocalState
 import com.nuvio.tv.core.radar.RadarStore
 import com.nuvio.tv.core.radar.RevealedGames
@@ -35,7 +36,7 @@ class SportsAlertController @Inject constructor(
     private val revealedGames: RevealedGames,
     private val watchLookup: SportsAlertWatchLookup,
     private val playingChannels: SportsAlertPlayingChannels,
-) {
+) : com.nuvio.tv.core.contracts.SportsAlertsHost {
     private val scope = CoroutineScope(
         SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> Log.e(TAG, "alert handling failed", e) },
     )
@@ -62,13 +63,18 @@ class SportsAlertController @Inject constructor(
     val watchContentId: StateFlow<String?> get() = engine.watchContentId
 
     /** One-shot: the NavHost collects it and opens the destination. */
-    val actions: SharedFlow<AlertAction> get() = engine.actions
+    override val actions: SharedFlow<AlertAction> get() = engine.actions
 
     /** Touch the lazy state flow early so the first alert never reads the empty default. */
     fun start() { state.value }
 
     /** Called by the host whenever the navigation destination changes. */
     fun onRoute(context: SportsAlertRouteContext) { route = context }
+
+    override fun onRoute(route: String?, contentType: String?, contentId: String?, gameId: String?) =
+        onRoute(SportsAlertRouteContext.from(route, contentType, contentId, gameId))
+
+    override fun publishLineup(gameId: String): Boolean = watchLookup.publishLineup(gameId)
 
     /** One broadcast payload from a joined channel. Never throws. */
     fun onPayload(payload: JsonObject) {
@@ -115,7 +121,7 @@ class SportsAlertController @Inject constructor(
     private val handler by lazy { Handler(Looper.getMainLooper()) }
 
     /** Re-delivers a key to the app exactly as the activity would have (set by MainActivity: `super.dispatchKeyEvent`). */
-    @Volatile var replaySink: ((KeyEvent) -> Boolean)? = null
+    @Volatile override var replaySink: ((KeyEvent) -> Boolean)? = null
 
     private val holdTimer = Runnable {
         val step = AlertHoldKeyPolicy.onTimer(hold, banner.value != null, SystemClock.uptimeMillis())
@@ -148,7 +154,7 @@ class SportsAlertController @Inject constructor(
      * The activity paused: a press in flight loses its up for good, so it is forgotten (never replayed into a paused
      * activity, never fired later by the timer).
      */
-    fun onActivityPaused() {
+    override fun onActivityPaused() {
         handler.removeCallbacks(holdTimer)
         hold = AlertHoldKeyPolicy.onPause(hold).state
         heldDown = null
@@ -159,7 +165,7 @@ class SportsAlertController @Inject constructor(
      * while a banner is up (it may be the start of a hold), the rest of a held OK, and a short press's up (the press is
      * replayed whole through [replaySink]). Any other key, and OK with no banner, returns false and flows on untouched.
      */
-    fun onKeyEvent(event: KeyEvent): Boolean {
+    override fun onKeyEvent(event: KeyEvent): Boolean {
         if (replaying) return false
         val phase = when (event.action) {
             KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) AlertHoldKeyPolicy.Phase.Down else AlertHoldKeyPolicy.Phase.Repeat
