@@ -347,6 +347,13 @@ internal class AndroidMedia3BackendFactory(
         ).applyTileMode().build()
         player.skipSilenceEnabled = plan.skipSilence
         val mediaItem = mediaItemFor(plan)
+        // A default-network switch (Wi-Fi -> Ethernet / hotspot) leaves this player's sockets on the old network for
+        // good. On a real switch, cancel this player's own tracked reads: the load retry re-opens them on the new
+        // network. A single-use (SESSION_ONLY) link is never cancelled ([PlaybackNetworkSwitchPolicy]).
+        val networkSwitch = com.nuvio.tv.core.network.PlaybackNetworkSwitch.coordinator(applicationContext).register(
+            singleUseLink = plan.request.transientLoadRetryPolicy ==
+                com.nuvio.tv.playback.core.TransientLoadRetryPolicy.SESSION_ONLY,
+        ) { callRegistry.cancelAll() }
         return AndroidMedia3Backend(
             player,
             mediaItem,
@@ -356,7 +363,10 @@ internal class AndroidMedia3BackendFactory(
             releaseController,
             plan,
             externalSubtitleResolver,
-            onTerminated = execution::finish,
+            onTerminated = {
+                networkSwitch.dispose()
+                execution.finish()
+            },
             releaseLedger = releaseLedger,
         )
     }

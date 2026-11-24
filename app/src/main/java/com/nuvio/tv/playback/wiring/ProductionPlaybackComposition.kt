@@ -129,6 +129,8 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
 ) {
     private val appContext = context.applicationContext
     private val strictPlaybackHttpClient = OkHttpClient.Builder().build()
+        // A default-network switch drops its idle keep-alive connections too (PlaybackNetworkSwitchPolicy).
+        .also { com.nuvio.tv.core.network.PlaybackNetworkSwitch.trackIdlePool(it.connectionPool) }
     private val preferenceRepository = PlaybackPreferenceRepository(
         SharedPreferencesPlaybackPreferenceDocumentStore(appContext),
     )

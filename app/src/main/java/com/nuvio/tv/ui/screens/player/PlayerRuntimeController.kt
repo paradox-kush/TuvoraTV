@@ -724,6 +724,10 @@ class PlayerRuntimeController(
     internal var mpvMediaSessionPlayer: MpvMediaSessionPlayer? = null
     internal var ffmpegAudioRenderer: FfmpegAudioRenderer? = null
     internal var mpvView: NuvioMpvSurfaceView? = null
+    /** Held while a stream is open: re-opens it when the default network changes (PlaybackNetworkSwitchPolicy). */
+    internal var networkSwitchRegistration: com.nuvio.tv.core.lifecycle.Disposable? = null
+    /** What libmpv was last handed (url, headers), so a network-switch reload opens exactly that again. */
+    internal var mpvLoadedSource: Pair<String, Map<String, String>>? = null
     internal val subtitleCueTracker = SubtitleCueTracker()
     internal val styledSubtitles = StyledSubtitlePresenter()
     internal var mpvInitializationInProgress: Boolean = false

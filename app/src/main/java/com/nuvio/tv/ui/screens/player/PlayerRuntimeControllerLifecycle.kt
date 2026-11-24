@@ -48,6 +48,8 @@ internal fun PlayerRuntimeController.releasePlayer(
         }
     }
 
+    networkSwitchRegistration?.dispose()
+    networkSwitchRegistration = null
     isReleasingPlayer = true
     // Every rebuild and exit releases here: the viewing that started on this player ends now.
     playbackBreadcrumbs.stop()

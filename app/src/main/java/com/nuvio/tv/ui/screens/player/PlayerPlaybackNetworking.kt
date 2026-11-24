@@ -172,6 +172,34 @@ internal object PlayerPlaybackNetworking {
         }
     }
 
+    /**
+     * The default network changed ([com.nuvio.tv.core.network.PlaybackNetworkSwitchPolicy]): close pooled idle
+     * connections so the next request opens on the new network. VOD clients are `newBuilder()`s of
+     * [playbackHttpClient] on [NuvioExoPlayerPerformanceHelper.sharedConnectionPool]; panels use the trust-all client.
+     */
+    internal fun releaseIdleConnections() {
+        runCatching { NuvioExoPlayerPerformanceHelper.sharedConnectionPool.evictAll() }
+        runCatching { playbackHttpClient.connectionPool.evictAll() }
+        runCatching { trustAllPlaybackHttpClient.connectionPool.evictAll() }
+    }
+
+    /**
+     * Abort the VOD reads in flight so Media3's load retry (and the parallel-range chunk retry) re-opens them on the
+     * new network. Every VOD client shares these two dispatchers. Loopback reads (local relays) are on no network.
+     */
+    internal fun cancelInFlightCalls() {
+        listOf(playbackHttpClient.dispatcher, trustAllPlaybackHttpClient.dispatcher).forEach { dispatcher ->
+            dispatcher.runningCalls()
+                .filterNot { isLoopbackHost(it.request().url.host) }
+                .forEach { it.cancel() }
+        }
+    }
+
+    private fun isLoopbackHost(host: String): Boolean = when (host.trim('[', ']').lowercase()) {
+        "127.0.0.1", "localhost", "::1" -> true
+        else -> false
+    }
+
     internal fun withHttp2On403Fallback(
         http1Client: OkHttpClient,
         singleUseLink: Boolean = false,

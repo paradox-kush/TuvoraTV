@@ -136,6 +136,7 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
             .takeIf { it > 0L }
             ?: (_uiState.value.pendingSeekPosition?.coerceAtLeast(0L) ?: 0L)
         playbackAnalyticsDiagnostics.setStartupStartPosition(initialResumePosition)
+        mpvLoadedSource = url to headers
         view.setMedia(url, headers, initialResumePosition)
         playbackAnalyticsDiagnostics.recordRawEventLine(
             "PLAYER_INIT: engine=MPV host=${url.safeMpvTraceHost()} " +
@@ -220,6 +221,7 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
 }
 
 internal fun PlayerRuntimeController.releaseMpvPlayer() {
+    mpvLoadedSource = null
     unregisterMpvEventRelay()
     runCatching { mpvView?.releasePlayer() }
 }
