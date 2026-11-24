@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.CalendarMonth
 import com.nuvio.tv.ui.screens.calendar.CalendarCornerNoteHost
+import com.nuvio.tv.ui.components.SportsAlertBannerHost
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.runtime.Composable
@@ -1384,7 +1385,7 @@ open class MainActivity : ComponentActivity() {
                             // Sports alerts: top-right, not focusable, never moves focus (hold OK acts, see dispatchKeyEvent).
                             val sportsAlertViewModel: com.nuvio.tv.ui.components.SportsAlertBannerViewModel =
                                 hiltViewModel(this@MainActivity)
-                            com.nuvio.tv.ui.components.SportsAlertBannerHost(viewModel = sportsAlertViewModel)
+                            SportsAlertBannerHost(viewModel = sportsAlertViewModel)
 
                             val isTrailerPlaying by trailerPlayerPool.isTrailerPlaying.collectAsState()
                             LaunchedEffect(isTrailerPlaying) {

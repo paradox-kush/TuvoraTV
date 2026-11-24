@@ -15,14 +15,14 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+private const val t0 = 1_800_000_000_000L
+
 /**
  * The engine end to end on a virtual clock: a goal arrives while live TV plays an unknown channel, is held, the
  * lookup answers (or does not), the policy re-evaluates, the timer fires, the banner shows and goes away.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SportsAlertEngineTest {
-    private val t0 = 1_800_000_000_000L
-
     private class FakeWatch : AlertWatchPort {
         var states: Map<String, WatchState> = emptyMap()
         /** null = never answers; else answers after the delay with this result. */

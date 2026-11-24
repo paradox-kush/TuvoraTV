@@ -88,6 +88,25 @@ data class SportsAlertSettings(
         else -> set + id
     }
 
+    private fun render(): JsonObject = buildJsonObject {
+        put("enabled", enabled)
+        put("team_level", teamLevel.wire)
+        put("league_level", leagueLevel.wire)
+        put("quiet_on", quietOn)
+        put("quiet_start_min", sanitizeMinute(quietStartMin, DEFAULT_QUIET_START))
+        put("quiet_end_min", sanitizeMinute(quietEndMin, DEFAULT_QUIET_END))
+        put("max_per_hour", sanitizeMaxPerHour(maxPerHour))
+        put("batch_s", sanitizeBatch(batchSeconds))
+        put("during_playback", duringPlayback.wire)
+        put("muted_leagues", buildJsonArray { mutedLeagues.sorted().take(MAX_MUTED_IDS).forEach { add(JsonPrimitive(it)) } })
+        put("muted_teams", buildJsonArray { mutedTeams.sorted().take(MAX_MUTED_IDS).forEach { add(JsonPrimitive(it)) } })
+        put("games", buildJsonArray {
+            games.forEach { g ->
+                add(buildJsonObject { put("id", g.id); put("level", g.level); put("exp", g.expMs) })
+            }
+        })
+    }
+
     /**
      * The synced object. Held to [CLIENT_BUDGET_BYTES] of compact JSON (the backend checks the jsonb TEXT, which adds
      * spaces, against 8 KB): when over, the oldest game overrides go first, then trailing muted ids, until it fits.
@@ -105,93 +124,6 @@ data class SportsAlertSettings(
             json = s.render()
         }
         return json
-    }
-
-    companion object {
-        const val LEVEL_ALL = "all"
-        const val LEVEL_OFF = "off"
-    }
-}
-
-/** What the game page's Alerts chip says: Default -> All -> Off -> Default. */
-enum class GameAlertChoice(val label: String) {
-    Default("Default"), All("All"), Off("Off");
-
-    fun next(): GameAlertChoice = entries[(ordinal + 1) % entries.size]
-}
-
-/**
- * Sports alerts settings (per profile, one object in [com.nuvio.tv.core.radar.RadarPrefs], synced as `alerts`).
- * Defaults are the product defaults; every unknown or out-of-range value reads as the default, so a newer or a
- * hand-edited blob can never break a launch. Twin of the Mobile/Desktop class of the same name.
- */
-data class SportsAlertSettings(
-    val enabled: Boolean = true,
-    val teamLevel: AlertLevel = AlertLevel.All,
-    val leagueLevel: AlertLevel = AlertLevel.FinalOnly,
-    val quietOn: Boolean = true,
-    val quietStartMin: Int = 1320,
-    val quietEndMin: Int = 480,
-    val maxPerHour: Int = 6,
-    val batchSeconds: Int = 60,
-    val duringPlayback: DuringPlayback = DuringPlayback.LiveTvOnly,
-    val mutedLeagues: Set<String> = emptySet(),
-    val mutedTeams: Set<String> = emptySet(),
-    val games: List<GameAlertOverride> = emptyList(),
-) {
-    val batchMs: Long get() = batchSeconds * 1000L
-
-    fun gameOverride(eventId: String, nowMs: Long): GameAlertOverride? =
-        games.firstOrNull { it.id == eventId && it.expMs > nowMs }
-
-    fun choiceFor(eventId: String, nowMs: Long): GameAlertChoice = when (gameOverride(eventId, nowMs)?.level) {
-        GameAlertOverride.LEVEL_ALL -> GameAlertChoice.All
-        GameAlertOverride.LEVEL_OFF -> GameAlertChoice.Off
-        else -> GameAlertChoice.Default
-    }
-
-    /** Applies a per-game choice (Default removes the override) and prunes expired overrides. */
-    fun withGameChoice(eventId: String, choice: GameAlertChoice, expMs: Long, nowMs: Long): SportsAlertSettings {
-        if (eventId.length > MAX_ID_CHARS) return this
-        val kept = games.filter { it.id != eventId && it.expMs > nowMs }
-        val next = when (choice) {
-            GameAlertChoice.Default -> kept
-            GameAlertChoice.All -> kept + GameAlertOverride(eventId, GameAlertOverride.LEVEL_ALL, expMs)
-            GameAlertChoice.Off -> kept + GameAlertOverride(eventId, GameAlertOverride.LEVEL_OFF, expMs)
-        }
-        return copy(games = next.takeLast(MAX_GAME_OVERRIDES))
-    }
-
-    fun toggleMutedLeague(id: String): SportsAlertSettings =
-        copy(mutedLeagues = toggled(mutedLeagues, id))
-
-    fun toggleMutedTeam(id: String): SportsAlertSettings =
-        copy(mutedTeams = toggled(mutedTeams, id))
-
-    // Past the cap a new mute is ignored (the synced object must stay small); removing always works.
-    private fun toggled(set: Set<String>, id: String): Set<String> = when {
-        id in set -> set - id
-        id.length > MAX_ID_CHARS || set.size >= MAX_MUTED_IDS -> set
-        else -> set + id
-    }
-
-    fun toJson(): JsonObject = buildJsonObject {
-        put("enabled", enabled)
-        put("team_level", teamLevel.wire)
-        put("league_level", leagueLevel.wire)
-        put("quiet_on", quietOn)
-        put("quiet_start_min", sanitizeMinute(quietStartMin, DEFAULT_QUIET_START))
-        put("quiet_end_min", sanitizeMinute(quietEndMin, DEFAULT_QUIET_END))
-        put("max_per_hour", sanitizeMaxPerHour(maxPerHour))
-        put("batch_s", sanitizeBatch(batchSeconds))
-        put("during_playback", duringPlayback.wire)
-        put("muted_leagues", buildJsonArray { mutedLeagues.sorted().take(MAX_MUTED_IDS).forEach { add(JsonPrimitive(it)) } })
-        put("muted_teams", buildJsonArray { mutedTeams.sorted().take(MAX_MUTED_IDS).forEach { add(JsonPrimitive(it)) } })
-        put("games", buildJsonArray {
-            games.forEach { g ->
-                add(buildJsonObject { put("id", g.id); put("level", g.level); put("exp", g.expMs) })
-            }
-        })
     }
 
     companion object {

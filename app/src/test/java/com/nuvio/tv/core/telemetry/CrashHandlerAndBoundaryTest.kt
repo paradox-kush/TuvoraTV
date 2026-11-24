@@ -71,6 +71,9 @@ class CrashHandlerAndBoundaryTest {
             // Sports game screen (merged 11-08): closed vocabulary only - sport/block/source/outcome/duration, and a
             // preview failure reason code. Never a URL, host, channel or team name.
             "SportsDetailTelemetry.kt", "GameDetailViewModel.kt",
+            // Sports alerts: shown/action events plus count-only held/dropped; closed vocabulary (outcome, reason, kind,
+            // sport slug, batch, action), routed through TelemetrySendPolicy. Never a team, league or event id.
+            "SportsAlertController.kt",
         )
         assertEquals("a new direct PostHog call site appeared", known, sites)
     }
