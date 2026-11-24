@@ -21,23 +21,34 @@ sealed interface GameRender {
 
 /** Removes everything on the game page that tells the result or the score. Pure. */
 object GameSpoilerFilter {
-    private val spoilerBlocks = setOf(
-        BlockType.SITUATION, BlockType.LINESCORE, BlockType.STATS, BlockType.LEADERS, BlockType.TIMELINE,
-        BlockType.PLAYS, BlockType.WIN_PROBABILITY, BlockType.FIELD, BlockType.SOCCER_STRIP,
-        BlockType.BASKETBALL_STRIP, BlockType.HOCKEY_STRIP,
+    // ALLOW-list (twin of Mobile): a started game keeps only what cannot tell the result. A block type added later
+    // is hidden until someone decides it is safe.
+    private val safeBlocks = setOf(
+        BlockType.WATCH, BlockType.STANDINGS, BlockType.STANDINGS_TABLE, BlockType.LINEUP, BlockType.FORM, BlockType.NEXT,
     )
 
     fun scrub(detail: GameDetail): GameDetail {
-        if (detail.state == GameState.UPCOMING || detail.state == GameState.POSTPONED) return detail
+        if (detail.state != GameState.LIVE && detail.state != GameState.FINAL) return detail
         val header = when (val h = detail.header) {
             is GameHeader.Teams -> GameHeader.Teams(h.home.noScore(), h.away.noScore())
             is GameHeader.Versus -> GameHeader.Versus(h.a.noScore(), h.b.noScore())
             is GameHeader.Event -> h
         }
-        return detail.copy(header = header, blocks = detail.blocks.filterNot { it.type in spoilerBlocks })
+        return detail.copy(header = header, blocks = detail.blocks.filter { it.type in safeBlocks })
     }
 
-    private fun Side.noScore(): Side = copy(score = null)
+    // The win-loss record moves with every result, so it is a spoiler as well.
+    private fun Side.noScore(): Side = copy(score = null, record = null)
+}
+
+/** The reveal chip belongs to a started game (live or final) whose scores are hidden. */
+fun showsRevealChip(hidden: Boolean, state: GameState): Boolean =
+    hidden && (state == GameState.LIVE || state == GameState.FINAL)
+
+/** Whether the moment baseline resets (a mode flip or a delay change is not a score change). */
+object GameRenderBaseline {
+    fun <M> shouldReset(prevMode: M?, mode: M, prevDelayMs: Long?, delayMs: Long): Boolean =
+        mode != prevMode || (prevDelayMs != null && prevDelayMs != delayMs)
 }
 
 object GameScorePolicy {

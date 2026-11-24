@@ -14,6 +14,7 @@ import com.nuvio.tv.core.radar.DelayedValueBuffer
 import com.nuvio.tv.core.radar.RadarTime
 import com.nuvio.tv.core.radar.ScoreSpoilerSettings
 import com.nuvio.tv.core.sports.detail.screen.GameRender
+import com.nuvio.tv.core.sports.detail.screen.GameRenderBaseline
 import com.nuvio.tv.core.sports.detail.screen.GameScorePolicy
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -86,6 +87,7 @@ class GameDetailViewModel @Inject constructor(
     private var latestRaw: com.nuvio.tv.core.sports.detail.GameDetail? = null
     private var finishedAtFirstSight: Boolean? = null
     private var renderMode: GameScoreMode? = null
+    private var renderDelayMs: Long? = null
     private var renderJob: Job? = null
     /** The load state computed on the RAW detail; [_ui] shows it with the spoiler render swapped in. */
     private var rawUi: GameDetailUiState = GameDetailUiReducer.initial(RadarTime.nowMs())
@@ -218,7 +220,8 @@ class GameDetailViewModel @Inject constructor(
                 is GameRender.Pending -> GameScoreMode.PENDING
             }
             // A mode flip is not a score change: nothing animates on reveal.
-            if (mode != renderMode) { lastDetail = null; renderMode = mode }
+            if (GameRenderBaseline.shouldReset(renderMode, mode, renderDelayMs, settings.delayMs)) lastDetail = null
+            renderMode = mode; renderDelayMs = settings.delayMs
             _scoreMode.value = mode
             gameState = raw.state; publishWatch()
             val diff = GameMomentPolicy.diff(lastDetail, render.detail)

@@ -451,7 +451,7 @@ private fun ScoreboardCard(
             )
             val note = if (stale) "Showing the last update" else model.updatedLabel
             note?.let { Text(it, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary); Spacer(Modifier.width(12.dp)) }
-            if (scoreMode == GameScoreMode.HIDDEN && model.state != com.nuvio.tv.core.sports.detail.GameState.UPCOMING) {
+            if (com.nuvio.tv.core.sports.detail.screen.showsRevealChip(scoreMode == GameScoreMode.HIDDEN, model.state)) {
                 // One press reveals (flips the same global setting as the Sports header chip).
                 com.nuvio.tv.ui.screens.calendar.CalendarChip(
                     label = "Scores hidden", selected = true, onClick = onRevealScores,

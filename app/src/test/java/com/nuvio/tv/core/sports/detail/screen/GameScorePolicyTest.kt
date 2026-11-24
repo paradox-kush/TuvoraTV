@@ -72,4 +72,55 @@ class GameScorePolicyTest {
         assertNotNull(GameScorePolicy.render(s, "g1", buf, d1, true, 1L))
         assertEquals("final at first sight not delayed", d1, (GameScorePolicy.render(s, "g1", buf, d1, true, 1L) as GameRender.Shown).detail)
     }
+
+    private fun withBlocks(state: GameState) = detail(state, "2", "1").let { d ->
+        d.copy(
+            header = GameHeader.Teams(Side("Home", score = "2", record = "10-2"), Side("Away", score = "1", record = "4-8")),
+            blocks = listOf(
+                GameBlock.Results(SourceId.ESPN, listOf("Pos"), listOf(listOf("1"))),
+                GameBlock.Highlights(SourceId.ESPN, "https://x"),
+                GameBlock.Standings(SourceId.ESPN, emptyList()),
+                GameBlock.StandingsTable(SourceId.ESPN, emptyList()),
+                GameBlock.Lineup(SourceId.ESPN, emptyList()),
+                GameBlock.Form(SourceId.ESPN, emptyList(), emptyList()),
+                GameBlock.Stats(SourceId.ESPN, emptyList()),
+            ),
+        )
+    }
+
+    @Test
+    fun `scrub is an allow-list - results and highlights go, standings lineup and form stay`() {
+        val types = GameSpoilerFilter.scrub(withBlocks(GameState.FINAL)).blocks.map { it.type }.toSet()
+        assertEquals("only the safe ones", setOf(BlockType.STANDINGS, BlockType.STANDINGS_TABLE, BlockType.LINEUP, BlockType.FORM), types)
+    }
+
+    @Test
+    fun `scrub hides the win-loss record too`() {
+        val h = GameSpoilerFilter.scrub(withBlocks(GameState.LIVE)).header as GameHeader.Teams
+        assertNull("home record", h.home.record)
+        assertNull("away record", h.away.record)
+    }
+
+    @Test
+    fun `an upcoming game keeps its records and blocks`() {
+        val d = withBlocks(GameState.UPCOMING)
+        assertEquals(d, GameSpoilerFilter.scrub(d))
+    }
+
+    @Test
+    fun `reveal chip only for live or final games`() {
+        assertTrue("live", showsRevealChip(true, GameState.LIVE))
+        assertTrue("final", showsRevealChip(true, GameState.FINAL))
+        assertEquals("postponed", false, showsRevealChip(true, GameState.POSTPONED))
+        assertEquals("upcoming", false, showsRevealChip(true, GameState.UPCOMING))
+        assertEquals("not hidden", false, showsRevealChip(false, GameState.LIVE))
+    }
+
+    @Test
+    fun `a delay change resets the moment baseline`() {
+        assertTrue("delay 15 to 30", GameRenderBaseline.shouldReset("S", "S", 15_000L, 30_000L))
+        assertTrue("mode flip", GameRenderBaseline.shouldReset("H", "S", 0L, 0L))
+        assertEquals("steady", false, GameRenderBaseline.shouldReset("S", "S", 30_000L, 30_000L))
+        assertEquals("first render has no baseline to reset", false, GameRenderBaseline.shouldReset("S", "S", null, 30_000L))
+    }
 }
