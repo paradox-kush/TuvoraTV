@@ -71,4 +71,7 @@ object AlertHoldKeyPolicy {
     fun onBannerGone(state: State): Step =
         if (state.downAtMs != null && !state.fired) Step(State(), consume = false, fire = false, replay = Replay.Down)
         else Step(state, consume = false, fire = false)
+
+    /** The activity paused: the up of a press in flight is lost for good, so the press is forgotten (never fires later). */
+    fun onPause(state: State): Step = Step(State(), consume = false, fire = false)
 }

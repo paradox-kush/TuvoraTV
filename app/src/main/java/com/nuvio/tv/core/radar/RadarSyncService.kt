@@ -153,6 +153,7 @@ class RadarSyncService @Inject constructor(
                     prefs = AlertsSync.clearIfPushed(
                         SpoilerSync.clearIfPushed(it.prefs, state.prefs.scoresShown, state.prefs.scoreDelayS),
                         state.prefs.alerts,
+                        state.prefs.alertsDirty,
                     )
                 )
             }

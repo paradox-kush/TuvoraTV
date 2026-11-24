@@ -13,7 +13,7 @@ class SportsAlertWatchTest {
     fun `a found answer is cached for fifteen minutes and then expires`() {
         val c = WatchResultCache()
         c.putFound("e1", listOf("c1", "c2"), t0)
-        assertEquals("fresh", WatchState.Channel("c1"), c.stateFor("e1", emptySet(), t0 + ttl - 1))
+        assertEquals("fresh", WatchState.Channel(setOf("c1", "c2")), c.stateFor("e1", emptySet(), t0 + ttl - 1))
         assertEquals("expired", WatchState.Unknown, c.stateFor("e1", emptySet(), t0 + ttl))
         assertEquals("never asked", WatchState.Unknown, c.stateFor("e2", emptySet(), t0))
     }
@@ -27,10 +27,10 @@ class SportsAlertWatchTest {
     }
 
     @Test
-    fun `the state prefers the matched channel that is playing`() {
+    fun `the state carries every matched channel`() {
         val c = WatchResultCache()
         c.putFound("e1", listOf("c1", "c2"), t0)
-        assertEquals("playing c2", WatchState.Channel("c2"), c.stateFor("e1", setOf("c2"), t0))
+        assertEquals("both carriers", WatchState.Channel(setOf("c1", "c2")), c.stateFor("e1", setOf("c2"), t0))
     }
 
     @Test
@@ -41,8 +41,8 @@ class SportsAlertWatchTest {
         c.putNone("e3", t0)
         val states = c.statesFor(setOf("c1"), t0 + 1)
         assertEquals("all three games", setOf("e1", "e2", "e3"), states.keys)
-        assertEquals("e1", WatchState.Channel("c1"), states["e1"])
-        assertEquals("e2", WatchState.Channel("c1"), states["e2"])
+        assertEquals("e1", WatchState.Channel(setOf("c1")), states["e1"])
+        assertEquals("e2", WatchState.Channel(setOf("c1")), states["e2"])
         assertEquals("e3", WatchState.NoChannel, states["e3"])
     }
 

@@ -133,4 +133,40 @@ class SportsAlertSettingsTest {
         val bytes = s.toJson().toString().toByteArray().size
         assertTrue("$bytes bytes", bytes < SportsAlertSettings.MAX_SYNC_BYTES)
     }
+
+    @Test
+    fun `an oversized object is trimmed to the 7000 byte budget and its jsonb text stays under 8192`() {
+        val id64 = "x".repeat(SportsAlertSettings.MAX_ID_CHARS)
+        val s = SportsAlertSettings(
+            mutedLeagues = (1..SportsAlertSettings.MAX_MUTED_IDS).map { "$id64$it".take(SportsAlertSettings.MAX_ID_CHARS - 3) + "%03d".format(it) }.toSet(),
+            mutedTeams = (1..SportsAlertSettings.MAX_MUTED_IDS).map { "$id64$it".take(SportsAlertSettings.MAX_ID_CHARS - 3) + "%03d".format(it) }.toSet(),
+            games = (1..SportsAlertSettings.MAX_GAME_OVERRIDES).map { GameAlertOverride(id64.take(SportsAlertSettings.MAX_ID_CHARS - 3) + "%03d".format(it), "off", 1_800_000_000_000L + it) },
+        )
+        val json = s.toJson()
+        assertTrue("compact ${json.toString().length}", json.toString().toByteArray().size <= SportsAlertSettings.CLIENT_BUDGET_BYTES)
+        assertTrue("jsonb text ${SportsAlertSettings.jsonbTextLength(json)}", SportsAlertSettings.jsonbTextLength(json) < SportsAlertSettings.MAX_SYNC_BYTES)
+    }
+
+    @Test
+    fun `a fitting object is sent untouched`() {
+        val games = (1..SportsAlertSettings.MAX_GAME_OVERRIDES).map { GameAlertOverride("g".repeat(60) + "%03d".format(it), "off", 1_800_000_000_000L + it) }
+        val s = SportsAlertSettings(games = games)
+        assertEquals("not trimmed", s, SportsAlertSettings.decode(s.toJson()))
+    }
+
+    @Test
+    fun `jsonb text length counts a space after every colon and comma outside strings`() {
+        val j = obj("""{"a":1,"b":"x:y,z","c":[1,2]}""")
+        // compact: {"a":1,"b":"x:y,z","c":[1,2]} ; spaces after 3 colons and 3 commas outside strings = 6 (inside the string none).
+        assertEquals("length", j.toString().length + 6, SportsAlertSettings.jsonbTextLength(j))
+    }
+
+    @Test
+    fun `ids longer than 64 characters are ignored`() {
+        val long = "z".repeat(65)
+        val s = SportsAlertSettings.decode(obj("""{"muted_leagues":["$long","ok"],"games":[{"id":"$long","level":"off","exp":5}]}"""))
+        assertEquals("long id skipped", setOf("ok"), s.mutedLeagues)
+        assertTrue("long game id skipped", s.games.isEmpty())
+        assertTrue("toggle ignores it too", SportsAlertSettings().toggleMutedTeam(long).mutedTeams.isEmpty())
+    }
 }

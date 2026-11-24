@@ -115,6 +115,12 @@ object TelemetrySendPolicy {
                     Decision(Action.COUNT, area = DiagArea.LIFECYCLE, code = "exit_crash")
                 else Decision(Action.SEND, withTrail = true, area = DiagArea.LIFECYCLE, code = "exception")
 
+            // Sports alerts: a banner shown and what the viewer did with it are sent; every held / dropped outcome is
+            // only a count (by reason), never an event each.
+            "sports_alert" ->
+                if (outcome == "shown" || outcome == "action") Decision(Action.SEND, area = DiagArea.UI, code = "sports_alert_$outcome")
+                else Decision(Action.COUNT, area = DiagArea.UI, code = "sports_alert_${(properties["reason"] as? String) ?: "other"}")
+
             in explicitSendEvents -> Decision(Action.SEND, area = DiagArea.LIFECYCLE, code = event)
 
             in alwaysSendWithTrail -> Decision(Action.SEND, withTrail = true, area = DiagArea.LIFECYCLE, code = event)

@@ -1494,6 +1494,8 @@ open class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        // A held-back OK press loses its up for good once we pause: forget it (never fire or replay it later).
+        sportsAlertController.onActivityPaused()
         super.onPause()
         if (::jankStats.isInitialized) jankStats.isTrackingEnabled = false
     }

@@ -94,4 +94,15 @@ class TelemetryPolicyTest {
         assertFalse("rejects look-alikes", SupportCodeGenerator.isValid("0O1I2345"))
         assertEquals(9, SupportCodeGenerator.display(code).length)
     }
+
+    @Test
+    fun sportsAlertShownAndActionAreSentEverythingElseIsCounted() {
+        assertEquals("shown", Action.SEND, decide("sports_alert", "outcome" to "shown").action)
+        assertEquals("action", Action.SEND, decide("sports_alert", "outcome" to "action", "action" to "watch").action)
+        val held = decide("sports_alert", "outcome" to "held", "reason" to "delay")
+        assertEquals("held", Action.COUNT, held.action)
+        assertEquals("counted by reason", "sports_alert_delay", held.code)
+        assertEquals("dropped", Action.COUNT, decide("sports_alert", "outcome" to "dropped", "reason" to "quiet_hours").action)
+        assertEquals("no reason", Action.COUNT, decide("sports_alert", "outcome" to "dropped").action)
+    }
 }

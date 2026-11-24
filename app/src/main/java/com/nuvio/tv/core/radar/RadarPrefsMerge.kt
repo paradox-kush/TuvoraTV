@@ -45,9 +45,12 @@ object SpoilerSync {
 object AlertsSync {
     fun markChanged(p: RadarPrefs, alerts: SportsAlertSettings): RadarPrefs = p.copy(alerts = alerts, alertsDirty = true)
 
-    /** After a successful push of [pushed]: clear dirty only if nothing changed since. */
-    fun clearIfPushed(current: RadarPrefs, pushed: SportsAlertSettings): RadarPrefs =
-        if (current.alerts == pushed) current.copy(alertsDirty = false) else current
+    /**
+     * After a successful push: clear dirty only when the pushed snapshot itself CARRIED alerts ([pushedWasDirty]: a
+     * clean push sends no alerts key) and the values still match what was pushed (nothing edited since).
+     */
+    fun clearIfPushed(current: RadarPrefs, pushed: SportsAlertSettings, pushedWasDirty: Boolean): RadarPrefs =
+        if (pushedWasDirty && current.alerts == pushed) current.copy(alertsDirty = false) else current
 
     /** After a pull is applied: an alerts change still dirty (failed/offline push, or an edit during the pull) goes out. */
     fun shouldPushAfterPull(applied: RadarPrefs): Boolean = applied.alertsDirty

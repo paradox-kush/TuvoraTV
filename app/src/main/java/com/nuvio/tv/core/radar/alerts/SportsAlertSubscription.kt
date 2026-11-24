@@ -46,6 +46,7 @@ class SportsAlertSubscription @Inject constructor(
     )
     private var job: Job? = null
     private var profileJob: Job? = null
+    private var backgroundJob: Job? = null
 
     fun start() {
         if (job?.isActive == true) return
@@ -53,6 +54,10 @@ class SportsAlertSubscription @Inject constructor(
         profileJob = scope.launch {
             // Held alerts, seen keys and lookups belong to one profile.
             profileManager.activeProfileId.drop(1).collect { controller.onProfileChanged() }
+        }
+        // Held alerts are worth nothing once the app is not being looked at: going to the background clears them.
+        backgroundJob = scope.launch {
+            foreground.isForeground.distinctUntilChanged().collect { if (!it) controller.onBackground() }
         }
         job = scope.launch {
             combine(
@@ -83,6 +88,7 @@ class SportsAlertSubscription @Inject constructor(
     fun stop() {
         job?.cancel(); job = null
         profileJob?.cancel(); profileJob = null
+        backgroundJob?.cancel(); backgroundJob = null
         scope.launch { channels.leaveAll() }
     }
 }

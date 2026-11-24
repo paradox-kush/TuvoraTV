@@ -14,6 +14,8 @@ object SportsAlertPolicy {
     const val SUMMARY_MAX_LINES = 3
     /** How long a Score/Final waits for the "is this the game I am watching?" lookup while live TV plays. */
     const val WATCH_CHECK_MS = 6_000L
+    /** A hold released this much after its due time (a suspended process, a stalled timer) is stale. */
+    const val OVERDUE_RELEASE_MS = 60_000L
 
     /** Sports whose score alert reads "Goal". Every other sport reads "Score". */
     private val GOAL_SPORTS = setOf("soccer", "ice_hockey")
@@ -47,7 +49,7 @@ object SportsAlertPolicy {
                 if (hidden && alert.kind == AlertKind.Score) return reject(DropReason.ScoresHidden, seen)
                 val due = ctx.nowMs + WATCH_CHECK_MS
                 return AlertDecision.HoldUntil(due, HoldReason.WatchCheck) to
-                    seen.copy(pending = seen.pending + Held(alert, due, HoldReason.WatchCheck)).count("held:${HoldReason.WatchCheck.wire}")
+                    seen.copy(pending = seen.pending + Held(alert, due, HoldReason.WatchCheck, ctx.nowMs)).count("held:${HoldReason.WatchCheck.wire}")
             }
             Gate.Pass -> Unit
         }
@@ -68,7 +70,7 @@ object SportsAlertPolicy {
         if (delayMs > 0 && alert.kind != AlertKind.Start) {
             val due = ctx.nowMs + delayMs
             return AlertDecision.HoldUntil(due, HoldReason.Delay) to
-                seen.copy(pending = seen.pending + Held(alert, due, HoldReason.Delay)).count("held:${HoldReason.Delay.wire}")
+                seen.copy(pending = seen.pending + Held(alert, due, HoldReason.Delay, ctx.nowMs)).count("held:${HoldReason.Delay.wire}")
         }
         return admit(alert, settings, ctx, seen)
     }
@@ -95,6 +97,11 @@ object SportsAlertPolicy {
         val ready = mutableListOf<SportsAlert>()
         due.forEach { held ->
             if (!settings.enabled) return@forEach
+            // A hold released far past its time, or older than a fresh alert may be (plus the score delay it was
+            // waiting out), is stale: dropped uncounted, like any stale alert.
+            if (ctx.nowMs - held.dueAtMs > OVERDUE_RELEASE_MS ||
+                ctx.nowMs - held.receivedAtMs > MAX_ALERT_AGE_MS + ctx.spoiler.delayMs
+            ) return@forEach
             var alert = held.alert
             // Follows and mutes may have changed while it waited.
             if (gate2(alert, settings, ctx) != null) return@forEach
@@ -104,6 +111,12 @@ object SportsAlertPolicy {
                     // Still unknown at the end of the check: a score would spoil, a final is shown without numbers.
                     if (alert.kind == AlertKind.Score) { dropped(DropReason.WatchUnknown); return@forEach }
                     alert = alert.copy(homeScore = null, awayScore = null)
+                } else {
+                    // A delay / batch release while live TV plays an unknown channel: ask first, never show numbers
+                    // on a guess. The check runs from now; the delay still counts from receipt.
+                    rest = rest + Held(alert, ctx.nowMs + WATCH_CHECK_MS, HoldReason.WatchCheck, held.receivedAtMs)
+                    counts = counts.bump("held:${HoldReason.WatchCheck.wire}")
+                    return@forEach
                 }
                 Gate.Pass -> Unit
             }
@@ -111,9 +124,11 @@ object SportsAlertPolicy {
             // A game hidden since it was held loses its score alerts; a hidden final loses its numbers at render.
             if (alert.kind == AlertKind.Score && hidden) { dropped(DropReason.ScoresHidden); return@forEach }
             if (held.reason == HoldReason.WatchCheck) {
+                // The score delay counts from RECEIPT, not from the check's release (a downgraded final included).
                 val delayMs = if (hidden) 0L else ctx.spoiler.delayMs
-                if (delayMs > 0 && alert.kind != AlertKind.Start) {
-                    rest = rest + Held(alert, ctx.nowMs + delayMs, HoldReason.Delay)
+                val delayDue = held.receivedAtMs + delayMs
+                if (delayMs > 0 && alert.kind != AlertKind.Start && delayDue > ctx.nowMs) {
+                    rest = rest + Held(alert, delayDue, HoldReason.Delay, held.receivedAtMs)
                     counts = counts.bump("held:${HoldReason.Delay.wire}")
                     return@forEach
                 }
@@ -122,7 +137,7 @@ object SportsAlertPolicy {
                 // Delay / watch check done: now only the batch window can still hold it.
                 val batchDue = batchDueAt(settings, ctx, ledger.copy(pending = rest))
                 if (batchDue != null) {
-                    rest = rest + Held(alert, batchDue, HoldReason.Batch)
+                    rest = rest + Held(alert, batchDue, HoldReason.Batch, held.receivedAtMs)
                     return@forEach
                 }
             }
@@ -178,7 +193,7 @@ object SportsAlertPolicy {
     private fun gateRelease(alert: SportsAlert, settings: SportsAlertSettings, ctx: AlertContext): Gate {
         if (ctx.openGameEventId == alert.eventId) return Gate.Drop(DropReason.WatchingThisGame)
         val watch = ctx.watchStates[alert.eventId] ?: WatchState.Unknown
-        if (watch is WatchState.Channel && watch.id in ctx.playingChannelIds) return Gate.Drop(DropReason.WatchingThisGame)
+        if (watch is WatchState.Channel && watch.ids.any { it in ctx.playingChannelIds }) return Gate.Drop(DropReason.WatchingThisGame)
         if (inQuietHours(settings, ctx.localMinuteOfDay)) return Gate.Drop(DropReason.QuietHours)
         val blocked = when (settings.duringPlayback) {
             DuringPlayback.Always -> false
@@ -204,7 +219,7 @@ object SportsAlertPolicy {
         val batchDue = batchDueAt(settings, ctx, ledger)
         if (batchDue != null) {
             return AlertDecision.HoldUntil(batchDue, HoldReason.Batch) to
-                ledger.copy(pending = ledger.pending + Held(alert, batchDue, HoldReason.Batch)).count("held:${HoldReason.Batch.wire}")
+                ledger.copy(pending = ledger.pending + Held(alert, batchDue, HoldReason.Batch, ctx.nowMs)).count("held:${HoldReason.Batch.wire}")
         }
         val banner = banner(listOf(alert), ctx)
         return AlertDecision.ShowNow(banner) to ledger.copy(
@@ -254,7 +269,11 @@ object SportsAlertPolicy {
         }
         if (perGame.size == 1) return single(perGame.single(), ctx)
         val lines = perGame.take(SUMMARY_MAX_LINES).map { line(it, ctx) }
-        return AlertBanner(title = "${perGame.size} sports updates", detail = null, lines = lines, eventId = null, size = perGame.size)
+        val slugs = perGame.map { SportsAlertTopicPolicy.slugOf(it.sport) ?: "other" }.distinct()
+        return AlertBanner(
+            title = "${perGame.size} sports updates", detail = null, lines = lines, eventId = null,
+            sport = slugs.singleOrNull() ?: "other", size = perGame.size,
+        )
     }
 
     private fun single(alert: SportsAlert, ctx: AlertContext): AlertBanner = AlertBanner(
@@ -262,7 +281,7 @@ object SportsAlertPolicy {
         detail = listOfNotNull(alert.league, alert.progress).joinToString(" · ").ifBlank { null },
         eventId = alert.eventId,
         kind = alert.kind,
-        sport = alert.sport,
+        sport = SportsAlertTopicPolicy.slugOf(alert.sport) ?: "other",
     )
 
     /** One line of text for an alert, numbers only when the policy lets them show. A blank away shows the home name alone. */

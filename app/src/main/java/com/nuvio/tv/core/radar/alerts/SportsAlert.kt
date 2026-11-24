@@ -135,8 +135,8 @@ enum class HoldReason(val wire: String) { Delay("delay"), Batch("batch"), WatchC
 sealed interface WatchState {
     /** No lookup result for this game (never asked, expired, timed out). */
     data object Unknown : WatchState
-    /** The game's matched channel (the playing one when it is among the matches). */
-    data class Channel(val id: String) : WatchState
+    /** EVERY channel matched for the game (any confidence): the viewer is on it when any of them is playing. */
+    data class Channel(val ids: Set<String>) : WatchState
     /** Looked up (cached): no channel, no playlist, nothing found. */
     data object NoChannel : WatchState
 }
@@ -148,7 +148,7 @@ sealed interface AlertDecision {
 }
 
 /** An alert waiting for its delay or its batch window. */
-data class Held(val alert: SportsAlert, val dueAtMs: Long, val reason: HoldReason)
+data class Held(val alert: SportsAlert, val dueAtMs: Long, val reason: HoldReason, val receivedAtMs: Long)
 
 /** Per-device, in-memory bookkeeping: cap counters, the seen-key LRU, held alerts. Never persisted or synced. */
 data class AlertLedger(

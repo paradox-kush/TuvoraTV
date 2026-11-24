@@ -133,4 +133,15 @@ class AlertHoldKeyPolicyTest {
         assertFalse("dpad no fire", step.fire)
         assertFalse("a down passes too", key(none, Phase.Down, t, ok = false).consume)
     }
+
+    @Test
+    fun `a lost up after the activity paused never fires the action`() {
+        val down = key(none, Phase.Down, t)
+        val paused = AlertHoldKeyPolicy.onPause(down.state)
+        assertEquals("press forgotten", none, paused.state)
+        assertFalse("no replay into a paused activity", paused.replay != Replay.None)
+        val late = AlertHoldKeyPolicy.onTimer(paused.state, true, t + 600)
+        assertFalse("the timer finds nothing to fire", late.fire)
+        assertFalse("a repeat after resume is not ours", key(paused.state, Phase.Repeat, t + 700).fire)
+    }
 }

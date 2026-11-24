@@ -101,9 +101,15 @@ class AlertsPrefsSyncTest {
 
     @Test
     fun `push clears dirty only when the settings still match what was pushed`() {
-        assertEquals("matches", false, AlertsSync.clearIfPushed(dirty, custom).alertsDirty)
-        assertEquals("edited after the push read stays dirty", true, AlertsSync.clearIfPushed(dirty.copy(alerts = remote), custom).alertsDirty)
-        assertEquals("clean stays clean", false, AlertsSync.clearIfPushed(clean, custom).alertsDirty)
+        assertEquals("matches", false, AlertsSync.clearIfPushed(dirty, custom, pushedWasDirty = true).alertsDirty)
+        assertEquals("edited after the push read stays dirty", true, AlertsSync.clearIfPushed(dirty.copy(alerts = remote), custom, pushedWasDirty = true).alertsDirty)
+        assertEquals("clean stays clean", false, AlertsSync.clearIfPushed(clean, custom, pushedWasDirty = false).alertsDirty)
+    }
+
+    @Test
+    fun `a push that carried no alerts never clears a dirty flag set meanwhile`() {
+        // The push read a clean snapshot (no alerts key sent); the user then edited back to the very same values.
+        assertEquals("still dirty", true, AlertsSync.clearIfPushed(dirty, custom, pushedWasDirty = false).alertsDirty)
     }
 
     @Test

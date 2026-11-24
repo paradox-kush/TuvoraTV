@@ -159,7 +159,7 @@ class SportsAlertPolicyTest {
     @Test
     fun `the open game and the game being watched are dropped`() {
         assertEquals("game page open", dropped(DropReason.WatchingThisGame), decide(alert(), c = ctx(open = "e1")).first)
-        val onIt = ctx(playing = setOf("c1"), watch = mapOf("e1" to WatchState.Channel("c1")))
+        val onIt = ctx(playing = setOf("c1"), watch = mapOf("e1" to WatchState.Channel(setOf("c1"))))
         assertEquals("watching its channel", dropped(DropReason.WatchingThisGame), decide(alert(), c = onIt).first)
         assertTrue("another game's page does not matter", decide(alert(), c = ctx(open = "e2")).first is AlertDecision.ShowNow)
     }
@@ -438,13 +438,13 @@ class SportsAlertPolicyTest {
         assertTrue("live tv but no known channel", decide(alert(), c = ctx(playback = liveTv)).first is AlertDecision.ShowNow)
         val none = ctx(playback = liveTv, playing = setOf("c9"), watch = mapOf("e1" to WatchState.NoChannel))
         assertTrue("cached: no channel for this game", decide(alert(), c = none).first is AlertDecision.ShowNow)
-        val other = ctx(playback = liveTv, playing = setOf("c9"), watch = mapOf("e1" to WatchState.Channel("c1")))
+        val other = ctx(playback = liveTv, playing = setOf("c9"), watch = mapOf("e1" to WatchState.Channel(setOf("c1"))))
         assertTrue("its channel exists but another one plays", decide(alert(), c = other).first is AlertDecision.ShowNow)
     }
 
     @Test
     fun `two games on the playing channel are both dropped`() {
-        val c = ctx(playback = liveTv, playing = setOf("c1"), watch = mapOf("e1" to WatchState.Channel("c1"), "e2" to WatchState.Channel("c1")))
+        val c = ctx(playback = liveTv, playing = setOf("c1"), watch = mapOf("e1" to WatchState.Channel(setOf("c1")), "e2" to WatchState.Channel(setOf("c1"))))
         assertEquals("first", dropped(DropReason.WatchingThisGame), decide(alert(), c = c).first)
         assertEquals("second game, same channel", dropped(DropReason.WatchingThisGame), decide(alert(key = "k2", eventId = "e2"), c = c).first)
     }
@@ -456,7 +456,7 @@ class SportsAlertPolicyTest {
         val noChannel = ctx(nowMs = t0 + 2_000, playback = liveTv, playing = setOf("c1"), watch = mapOf("e1" to WatchState.NoChannel))
         val shown = SportsAlertPolicy.onTimer(settings(), noChannel, held(), setOf("e1"))
         assertEquals("no channel for it: shown", "Goal \u00B7 Arsenal 1\u20130 Chelsea", shown.first?.title)
-        val onIt = ctx(nowMs = t0 + 2_000, playback = liveTv, playing = setOf("c1"), watch = mapOf("e1" to WatchState.Channel("c1")))
+        val onIt = ctx(nowMs = t0 + 2_000, playback = liveTv, playing = setOf("c1"), watch = mapOf("e1" to WatchState.Channel(setOf("c1"))))
         val dropped = SportsAlertPolicy.onTimer(settings(), onIt, held(), setOf("e1"))
         assertNull("watching it: dropped", dropped.first)
         assertEquals("and counted", 1, dropped.second.counts["dropped:watching_this_game"])
@@ -488,7 +488,7 @@ class SportsAlertPolicyTest {
         val r = SportsAlertPolicy.onTimer(settings(), answered, held(), setOf("e1"))
         assertNull("not shown yet", r.first)
         assertEquals("re-held as a delay", HoldReason.Delay, r.second.pending.single().reason)
-        assertEquals("due delay after the answer", t0 + 1_000 + 30_000, r.second.pending.single().dueAtMs)
+        assertEquals("the delay counts from receipt, not from the answer", t0 + 30_000, r.second.pending.single().dueAtMs)
     }
 
     // ---- clock skew, mute vs all, flush re-checks, counts ----
@@ -541,5 +541,89 @@ class SportsAlertPolicyTest {
         val t = shown(decide(alert(away = "", homeScore = 1, awayScore = 0)).first).title
         assertEquals("home only", "Goal \u00B7 Arsenal", t)
         assertEquals("start", "Arsenal has started", shown(decide(alert(AlertKind.Start, key = "s", away = "")).first).title)
+    }
+
+    // ---- review round 2 ----
+
+    @Test
+    fun `playing a second carrier of the game drops the alert`() {
+        val c = ctx(playback = liveTv, playing = setOf("c2"), watch = mapOf("e1" to WatchState.Channel(setOf("c1", "c2"))))
+        assertEquals("any matched channel counts", dropped(DropReason.WatchingThisGame), decide(alert(), c = c).first)
+    }
+
+    @Test
+    fun `a hold released far overdue or older than max age plus the delay is dropped uncounted`() {
+        val (_, l) = decide(alert(), c = ctx(spoiler = delayed))
+        val overdue = SportsAlertPolicy.onTimer(settings(), ctx(nowMs = t0 + 30_000 + 60_001, spoiler = delayed), l)
+        assertNull("more than 60 s late", overdue.first)
+        assertTrue("and nothing stays held", overdue.second.pending.isEmpty())
+        assertTrue("uncounted, like stale", overdue.second.counts.keys.none { it.startsWith("dropped") })
+        val old = AlertLedger(pending = listOf(Held(alert(), t0 + 331_000, HoldReason.Delay, t0)))
+        val tooOld = SportsAlertPolicy.onTimer(settings(), ctx(nowMs = t0 + 331_000, spoiler = delayed), old)
+        assertNull("received longer ago than max age + delay", tooOld.first)
+        val fresh = AlertLedger(pending = listOf(Held(alert(), t0 + 329_000, HoldReason.Delay, t0)))
+        assertNotNull("just inside", SportsAlertPolicy.onTimer(settings(), ctx(nowMs = t0 + 329_000, spoiler = delayed), fresh).first)
+    }
+
+    @Test
+    fun `a delay release on live tv with an unknown channel goes to the watch check and never shows numbers`() {
+        val (_, l) = decide(alert(), c = ctx(spoiler = delayed))
+        val live = ctx(nowMs = t0 + 30_000, playback = liveTv, playing = setOf("c1"), spoiler = delayed)
+        val released = SportsAlertPolicy.onTimer(settings(), live, l)
+        assertNull("not shown", released.first)
+        val hold = released.second.pending.single()
+        assertEquals("a watch check", HoldReason.WatchCheck, hold.reason)
+        assertEquals("from now", t0 + 30_000 + 6_000, hold.dueAtMs)
+        assertEquals("receipt kept", t0, hold.receivedAtMs)
+        val deadline = SportsAlertPolicy.onTimer(settings(), ctx(nowMs = t0 + 36_000, playback = liveTv, playing = setOf("c1"), spoiler = delayed), released.second)
+        assertNull("still unknown: a score is dropped", deadline.first)
+        assertEquals("watch_unknown", 1, deadline.second.counts["dropped:watch_unknown"])
+    }
+
+    @Test
+    fun `a batch release on live tv with an unknown channel goes to the watch check too`() {
+        var ledger = decide(alert(key = "k1"), batch, ctx()).second
+        ledger = decide(alert(key = "k2", eventId = "e2", atMs = t0 + 1_000), batch, ctx(nowMs = t0 + 1_000), ledger).second
+        val live = ctx(nowMs = t0 + 60_000, playback = liveTv, playing = setOf("c1"))
+        val r = SportsAlertPolicy.onTimer(batch, live, ledger)
+        assertNull("not shown", r.first)
+        assertEquals("a watch check", HoldReason.WatchCheck, r.second.pending.single().reason)
+    }
+
+    @Test
+    fun `the score delay counts from receipt, not from the watch check release`() {
+        val checkHeld = AlertLedger(pending = listOf(Held(alert(), t0 + 6_000, HoldReason.WatchCheck, t0)))
+        val late = ctx(nowMs = t0 + 40_000, playback = liveTv, playing = setOf("c1"), watch = mapOf("e1" to WatchState.NoChannel), spoiler = delayed)
+        val shown = SportsAlertPolicy.onTimer(settings(), late, checkHeld, setOf("e1"))
+        assertNotNull("receipt + 30 s already passed: shown at once", shown.first)
+        val early = ctx(nowMs = t0 + 7_000, playback = liveTv, playing = setOf("c1"), watch = mapOf("e1" to WatchState.NoChannel), spoiler = delayed)
+        val held = SportsAlertPolicy.onTimer(settings(), early, checkHeld, setOf("e1"))
+        assertEquals("still waiting for receipt + 30 s", t0 + 30_000, held.second.pending.single().dueAtMs)
+    }
+
+    @Test
+    fun `a final downgraded at the watch deadline still honours the delay`() {
+        val finalHeld = AlertLedger(pending = listOf(Held(alert(AlertKind.Final, key = "f", homeScore = 2, awayScore = 1), t0 + 6_000, HoldReason.WatchCheck, t0)))
+        val deadline = ctx(nowMs = t0 + 6_000, playback = liveTv, playing = setOf("c1"), spoiler = delayed)
+        val r = SportsAlertPolicy.onTimer(settings(), deadline, finalHeld)
+        assertNull("not shown yet", r.first)
+        val hold = r.second.pending.single()
+        assertEquals("delay hold", HoldReason.Delay, hold.reason)
+        assertEquals("from receipt", t0 + 30_000, hold.dueAtMs)
+        assertNull("numbers stripped", hold.alert.homeScore)
+    }
+
+    @Test
+    fun `the banner carries the sport slug and a summary a slug or other`() {
+        assertEquals("slug", "ice_hockey", shown(decide(alert(sport = "Ice Hockey")).first).sport)
+        assertEquals("unknown sport", "other", shown(decide(alert(key = "k2", sport = "Curling")).first).sport)
+        var ledger = decide(alert(key = "k1"), batch, ctx()).second
+        ledger = decide(alert(key = "k2", eventId = "e2", sport = "soccer", atMs = t0 + 1_000), batch, ctx(nowMs = t0 + 1_000), ledger).second
+        ledger = decide(alert(key = "k3", eventId = "e3", sport = "baseball", atMs = t0 + 2_000), batch, ctx(nowMs = t0 + 2_000), ledger).second
+        assertEquals("mixed sports", "other", SportsAlertPolicy.onTimer(batch, ctx(nowMs = t0 + 60_000), ledger).first?.sport)
+        var same = decide(alert(key = "k1"), batch, ctx()).second
+        same = decide(alert(key = "k2", eventId = "e2", atMs = t0 + 1_000), batch, ctx(nowMs = t0 + 1_000), same).second
+        same = decide(alert(key = "k3", eventId = "e3", atMs = t0 + 2_000), batch, ctx(nowMs = t0 + 2_000), same).second
+        assertEquals("one sport", "soccer", SportsAlertPolicy.onTimer(batch, ctx(nowMs = t0 + 60_000), same).first?.sport)
     }
 }

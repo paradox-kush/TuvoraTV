@@ -31,14 +31,16 @@ class SportsAlertWatchLookup @Inject constructor(
     private val livePlaylist: XtreamLivePlaylist,
     private val profileManager: ProfileManager,
     private val accountStore: XtreamAccountStore,
-) {
+) : AlertWatchPort {
     /** The best CONFIRMED channel plus the matched lineup, so channel up/down works after the player opens. */
     class Hit(val contentId: String, val lineup: List<XtreamLiveChannelIdentity>)
 
     private val cache = WatchResultCache()
     private val hits = ConcurrentHashMap<String, Hit>()
 
-    fun statesFor(playing: Set<String>, nowMs: Long): Map<String, WatchState> = cache.statesFor(playing, nowMs)
+    override fun statesFor(playing: Set<String>, nowMs: Long): Map<String, WatchState> = cache.statesFor(playing, nowMs)
+
+    override fun watchContentId(eventId: String, nowMs: Long): String? = hit(eventId, nowMs)?.contentId
 
     /** The Watch target, only while the cached answer is still fresh. */
     fun hit(eventId: String, nowMs: Long): Hit? =
@@ -48,7 +50,9 @@ class SportsAlertWatchLookup @Inject constructor(
      * Makes sure the game has a cached answer. True = answered (found, or a cached "none": no playlist, finished,
      * nothing matched); false = could not tell (no fixture held, timeout, error): nothing is cached then.
      */
-    suspend fun resolve(eventId: String, nowMs: () -> Long = System::currentTimeMillis): Boolean {
+    override suspend fun resolve(eventId: String): Boolean = resolveAt(eventId, System::currentTimeMillis)
+
+    private suspend fun resolveAt(eventId: String, nowMs: () -> Long): Boolean {
         if (cache.stateFor(eventId, emptySet(), nowMs()) != WatchState.Unknown) return true
         return try {
             val state = repository.uiState.value

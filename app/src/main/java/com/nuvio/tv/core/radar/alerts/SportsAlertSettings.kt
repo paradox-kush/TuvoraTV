@@ -65,6 +65,7 @@ data class SportsAlertSettings(
 
     /** Applies a per-game choice (Default removes the override) and prunes expired overrides. */
     fun withGameChoice(eventId: String, choice: GameAlertChoice, expMs: Long, nowMs: Long): SportsAlertSettings {
+        if (eventId.length > MAX_ID_CHARS) return this
         val kept = games.filter { it.id != eventId && it.expMs > nowMs }
         val next = when (choice) {
             GameAlertChoice.Default -> kept
@@ -83,7 +84,94 @@ data class SportsAlertSettings(
     // Past the cap a new mute is ignored (the synced object must stay small); removing always works.
     private fun toggled(set: Set<String>, id: String): Set<String> = when {
         id in set -> set - id
-        set.size >= MAX_MUTED_IDS -> set
+        id.length > MAX_ID_CHARS || set.size >= MAX_MUTED_IDS -> set
+        else -> set + id
+    }
+
+    /**
+     * The synced object. Held to [CLIENT_BUDGET_BYTES] of compact JSON (the backend checks the jsonb TEXT, which adds
+     * spaces, against 8 KB): when over, the oldest game overrides go first, then trailing muted ids, until it fits.
+     */
+    fun toJson(): JsonObject {
+        var s = this
+        var json = s.render()
+        while (json.toString().toByteArray().size > CLIENT_BUDGET_BYTES) {
+            s = when {
+                s.games.isNotEmpty() -> s.copy(games = s.games.drop(1))
+                s.mutedLeagues.size >= s.mutedTeams.size && s.mutedLeagues.isNotEmpty() -> s.copy(mutedLeagues = s.mutedLeagues.sorted().dropLast(1).toSet())
+                s.mutedTeams.isNotEmpty() -> s.copy(mutedTeams = s.mutedTeams.sorted().dropLast(1).toSet())
+                else -> return json
+            }
+            json = s.render()
+        }
+        return json
+    }
+
+    companion object {
+        const val LEVEL_ALL = "all"
+        const val LEVEL_OFF = "off"
+    }
+}
+
+/** What the game page's Alerts chip says: Default -> All -> Off -> Default. */
+enum class GameAlertChoice(val label: String) {
+    Default("Default"), All("All"), Off("Off");
+
+    fun next(): GameAlertChoice = entries[(ordinal + 1) % entries.size]
+}
+
+/**
+ * Sports alerts settings (per profile, one object in [com.nuvio.tv.core.radar.RadarPrefs], synced as `alerts`).
+ * Defaults are the product defaults; every unknown or out-of-range value reads as the default, so a newer or a
+ * hand-edited blob can never break a launch. Twin of the Mobile/Desktop class of the same name.
+ */
+data class SportsAlertSettings(
+    val enabled: Boolean = true,
+    val teamLevel: AlertLevel = AlertLevel.All,
+    val leagueLevel: AlertLevel = AlertLevel.FinalOnly,
+    val quietOn: Boolean = true,
+    val quietStartMin: Int = 1320,
+    val quietEndMin: Int = 480,
+    val maxPerHour: Int = 6,
+    val batchSeconds: Int = 60,
+    val duringPlayback: DuringPlayback = DuringPlayback.LiveTvOnly,
+    val mutedLeagues: Set<String> = emptySet(),
+    val mutedTeams: Set<String> = emptySet(),
+    val games: List<GameAlertOverride> = emptyList(),
+) {
+    val batchMs: Long get() = batchSeconds * 1000L
+
+    fun gameOverride(eventId: String, nowMs: Long): GameAlertOverride? =
+        games.firstOrNull { it.id == eventId && it.expMs > nowMs }
+
+    fun choiceFor(eventId: String, nowMs: Long): GameAlertChoice = when (gameOverride(eventId, nowMs)?.level) {
+        GameAlertOverride.LEVEL_ALL -> GameAlertChoice.All
+        GameAlertOverride.LEVEL_OFF -> GameAlertChoice.Off
+        else -> GameAlertChoice.Default
+    }
+
+    /** Applies a per-game choice (Default removes the override) and prunes expired overrides. */
+    fun withGameChoice(eventId: String, choice: GameAlertChoice, expMs: Long, nowMs: Long): SportsAlertSettings {
+        if (eventId.length > MAX_ID_CHARS) return this
+        val kept = games.filter { it.id != eventId && it.expMs > nowMs }
+        val next = when (choice) {
+            GameAlertChoice.Default -> kept
+            GameAlertChoice.All -> kept + GameAlertOverride(eventId, GameAlertOverride.LEVEL_ALL, expMs)
+            GameAlertChoice.Off -> kept + GameAlertOverride(eventId, GameAlertOverride.LEVEL_OFF, expMs)
+        }
+        return copy(games = next.takeLast(MAX_GAME_OVERRIDES))
+    }
+
+    fun toggleMutedLeague(id: String): SportsAlertSettings =
+        copy(mutedLeagues = toggled(mutedLeagues, id))
+
+    fun toggleMutedTeam(id: String): SportsAlertSettings =
+        copy(mutedTeams = toggled(mutedTeams, id))
+
+    // Past the cap a new mute is ignored (the synced object must stay small); removing always works.
+    private fun toggled(set: Set<String>, id: String): Set<String> = when {
+        id in set -> set - id
+        id.length > MAX_ID_CHARS || set.size >= MAX_MUTED_IDS -> set
         else -> set + id
     }
 
@@ -112,9 +200,28 @@ data class SportsAlertSettings(
         const val MAX_GAME_OVERRIDES = 50
         /** Per list (leagues, teams): keeps the synced object under [MAX_SYNC_BYTES]. */
         const val MAX_MUTED_IDS = 100
+        /** The backend's limit on the jsonb text of the object. */
         const val MAX_SYNC_BYTES = 8 * 1024
+        /** What this client sends at most, as compact JSON (jsonb text adds a space after every `:` and `,`). */
+        const val CLIENT_BUDGET_BYTES = 7_000
+        /** Longer ids are not ours (a bad row): ignored, never stored. */
+        const val MAX_ID_CHARS = 64
         val ALLOWED_MAX_PER_HOUR: List<Int> = listOf(3, 6, 12, 0)
         val ALLOWED_BATCH_SECONDS: List<Int> = listOf(0, 60, 300)
+
+        /** The length Postgres jsonb would give this object's text: compact JSON plus a space after every `:` and `,` outside strings. */
+        fun jsonbTextLength(json: JsonObject): Int {
+            var inString = false
+            var escaped = false
+            var extra = 0
+            for (c in json.toString()) {
+                if (inString) {
+                    if (escaped) escaped = false else if (c == '\\') escaped = true else if (c == '"') inString = false
+                } else if (c == '"') inString = true
+                else if (c == ':' || c == ',') extra++
+            }
+            return json.toString().length + extra
+        }
 
         fun sanitizeMaxPerHour(v: Int): Int = if (v in ALLOWED_MAX_PER_HOUR) v else 6
         fun sanitizeBatch(v: Int): Int = if (v in ALLOWED_BATCH_SECONDS) v else 60
@@ -141,10 +248,10 @@ data class SportsAlertSettings(
             fun bool(name: String, default: Boolean) = prim(name)?.booleanOrNull ?: default
             fun int(name: String): Int? = prim(name)?.takeIf { !it.isString }?.intOrNull
             fun ids(name: String): Set<String> =
-                (obj[name] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }?.take(MAX_MUTED_IDS)?.toSet().orEmpty()
+                (obj[name] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { id -> id.isNotBlank() && id.length <= MAX_ID_CHARS } }?.take(MAX_MUTED_IDS)?.toSet().orEmpty()
             val games = (obj["games"] as? JsonArray)?.mapNotNull { el ->
                 val g = el as? JsonObject ?: return@mapNotNull null
-                val id = (g["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val id = (g["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() && it.length <= MAX_ID_CHARS } ?: return@mapNotNull null
                 val level = (g["level"] as? JsonPrimitive)?.contentOrNull
                 if (level != GameAlertOverride.LEVEL_ALL && level != GameAlertOverride.LEVEL_OFF) return@mapNotNull null
                 val exp = (g["exp"] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull ?: return@mapNotNull null

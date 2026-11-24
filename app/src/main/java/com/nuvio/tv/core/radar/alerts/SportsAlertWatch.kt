@@ -3,6 +3,7 @@ package com.nuvio.tv.core.radar.alerts
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,9 +16,10 @@ class SportsAlertPlayingChannels @Inject constructor() {
     private val state = MutableStateFlow<Set<String>>(emptySet())
     val ids: StateFlow<Set<String>> = state.asStateFlow()
 
-    fun set(id: String) { state.value = state.value + id }
+    // Atomic: two players (clean live + a multiview tile) can publish at the same moment.
+    fun set(id: String) { state.update { it + id } }
 
-    fun clear(id: String) { state.value = state.value - id }
+    fun clear(id: String) { state.update { it - id } }
 }
 
 /**
@@ -37,11 +39,11 @@ class WatchResultCache(private val ttlMs: Long = DEFAULT_TTL_MS) {
         entries[eventId] = Entry(emptyList(), nowMs)
     }
 
-    /** Unknown when never asked or expired; [WatchState.Channel] prefers the matched channel that is playing now. */
-    @Synchronized fun stateFor(eventId: String, playing: Set<String>, nowMs: Long): WatchState {
+    /** Unknown when never asked or expired; [WatchState.Channel] carries every matched channel of the game. */
+    @Synchronized fun stateFor(eventId: String, @Suppress("UNUSED_PARAMETER") playing: Set<String>, nowMs: Long): WatchState {
         val e = entries[eventId]?.takeIf { nowMs - it.atMs < ttlMs } ?: return WatchState.Unknown
         if (e.ids.isEmpty()) return WatchState.NoChannel
-        return WatchState.Channel(e.ids.firstOrNull { it in playing } ?: e.ids.first())
+        return WatchState.Channel(e.ids.toSet())
     }
 
     @Synchronized fun clear() { entries.clear() }
