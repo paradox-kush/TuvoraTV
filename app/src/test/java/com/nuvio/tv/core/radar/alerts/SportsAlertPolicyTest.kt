@@ -385,11 +385,14 @@ class SportsAlertPolicyTest {
 
     @Test
     fun `a held batch is dropped at flush when the cap was reached meanwhile`() {
-        val s = settings(batch = 60, cap = 1)
+        val s = settings(batch = 60, cap = 2)
         var ledger = decide(alert(key = "k1"), s, ctx()).second
         ledger = decide(alert(key = "k2", eventId = "e2", atMs = t0 + 1_000), s, ctx(nowMs = t0 + 1_000), ledger).second
-        val (banner, after) = SportsAlertPolicy.onTimer(s, ctx(nowMs = t0 + 60_000), ledger)
-        assertNull("cap of one already used", banner)
+        assertEquals("held, not dropped, while the cap has room", 1, ledger.pending.size)
+        // Another banner (a released delay) used the last slot while the batch waited.
+        val used = ledger.copy(shownAtMs = ledger.shownAtMs + (t0 + 2_000))
+        val (banner, after) = SportsAlertPolicy.onTimer(s, ctx(nowMs = t0 + 60_000), used)
+        assertNull("cap used up", banner)
         assertTrue("and nothing stays held", after.pending.isEmpty())
     }
 
