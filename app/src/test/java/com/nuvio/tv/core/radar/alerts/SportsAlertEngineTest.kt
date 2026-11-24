@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.radar.alerts
 
+import com.nuvio.tv.core.contracts.AlertAction
 import com.nuvio.tv.core.radar.ScoreSpoilerSettings
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay

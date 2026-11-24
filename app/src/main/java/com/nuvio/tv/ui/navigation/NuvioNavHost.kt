@@ -234,16 +234,16 @@ private fun PlaybackNavHost(
 
     // Sports alert banner action (hold OK): open the game page, play its channel, or open Sports. Only this host
     // collects the one-shot flow, so an action can never run twice.
-    val sportsAlertViewModel = androidx.hilt.navigation.compose.hiltViewModel<com.nuvio.tv.ui.components.SportsAlertBannerViewModel>()
+    val sportsAlertViewModel = androidx.hilt.navigation.compose.hiltViewModel<com.nuvio.tv.ui.screens.settings.SportsAlertsUiViewModel>().host
     LaunchedEffect(navController) {
         sportsAlertViewModel.actions.collect { action ->
             val owner = navController.currentBackStackEntry ?: return@collect
             when (action) {
-                is com.nuvio.tv.core.radar.alerts.AlertAction.OpenGame ->
+                is com.nuvio.tv.core.contracts.AlertAction.OpenGame ->
                     navController.navigate(Screen.GameDetail.createRoute(action.gameId)) { launchSingleTop = true }
-                com.nuvio.tv.core.radar.alerts.AlertAction.OpenSports ->
+                com.nuvio.tv.core.contracts.AlertAction.OpenSports ->
                     navController.navigate(Screen.SportsHub.route) { launchSingleTop = true }
-                is com.nuvio.tv.core.radar.alerts.AlertAction.Watch ->
+                is com.nuvio.tv.core.contracts.AlertAction.Watch ->
                     if (sportsAlertViewModel.publishLineup(action.gameId)) {
                         dispatchLiveOrElse(
                             owner = owner,

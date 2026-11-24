@@ -140,7 +140,7 @@ internal class CleanLivePlayerViewModel private constructor(
     private val livePauseFactory: LivePauseControlFactory,
     telemetry: TelemetryPort,
     reportDispatcher: CoroutineDispatcher,
-    private val playingChannels: com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannels,
+    private val playingChannels: com.nuvio.tv.core.contracts.SportsAlertsPlayingChannels,
 ) : ViewModel() {
     @Inject
     internal constructor(
@@ -153,7 +153,7 @@ internal class CleanLivePlayerViewModel private constructor(
         livePicture: LivePicturePreferences,
         livePauseFactory: LivePauseControlFactory,
         telemetry: TelemetryService,
-        playingChannels: com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannels,
+        playingChannels: com.nuvio.tv.core.contracts.SportsAlertsPlayingChannels,
     ) : this(
         appContext = context.applicationContext,
         launchConsumer = CleanLiveDestinationLaunchConsumer(launchStore::consume),
@@ -186,7 +186,7 @@ internal class CleanLivePlayerViewModel private constructor(
         picturePort: LivePicturePort = LivePicturePort.Unremembered,
         livePauseFactory: LivePauseControlFactory = LivePauseControlFactory { null },
         telemetry: TelemetryPort = UnsentTelemetryPort,
-        playingChannels: com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannels = com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannels(),
+        playingChannels: com.nuvio.tv.core.contracts.SportsAlertsPlayingChannels = com.nuvio.tv.core.contracts.SportsAlertsPlayingChannels.None,
         @Suppress("UNUSED_PARAMETER") testOnly: Unit = Unit,
     ) : this(
         appContext = context.applicationContext,

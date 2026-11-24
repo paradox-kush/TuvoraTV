@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.radar.alerts
 
+import com.nuvio.tv.core.contracts.AlertAction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -13,13 +14,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-
-/** What a banner does when the viewer holds OK. Navigation lives in the NavHost; this only says what to open. */
-sealed interface AlertAction {
-    data class OpenGame(val gameId: String) : AlertAction
-    data class Watch(val gameId: String, val contentId: String) : AlertAction
-    data object OpenSports : AlertAction
-}
 
 /** The watch lookup as the engine sees it (the real one needs the matcher; tests pass a fake). */
 interface AlertWatchPort {

@@ -1017,7 +1017,7 @@ private fun SettingsDetailPane(
                 null
             }
         )
-        SettingsCategory.SPORTS_ALERTS -> SportsAlertsSettingsContent(
+        SettingsCategory.SPORTS_ALERTS -> hiltViewModel<SportsAlertsUiViewModel>().ui.SettingsContent(
             initialFocusRequester = if (allowDetailAutofocus) {
                 contentFocusRequesters[SettingsCategory.SPORTS_ALERTS]
             } else {

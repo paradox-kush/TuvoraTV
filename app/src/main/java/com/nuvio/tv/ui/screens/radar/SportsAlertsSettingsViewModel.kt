@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.settings
+package com.nuvio.tv.ui.screens.radar
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope

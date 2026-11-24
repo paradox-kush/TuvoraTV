@@ -1,6 +1,6 @@
 @file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
-package com.nuvio.tv.ui.components
+package com.nuvio.tv.ui.screens.radar
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -27,34 +27,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import com.nuvio.tv.core.radar.alerts.AlertAction
 import com.nuvio.tv.core.radar.alerts.AlertBanner
 import com.nuvio.tv.core.radar.alerts.SportsAlertController
-import com.nuvio.tv.core.radar.alerts.SportsAlertWatchLookup
 import com.nuvio.tv.ui.theme.NuvioTheme
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.StateFlow
-import javax.inject.Inject
-
-/** Thin view over the singleton [SportsAlertController]: the banner state for the host and the actions for the NavHost. */
-@HiltViewModel
-class SportsAlertBannerViewModel @Inject constructor(
-    private val controller: SportsAlertController,
-    private val lookup: SportsAlertWatchLookup,
-) : ViewModel() {
-    val banner: StateFlow<AlertBanner?> = controller.banner
-    val watchContentId: StateFlow<String?> = controller.watchContentId
-    val actions: SharedFlow<AlertAction> = controller.actions
-
-    /** Publishes the lineup the lookup matched, so the player opens with channel up/down working. */
-    fun publishLineup(gameId: String): Boolean = lookup.publishLineup(gameId)
-}
 
 /** "Hold OK to watch" / "Hold OK to open" / "Hold OK to open Sports". */
 internal fun sportsAlertHint(banner: AlertBanner, canWatch: Boolean): String = when {
@@ -69,9 +48,9 @@ internal fun sportsAlertHint(banner: AlertBanner, canWatch: Boolean): String = w
  * ([SportsAlertController.onKeyEvent]). Auto-dismisses after ten seconds (controller-owned timer).
  */
 @Composable
-fun BoxScope.SportsAlertBannerHost(viewModel: SportsAlertBannerViewModel) {
-    val banner by viewModel.banner.collectAsStateWithLifecycle()
-    val watchContentId by viewModel.watchContentId.collectAsStateWithLifecycle()
+fun BoxScope.SportsAlertBannerHost(controller: SportsAlertController) {
+    val banner by controller.banner.collectAsStateWithLifecycle()
+    val watchContentId by controller.watchContentId.collectAsStateWithLifecycle()
     // Keep the last banner while the exit animation plays.
     var last by remember { mutableStateOf<AlertBanner?>(null) }
     if (banner != null && last != banner) last = banner
