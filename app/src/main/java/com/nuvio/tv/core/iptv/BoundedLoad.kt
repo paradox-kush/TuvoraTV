@@ -66,6 +66,12 @@ enum class LoadSurface(val key: String, val stallMs: Long, val reportsEveryOutco
     /** UX275: the focused channel's catch-up history (get_simple_data_table) behind a past guide window. Failures only. */
     GUIDE_HISTORY("guide_history", 20_000L, reportsEveryOutcome = false),
     /**
+     * B134: one Xtream `get_series_info` call behind a series' sources or episode list. Failures only: a TMDB title
+     * fans out to one call per matched edition. The report carries `path` and `source_type`; `error_type` is
+     * `http_<status>` or the exception type, never a host or message.
+     */
+    SERIES_INFO("series_info", 20_000L, reportsEveryOutcome = false),
+    /**
      * B256: one live viewing's terminal outcome (a channel that played and then failed, or a wait the
      * session never ended). Not a [run] surface: the playback owner reports it through [BoundedLoad.report]
      * once per incident ([com.nuvio.tv.playback.live.LivePlaybackOutcomePolicy]). Failures only.
