@@ -233,6 +233,8 @@ internal class CleanLivePlayerViewModel private constructor(
     fun clearReport() = reportController.clear()
 
     private fun followPicture(channelId: String) {
+        // Sports alerts: the channel now playing, so no banner spoils the game being watched.
+        com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannel.contentId = channelId
         pictureFollower.follow(channelId) { choice -> command { it.applyPicture(choice.aspectMode, choice.zoom) } }
     }
 
@@ -636,6 +638,7 @@ internal class CleanLivePlayerViewModel private constructor(
     override fun onCleared() {
         // Leaving the destination ends the viewing even if the release barrier has to retry.
         playbackBreadcrumbs.stop()
+        com.nuvio.tv.core.radar.alerts.SportsAlertPlayingChannel.contentId = null
         if (!ownerJob.isActive || clearedReleaseLoopStarted) return
         clearedReleaseLoopStarted = true
         ownerScope.launch {

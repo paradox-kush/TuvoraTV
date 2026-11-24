@@ -93,7 +93,7 @@ class SportsAlertController @Inject constructor(
     private fun context(nowMs: Long): AlertContext {
         val s = state.value
         val cal = Calendar.getInstance().apply { timeInMillis = nowMs }
-        val r = route
+        val r = route.withCleanLiveChannel(SportsAlertPlayingChannel.contentId)
         val watching = r.playingContentId?.let { playing ->
             watchLookup.cachedContentIds().entries.firstOrNull { it.value == playing }?.key
         }
