@@ -56,6 +56,8 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.nuvio.tv.core.radar.RadarTime
 import com.nuvio.tv.core.sports.detail.Side
+import com.nuvio.tv.core.sports.detail.screen.GameRevealChip
+import com.nuvio.tv.core.sports.detail.screen.hiddenOverviewEmpty
 import com.nuvio.tv.core.sports.detail.screen.ByPeriodFit
 import com.nuvio.tv.core.sports.detail.screen.FocusKey
 import com.nuvio.tv.core.sports.detail.screen.WatchCopy
@@ -115,6 +117,8 @@ fun GameDetailScreen(
     val preview by viewModel.preview.collectAsStateWithLifecycle()
     val moments by viewModel.moments.collectAsStateWithLifecycle()
     val scoreMode by viewModel.scoreMode.collectAsStateWithLifecycle()
+    val globallyHidden by viewModel.globallyHidden.collectAsStateWithLifecycle()
+    val revealed by viewModel.revealed.collectAsStateWithLifecycle()
     // While the "Scores hidden" chip holds focus, plain D-pad focus search drives it (the custom map below knows only the other controls).
     var scoreChipFocused by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -279,7 +283,9 @@ fun GameDetailScreen(
                     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(if (plan.tightGaps) LeftColumnFit.TIGHT_GAP_DP.dp else LeftColumnFit.GAP_DP.dp)) {
                         ScoreboardCard(
                             model, s.stale, colors, moments, scoreMode,
-                            onRevealScores = { viewModel.setScoresShown(true) },
+                            revealChip = GameRevealChip.of(globallyHidden, revealed, model.state),
+                            onReveal = viewModel::revealThisGame,
+                            onHideAgain = viewModel::hideThisGameAgain,
                             onChipFocus = { scoreChipFocused = it },
                         )
                         model.field?.let { FootballFieldStrip(it, model.sides, colors, moments) }
@@ -322,7 +328,9 @@ fun GameDetailScreen(
                         } else {
                             val showPreview = preview !is PreviewSlot.Hidden
                             if (showPreview) PreviewBox(slot = preview, surfaceOwner = surfaceOwner, ready = previewReady)
-                            if (sectioned) {
+                            if (model.hiddenOverviewEmpty(scoreMode == GameScoreMode.HIDDEN)) {
+                                HiddenScoresCard(viewModel::revealThisGame, Modifier.weight(1f))
+                            } else if (sectioned) {
                                 SectionChips(chipSections, shownSection, { sec -> requesters.getValue(FocusKey.of(sec)!!) }, { sec -> onFocused(FocusKey.of(sec)!!) })
                                 shownSection?.let { SectionPanel(it, model, showPreview, colors, moments, Modifier.weight(1f)) }
                             } else {
@@ -336,6 +344,18 @@ fun GameDetailScreen(
                 }
             }
         }
+    }
+}
+
+/** Redaction left nothing for the right pane: say why, and offer the same per-game reveal as the scoreboard chip. */
+@Composable
+private fun HiddenScoresCard(onReveal: () -> Unit, modifier: Modifier = Modifier) {
+    Card(modifier) {
+        CardTitle("Scores are hidden")
+        Text("Scores, stats and plays for this game are hidden.", fontSize = 16.sp, color = NuvioTheme.colors.TextSecondary)
+        Spacer(Modifier.height(14.dp))
+        // Plain focus search reaches it: with no section chips the custom D-pad map is not in play.
+        TvButton("Show this game's score", primary = true, requester = remember { FocusRequester() }, onFocused = {}, onClick = onReveal)
     }
 }
 
@@ -433,7 +453,9 @@ private fun StatePill(model: GameDetailTvModel) {
 private fun ScoreboardCard(
     model: GameDetailTvModel, stale: Boolean, colors: TeamColors, moments: MomentBatch,
     scoreMode: GameScoreMode = GameScoreMode.SHOWN,
-    onRevealScores: () -> Unit = {},
+    revealChip: GameRevealChip = GameRevealChip.NONE,
+    onReveal: () -> Unit = {},
+    onHideAgain: () -> Unit = {},
     onChipFocus: (Boolean) -> Unit = {},
 ) {
     // Screen readers: only a score change is announced ("Dallas 2, Buffalo 0"), at most once per update; the description changes only with the score.
@@ -451,10 +473,12 @@ private fun ScoreboardCard(
             )
             val note = if (stale) "Showing the last update" else model.updatedLabel
             note?.let { Text(it, fontSize = 13.sp, color = NuvioTheme.colors.TextSecondary); Spacer(Modifier.width(12.dp)) }
-            if (com.nuvio.tv.core.sports.detail.screen.showsRevealChip(scoreMode == GameScoreMode.HIDDEN, model.state)) {
-                // One press reveals (flips the same global setting as the Sports header chip).
+            if (revealChip != GameRevealChip.NONE) {
+                // Reveals (or re-hides) THIS game only, for this session; the hub's global chip owns the setting.
                 com.nuvio.tv.ui.screens.calendar.CalendarChip(
-                    label = "Scores hidden", selected = true, onClick = onRevealScores,
+                    label = if (revealChip == GameRevealChip.SHOW_THIS) "Show this game's score" else "Hide again",
+                    selected = revealChip == GameRevealChip.SHOW_THIS,
+                    onClick = if (revealChip == GameRevealChip.SHOW_THIS) onReveal else onHideAgain,
                     modifier = Modifier.onFocusChanged { onChipFocus(it.isFocused) },
                 )
                 Spacer(Modifier.width(12.dp))

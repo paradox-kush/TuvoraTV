@@ -42,12 +42,18 @@ data class RadarUiState(
     val scores: ScoreObservations = ScoreObservations(),
     /** Bumped whenever [scores] changed (a recording, or a delayed snapshot became due) so collectors re-render. */
     val scoreRev: Int = 0,
+    /** Games revealed for this session while hide-scores is on ([RevealedGames]). */
+    val revealed: Set<String> = emptySet(),
 ) {
     val spoiler: ScoreSpoilerSettings get() = prefs.spoiler
 
     /** May this fixture's score be shown right now? (hidden / delayed / shown) */
     fun scoreView(fixture: RadarFixture, nowMs: Long): ScoreView =
-        scores.scoreView(spoiler, fixture, fixture.id?.let { liveScores[it] }, nowMs)
+        scores.scoreView(spoilerFor(RadarCalendarGames.gameId(fixture)), fixture, fixture.id?.let { liveScores[it] }, nowMs)
+
+    /** The settings for one game: a revealed game counts as shown (the delay still applies). */
+    fun spoilerFor(gameId: String): ScoreSpoilerSettings =
+        if (gameId in revealed && !spoiler.shown) spoiler.copy(shown = true) else spoiler
 
     /** When the next buffered score becomes due (a local re-render, no fetch); null when nothing is pending. */
     fun nextScoreDueAtMs(nowMs: Long): Long? =
@@ -144,6 +150,7 @@ class RadarRepository @Inject constructor(
     private val fixturesClient: RadarFixturesClient,
     private val catalogClient: RadarCatalogClient,
     private val syncService: RadarSyncService,
+    private val revealedGames: RevealedGames,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true }
@@ -166,6 +173,10 @@ class RadarRepository @Inject constructor(
             val catalog = runCatching { json.decodeFromString<RadarCatalog>(RadarCatalogData.JSON) }
                 .getOrDefault(RadarCatalog())
             _uiState.update { it.copy(catalog = catalog) }
+            // Session-only per-game reveals feed the same state the screens already render from.
+            scope.launch {
+                revealedGames.ids.collect { ids -> _uiState.update { it.copy(revealed = ids, scoreRev = it.scoreRev + 1) } }
+            }
             scope.launch {
                 store.loadCatalog()?.let { cached ->
                     if (cached.catalog.isUsable()) {
@@ -194,6 +205,7 @@ class RadarRepository @Inject constructor(
                 // when a followed league has NO cached fixtures yet (new follow / profile
                 // switch to different follows) so it doesn't sit empty for a TTL.
                 store.state.collect { local ->
+                    revealedGames.current() // a profile switch forgets the session's reveals
                     _uiState.update {
                         it.copy(follows = local.follows, prefs = local.prefs, teamFollows = local.teams, scoreRev = it.scoreRev + 1)
                     }
@@ -384,6 +396,11 @@ class RadarRepository @Inject constructor(
             syncService.triggerRemoteSync()
         }
     }
+
+    /** "Show this game's score": reveals ONE game for this session (never the global setting). */
+    fun revealGame(gameId: String) = revealedGames.reveal(gameId)
+
+    fun hideGameAgain(gameId: String) = revealedGames.hideAgain(gameId)
 
     /** Hide scores everywhere (false) or show them again. One global per-profile setting; synced. */
     fun setScoresShown(shown: Boolean) {

@@ -94,12 +94,23 @@ class GameDetailViewModel @Inject constructor(
     private val _scoreMode = MutableStateFlow(GameScoreMode.SHOWN)
     /** Shown / Hidden / Pending for the scoreboard (Hidden shows the "Scores hidden" chip, Pending shows "-"). */
     val scoreMode: StateFlow<GameScoreMode> = _scoreMode.asStateFlow()
+    /** The settings that apply to THIS game: a game revealed for the session counts as shown. */
     val spoilerSettings: StateFlow<ScoreSpoilerSettings> = repository.uiState
-        .map { it.spoiler }.distinctUntilChanged()
+        .map { it.spoilerFor(gameId) }.distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, ScoreSpoilerSettings())
+    /** The profile setting hides scores (the hub's global chip owns it). */
+    val globallyHidden: StateFlow<Boolean> = repository.uiState
+        .map { !it.spoiler.shown }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    /** This game was revealed for the session. */
+    val revealed: StateFlow<Boolean> = repository.uiState
+        .map { gameId in it.revealed }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    /** The chip beside the scoreboard flips the same global setting as the Sports header. */
-    fun setScoresShown(shown: Boolean) = repository.setScoresShown(shown)
+    /** "Show this game's score": this game only (game page and its hub/calendar card); never the global setting. */
+    fun revealThisGame() = repository.revealGame(gameId)
+
+    fun hideThisGameAgain() = repository.hideGameAgain(gameId)
 
     private val _watch = MutableStateFlow(initialWatch())
     val watch: StateFlow<WatchUi> = _watch.asStateFlow()

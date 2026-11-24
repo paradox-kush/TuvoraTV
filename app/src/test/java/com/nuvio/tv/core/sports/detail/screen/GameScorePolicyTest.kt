@@ -109,11 +109,29 @@ class GameScorePolicyTest {
 
     @Test
     fun `reveal chip only for live or final games`() {
-        assertTrue("live", showsRevealChip(true, GameState.LIVE))
-        assertTrue("final", showsRevealChip(true, GameState.FINAL))
-        assertEquals("postponed", false, showsRevealChip(true, GameState.POSTPONED))
-        assertEquals("upcoming", false, showsRevealChip(true, GameState.UPCOMING))
-        assertEquals("not hidden", false, showsRevealChip(false, GameState.LIVE))
+        assertEquals("live", GameRevealChip.SHOW_THIS, GameRevealChip.of(true, false, GameState.LIVE))
+        assertEquals("final", GameRevealChip.SHOW_THIS, GameRevealChip.of(true, false, GameState.FINAL))
+        assertEquals("postponed", GameRevealChip.NONE, GameRevealChip.of(true, false, GameState.POSTPONED))
+        assertEquals("upcoming", GameRevealChip.NONE, GameRevealChip.of(true, false, GameState.UPCOMING))
+        assertEquals("not hidden", GameRevealChip.NONE, GameRevealChip.of(false, false, GameState.LIVE))
+    }
+
+    @Test
+    fun `a revealed game offers Hide again`() {
+        assertEquals("revealed live", GameRevealChip.HIDE_AGAIN, GameRevealChip.of(true, true, GameState.LIVE))
+        assertEquals("revealed final", GameRevealChip.HIDE_AGAIN, GameRevealChip.of(true, true, GameState.FINAL))
+        assertEquals("a revealed upcoming game has no chip", GameRevealChip.NONE, GameRevealChip.of(true, true, GameState.UPCOMING))
+    }
+
+    @Test
+    fun `a hidden started game with nothing left to show says so`() {
+        val empty = com.nuvio.tv.core.sports.detail.screen.GameDetailTvModel.from(GameSpoilerFilter.scrub(withBlocks(GameState.FINAL).copy(blocks = emptyList())), 0L)
+        assertTrue("redaction left nothing", empty.hiddenOverviewEmpty(true))
+        assertEquals("not when scores are shown", false, empty.hiddenOverviewEmpty(false))
+        val rich = com.nuvio.tv.core.sports.detail.screen.GameDetailTvModel.from(
+            withBlocks(GameState.FINAL).copy(blocks = listOf(GameBlock.Stats(SourceId.ESPN, listOf(com.nuvio.tv.core.sports.detail.StatRow("Shots", "1", "2"))))), 0L,
+        )
+        assertEquals("a card still has content", false, rich.hiddenOverviewEmpty(true))
     }
 
     @Test

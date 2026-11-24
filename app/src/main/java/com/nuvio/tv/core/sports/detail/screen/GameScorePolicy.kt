@@ -41,9 +41,20 @@ object GameSpoilerFilter {
     private fun Side.noScore(): Side = copy(score = null, record = null)
 }
 
-/** The reveal chip belongs to a started game (live or final) whose scores are hidden. */
-fun showsRevealChip(hidden: Boolean, state: GameState): Boolean =
-    hidden && (state == GameState.LIVE || state == GameState.FINAL)
+/** The game page's per-game reveal control (the global setting is only ever changed from the hub). */
+enum class GameRevealChip {
+    NONE, SHOW_THIS, HIDE_AGAIN;
+
+    companion object {
+        /** [globallyHidden] = the profile setting hides scores; [revealed] = this game was revealed for the session. */
+        fun of(globallyHidden: Boolean, revealed: Boolean, state: GameState): GameRevealChip = when {
+            !globallyHidden -> NONE
+            state != GameState.LIVE && state != GameState.FINAL -> NONE
+            revealed -> HIDE_AGAIN
+            else -> SHOW_THIS
+        }
+    }
+}
 
 /** Whether the moment baseline resets (a mode flip or a delay change is not a score change). */
 object GameRenderBaseline {
@@ -68,3 +79,12 @@ object GameScorePolicy {
         return GameRender.Shown(old)
     }
 }
+
+/**
+ * True when "Hide scores" redaction left a started game with nothing to show beside the scoreboard (no section chip,
+ * no leaders / stats / plays card): the screen then says so and offers the per-game reveal instead of a blank pane.
+ */
+fun GameDetailTvModel.hiddenOverviewEmpty(hidden: Boolean): Boolean =
+    hidden && (state == GameState.LIVE || state == GameState.FINAL) &&
+        sections.isEmpty() && leaders.isEmpty() && stats.isEmpty() && latestPlays.isEmpty() && playRows.isEmpty() &&
+        leadersAll.isEmpty() && statLines.isEmpty() && standings == null
