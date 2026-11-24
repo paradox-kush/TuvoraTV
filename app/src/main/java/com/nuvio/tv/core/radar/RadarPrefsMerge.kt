@@ -1,5 +1,7 @@
 package com.nuvio.tv.core.radar
 
+import com.nuvio.tv.core.radar.alerts.SportsAlertSettings
+
 /** How a pulled radar_prefs row lands on the local prefs. Pure. */
 object RadarPrefsMerge {
     fun merge(
@@ -9,6 +11,8 @@ object RadarPrefsMerge {
         promoDismissed: Boolean,
         scoresShown: Boolean?,
         scoreDelayS: Int?,
+        /** The row's `alerts` object; null (column absent, null, or not an object) keeps the local value. */
+        alerts: SportsAlertSettings? = null,
     ): RadarPrefs = local.copy(
         featuredEventId = featuredEventId,
         optInState = optInState,
@@ -17,6 +21,8 @@ object RadarPrefsMerge {
         scoresShown = if (local.spoilerDirty) local.scoresShown else scoresShown ?: local.scoresShown,
         scoreDelayS = if (local.spoilerDirty) local.scoreDelayS
         else ScoreSpoilerSettings.sanitizeDelay(scoreDelayS ?: local.scoreDelayS),
+        // Same protocol as the hide/delay setting: an unpushed local change, or a row without the object, keeps local.
+        alerts = if (local.alertsDirty) local.alerts else alerts ?: local.alerts,
     )
 }
 
@@ -33,4 +39,16 @@ object SpoilerSync {
 
     /** After a pull is applied: a setting still dirty (failed/offline push, or a toggle during the pull) goes out. */
     fun shouldPushAfterPull(applied: RadarPrefs): Boolean = applied.spoilerDirty
+}
+
+/** The dirty-flag protocol for the sports-alerts object (persisted in [RadarPrefs.alertsDirty], no tokens). */
+object AlertsSync {
+    fun markChanged(p: RadarPrefs, alerts: SportsAlertSettings): RadarPrefs = p.copy(alerts = alerts, alertsDirty = true)
+
+    /** After a successful push of [pushed]: clear dirty only if nothing changed since. */
+    fun clearIfPushed(current: RadarPrefs, pushed: SportsAlertSettings): RadarPrefs =
+        if (current.alerts == pushed) current.copy(alertsDirty = false) else current
+
+    /** After a pull is applied: an alerts change still dirty (failed/offline push, or an edit during the pull) goes out. */
+    fun shouldPushAfterPull(applied: RadarPrefs): Boolean = applied.alertsDirty
 }

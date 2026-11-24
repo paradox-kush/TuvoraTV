@@ -4,6 +4,7 @@ import android.util.Log
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
 import com.nuvio.tv.core.profile.ProfileManager
+import com.nuvio.tv.core.radar.alerts.SportsAlertSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -76,6 +77,8 @@ class RadarSyncService @Inject constructor(
         // Absent on a backend without the hide-scores migration: defaults apply.
         @SerialName("scores_shown") val scoresShown: Boolean? = null,
         @SerialName("score_delay_s") val scoreDelayS: Int? = null,
+        // Absent / null / not an object (a backend without the alerts migration, or garbage): the local value stays.
+        val alerts: kotlinx.serialization.json.JsonElement? = null,
     )
 
     private suspend fun <T> withJwtRefreshRetry(block: suspend () -> T): T {
@@ -145,7 +148,14 @@ class RadarSyncService @Inject constructor(
             }
             withJwtRefreshRetry { postgrest.rpc("sync_push_radar", params) }
             // Clear the dirty flag only if the setting still equals what was pushed (a later toggle stays dirty).
-            store.updateState { it.copy(prefs = SpoilerSync.clearIfPushed(it.prefs, state.prefs.scoresShown, state.prefs.scoreDelayS)) }
+            store.updateState {
+                it.copy(
+                    prefs = AlertsSync.clearIfPushed(
+                        SpoilerSync.clearIfPushed(it.prefs, state.prefs.scoresShown, state.prefs.scoreDelayS),
+                        state.prefs.alerts,
+                    )
+                )
+            }
             Log.d(TAG, "Pushed ${state.follows.size} radar follows, ${state.teams.size} teams for profile $profileId")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -189,7 +199,7 @@ class RadarSyncService @Inject constructor(
             }
             if (followRows.isEmpty() && teamRows.isEmpty() && prefsRow == null) {
                 val local = store.state.first()
-                if (local.follows.isNotEmpty() || local.teams.isNotEmpty() || local.prefs != RadarPrefs() || SpoilerSync.shouldPushAfterPull(local.prefs)) pushToRemote()
+                if (local.follows.isNotEmpty() || local.teams.isNotEmpty() || local.prefs != RadarPrefs() || SpoilerSync.shouldPushAfterPull(local.prefs) || AlertsSync.shouldPushAfterPull(local.prefs)) pushToRemote()
                 return@withContext Result.success(Unit)
             }
             isSyncingFromRemote = true
@@ -217,6 +227,7 @@ class RadarSyncService @Inject constructor(
                             promoDismissed = it.promoDismissed,
                             scoresShown = it.scoresShown,
                             scoreDelayS = it.scoreDelayS,
+                            alerts = SportsAlertSettings.decodeOrNull(it.alerts),
                         )
                     } ?: local.prefs,
                     teams = teamRows.sortedBy { it.sortOrder }
@@ -232,10 +243,10 @@ class RadarSyncService @Inject constructor(
                                 sortOrder = it.sortOrder,
                             )
                         },
-                ).also { pushAfter = SpoilerSync.shouldPushAfterPull(it.prefs) }
+                ).also { pushAfter = SpoilerSync.shouldPushAfterPull(it.prefs) || AlertsSync.shouldPushAfterPull(it.prefs) }
             }
             isSyncingFromRemote = false
-            // A hide/delay change still unpushed (failed/offline push, or a toggle during this pull) goes out now.
+            // A hide/delay or alerts change still unpushed (failed/offline push, or a toggle during this pull) goes out now.
             if (pushAfter) triggerRemoteSync()
             Log.d(TAG, "Pulled ${followRows.size} radar follows, ${teamRows.size} teams for profile $profileId")
             Result.success(Unit)

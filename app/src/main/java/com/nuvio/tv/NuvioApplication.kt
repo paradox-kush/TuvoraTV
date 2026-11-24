@@ -86,6 +86,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var playlistDnsResolver: dagger.Lazy<com.nuvio.tv.core.iptv.dns.PlaylistDnsResolver>
     @Inject lateinit var xtreamTmdbResolver: dagger.Lazy<com.nuvio.tv.core.iptv.match.XtreamTmdbResolver>
     @Inject lateinit var realtimeSyncInvalidationService: dagger.Lazy<RealtimeSyncInvalidationService>
+    @Inject lateinit var sportsAlertSubscription: dagger.Lazy<com.nuvio.tv.core.radar.alerts.SportsAlertSubscription>
     @Inject lateinit var m3uIdRekeyer: dagger.Lazy<com.nuvio.tv.core.iptv.M3uIdRekeyer>
     @Inject lateinit var sentrySettingsDataStore: SentrySettingsDataStore
     @Inject lateinit var telemetry: com.nuvio.tv.core.telemetry.TelemetryService
@@ -401,7 +402,11 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             // Built here, not in Application injection: its init starts the sign-in sync pull.
             com.nuvio.tv.core.startup.StartupTask.STARTUP_SYNC -> startupSyncService.get()
             com.nuvio.tv.core.startup.StartupTask.REALTIME_SYNC ->
-                if (BuildConfig.REALTIME_SYNC_ENABLED) realtimeSyncInvalidationService.get().start()
+                if (BuildConfig.REALTIME_SYNC_ENABLED) {
+                    realtimeSyncInvalidationService.get().start()
+                    // In-app sports alerts ride the same Realtime socket: joined only while foreground, signed in and following.
+                    sportsAlertSubscription.get().start()
+                }
             // B205: a setup code redeemed with no account is claimed when a real account signs in (and at app start).
             com.nuvio.tv.core.startup.StartupTask.DEVICE_CLAIM -> deviceClaimCoordinator.get().start(analyticsConsentScope)
             // Restores anything a previous process left unsent and starts the flush timer. Guarded

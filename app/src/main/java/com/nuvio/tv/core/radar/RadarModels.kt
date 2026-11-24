@@ -317,6 +317,11 @@ data class RadarPrefs(
     @SerialName("score_delay_s") val scoreDelayS: Int = 0,
     /** Device-local, never sent: a hide/delay change not yet pushed. A pull must not overwrite it. */
     @SerialName("spoiler_dirty") val spoilerDirty: Boolean = false,
+    /** Sports-alerts settings (one object, synced per profile). Missing in old blobs = defaults. */
+    @SerialName("alerts") @Serializable(with = com.nuvio.tv.core.radar.alerts.SportsAlertSettingsSerializer::class)
+    val alerts: com.nuvio.tv.core.radar.alerts.SportsAlertSettings = com.nuvio.tv.core.radar.alerts.SportsAlertSettings(),
+    /** Device-local, never sent: an alerts change not yet pushed. A pull must not overwrite it. */
+    @SerialName("alerts_dirty") val alertsDirty: Boolean = false,
 ) {
     val spoiler: ScoreSpoilerSettings
         get() = ScoreSpoilerSettings(shown = scoresShown, delaySeconds = ScoreSpoilerSettings.sanitizeDelay(scoreDelayS))
@@ -329,6 +334,7 @@ fun RadarPrefs.toSyncJson(): kotlinx.serialization.json.JsonObject = kotlinx.ser
     put("promo_dismissed", promoDismissed)
     put("scores_shown", scoresShown)
     put("score_delay_s", ScoreSpoilerSettings.sanitizeDelay(scoreDelayS))
+    put("alerts", alerts.toJson())
 }
 
 /** The one locally-persisted blob (follows + prefs together; fixtures cache is separate). */

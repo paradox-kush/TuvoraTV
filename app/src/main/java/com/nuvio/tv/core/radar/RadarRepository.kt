@@ -419,6 +419,17 @@ class RadarRepository @Inject constructor(
         }
     }
 
+    /**
+     * Sports-alerts settings change (any control: settings screen, hub chip, game chip, mute). Value and dirty flag land
+     * in ONE store transaction, exactly like the hide/delay setting, so a pull never sees one without the other.
+     */
+    fun updateAlerts(transform: (com.nuvio.tv.core.radar.alerts.SportsAlertSettings) -> com.nuvio.tv.core.radar.alerts.SportsAlertSettings) {
+        scope.launch {
+            store.updateState { it.copy(prefs = AlertsSync.markChanged(it.prefs, transform(it.prefs.alerts))) }
+            syncService.triggerRemoteSync()
+        }
+    }
+
     /** Record what a fetch brought into the delay buffer (fixtures first: first-sight bookkeeping). */
     private fun recordScores(response: RadarFixturesResponse) {
         scoreObservations.note(
