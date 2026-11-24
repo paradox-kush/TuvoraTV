@@ -67,6 +67,7 @@ internal fun ServerSignInDialog(
     }
     val startQuickConnect = { quickConnectTo(address) }
 
+    LaunchedEffect(Unit) { com.nuvio.tv.core.telemetry.FirstRun.sourceFormOpened() } // first_leave: a source form was opened
     LaunchedEffect(Unit) { viewModel.resetSignIn() }
     // Closing the dialog ends the Quick Connect poll.
     DisposableEffect(Unit) { onDispose { viewModel.stopQuickConnect() } }

@@ -311,6 +311,12 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
             override fun onActivityDestroyed(activity: android.app.Activity) = Unit
         })
+        // first_leave: the WHOLE process leaving the foreground (ProcessLifecycleOwner ON_STOP fires once no Activity is
+        // started, debounced so a config change or an Activity-to-Activity hop is not a leave), not one Activity.
+        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
+            override fun onStart(owner: androidx.lifecycle.LifecycleOwner) = telemetry.firstRunAppForegrounded()
+            override fun onStop(owner: androidx.lifecycle.LifecycleOwner) = telemetry.firstRunAppBackgrounded()
+        })
         if (consent.runConsentedWorkNow) {
             PostHog.optIn()
             runConsentedStartupWork(supportCode)

@@ -352,6 +352,8 @@ fun XtreamSettingsContent(
     }
 
     if (showAddDialog) {
+        // first_leave: the add-playlist form was opened (add mode; edits use their own dialog).
+        LaunchedEffect(Unit) { com.nuvio.tv.core.telemetry.FirstRun.sourceFormOpened() }
         XtreamAddDialog(
             isValidating = uiState.isValidating,
             error = uiState.error,

@@ -38,6 +38,7 @@ object Breadcrumbs {
     fun screenChanged(name: String) {
         if (name.isBlank() || name == lastScreen) return
         lastScreen = name
+        com.nuvio.tv.core.telemetry.FirstRun.screen(name)
         crashWriter?.onScreen(name)
         capture(SCREEN_EVENT, mapOf(SCREEN_NAME_PROPERTY to name))
     }

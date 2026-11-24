@@ -202,6 +202,7 @@ fun AddonManagerScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val addonSyncStatus by viewModel.addonSyncStatus.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { com.nuvio.tv.core.telemetry.FirstRun.sourceFormOpened() } // first_leave: the add-on install form is on screen
     val addonToggleFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val addonRemoveFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     fun toggleFocusRequesterFor(baseUrl: String): FocusRequester =

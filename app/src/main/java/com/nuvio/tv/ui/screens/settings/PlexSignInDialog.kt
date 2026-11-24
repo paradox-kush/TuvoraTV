@@ -35,6 +35,7 @@ internal fun PlexSignInDialog(
 ) {
     val flow = viewModel.plexSignIn
     val state by flow.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { com.nuvio.tv.core.telemetry.FirstRun.sourceFormOpened() } // first_leave: a source form was opened
     LaunchedEffect(Unit) { flow.start(onConnected) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {

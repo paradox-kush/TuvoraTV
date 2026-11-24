@@ -37,6 +37,9 @@ enum class PlaylistSaveError {
     SIGNING_IN,
 }
 
+/** The `save_error` value of the first-run summary: the enum name lower-cased (a code, never the message text). */
+fun PlaylistSaveError.funnelKind(): String = name.lowercase()
+
 /** The panel answered `user_info.auth != 1`: it refused the username/password. */
 class XtreamAuthRejectedException : IllegalStateException("Authentication failed")
 
