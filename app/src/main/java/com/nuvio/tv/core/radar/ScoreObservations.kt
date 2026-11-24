@@ -30,13 +30,17 @@ class ScoreObservations(
         }
     }
 
-    /** Marks fixtures loaded from the disk cache as seen (old news) without buffering their scores. */
+    /**
+     * Disk-cache load: a game already over is old news (never delayed); every other cached score is buffered with
+     * the load time, so after the delay it shows the cached value instead of "-" until the next fetch.
+     */
     @Synchronized
-    fun noteCached(fixtures: Collection<RadarFixture>) {
+    fun noteCached(fixtures: Collection<RadarFixture>, liveRows: Collection<RadarLiveScore>, nowMs: Long) {
         for (fx in fixtures) {
             val id = fx.id ?: continue
             if (seen.add(id) && fx.isFinishedOrOff) finishedFirst.add(id)
         }
+        note(fixtures, liveRows, nowMs)
     }
 
     @Synchronized

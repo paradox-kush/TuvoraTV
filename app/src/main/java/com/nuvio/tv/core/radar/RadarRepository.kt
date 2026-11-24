@@ -175,7 +175,11 @@ class RadarRepository @Inject constructor(
                 refreshCatalog()
                 store.loadFixtures()?.let { cached ->
                     // Disk cache = old news: first-sight bookkeeping only, nothing is buffered.
-                    scoreObservations.noteCached(cached.fixtures.values.flatten() + cached.teamFixtures.values.flatten())
+                    scoreObservations.noteCached(
+                        cached.fixtures.values.flatten() + cached.teamFixtures.values.flatten(),
+                        cached.livescore.values.flatten(),
+                        RadarTime.nowMs(),
+                    )
                     _uiState.update {
                         it.copy(
                             fixturesByLeague = cached.fixtures,
@@ -384,9 +388,8 @@ class RadarRepository @Inject constructor(
     /** Hide scores everywhere (false) or show them again. One global per-profile setting; synced. */
     fun setScoresShown(shown: Boolean) {
         scope.launch {
-            val current = store.state.first()
-            syncService.noteLocalSpoilerChange()
-            store.saveState(current.copy(prefs = current.prefs.copy(scoresShown = shown)))
+            // Value and dirty flag land in ONE store transaction: a pull can never see one without the other.
+            store.updateState { it.copy(prefs = SpoilerSync.markChanged(it.prefs, shown = shown)) }
             syncService.triggerRemoteSync()
         }
     }
@@ -394,9 +397,7 @@ class RadarRepository @Inject constructor(
     /** Score delay in seconds; anything outside [ScoreSpoilerSettings.ALLOWED_DELAYS] is stored as 0. */
     fun setScoreDelaySeconds(seconds: Int) {
         scope.launch {
-            val current = store.state.first()
-            syncService.noteLocalSpoilerChange()
-            store.saveState(current.copy(prefs = current.prefs.copy(scoreDelayS = ScoreSpoilerSettings.sanitizeDelay(seconds))))
+            store.updateState { it.copy(prefs = SpoilerSync.markChanged(it.prefs, delayS = seconds)) }
             syncService.triggerRemoteSync()
         }
     }

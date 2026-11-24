@@ -144,10 +144,12 @@ class RadarCalendarSportsSource @Inject constructor(
                 .map { it.scoreRev to it.spoiler }
                 .distinctUntilChanged()
                 .transformLatest {
-                    val now = RadarTime.nowMs()
-                    val due = repository.uiState.value.nextScoreDueAtMs(now) ?: return@transformLatest
-                    delay((due - now).coerceAtLeast(0L) + 50L)
-                    emit(Unit)
+                    ScoreDueLoop.run(
+                        nowMs = RadarTime::nowMs,
+                        nextDueAtMs = repository.uiState.value::nextScoreDueAtMs,
+                        wait = { delay(it) },
+                        onDue = { emit(Unit) },
+                    )
                 },
         )
 

@@ -79,15 +79,22 @@ class ScoreObservationsTest {
     }
 
     @Test
-    fun `a game that was live in the disk cache is pending until a fresh snapshot is due`() {
+    fun `a game that was live in the disk cache shows the cached value once the delay passed`() {
         val o = ScoreObservations()
         val cached = fx("e6", status = "1H", h = "1", a = "0")
-        o.noteCached(listOf(cached))
-        assertEquals("cached live score is not shown", ScoreView.ScorePending, o.scoreView(d30, cached, live("e6", "1", "0"), 1_000L))
-        o.note(listOf(cached), listOf(live("e6", "1", "0")), 5_000L)
-        assertEquals("fresh snapshot not yet due", ScoreView.ScorePending, o.scoreView(d30, cached, live("e6", "1", "0"), 34_000L))
-        val v = o.scoreView(d30, cached, live("e6", "1", "0"), 35_000L) as ScoreView.ScoreShown
-        assertEquals("due", "1", v.value?.homeScore)
+        o.noteCached(listOf(cached), listOf(live("e6", "1", "0")), 1_000L)
+        assertEquals("pending right after load", ScoreView.ScorePending, o.scoreView(d30, cached, live("e6", "1", "0"), 20_000L))
+        val v = o.scoreView(d30, cached, live("e6", "1", "0"), 31_000L) as ScoreView.ScoreShown
+        assertEquals("cached value after the delay, no fetch needed", "1", v.value?.homeScore)
+    }
+
+    @Test
+    fun `a cached final stays shown at once`() {
+        val o = ScoreObservations()
+        val cached = fx("e10", status = "Match Finished", h = "2", a = "2")
+        o.noteCached(listOf(cached), emptyList(), 1_000L)
+        val v = o.scoreView(d30, cached, null, 1_001L) as ScoreView.ScoreShown
+        assertEquals("old news shown at once", "2", v.value?.homeScore)
     }
 
     @Test
