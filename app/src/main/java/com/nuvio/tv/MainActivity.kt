@@ -346,6 +346,9 @@ open class MainActivity : ComponentActivity() {
     @Inject
     lateinit var partyRepository: PartyRepository
 
+    @Inject
+    lateinit var sportsAlertController: com.nuvio.tv.core.radar.alerts.SportsAlertController
+
     private val pendingDeepLinkUrl = MutableStateFlow<String?>(null)
     private val pendingLaunchIntent = MutableStateFlow<Intent?>(null)
 
@@ -963,6 +966,20 @@ open class MainActivity : ComponentActivity() {
                     var optimisticRoute by remember { mutableStateOf<String?>(null) }
                     val navBackStackEntry by navController.currentBackStackEntryAsState()
                     val actualRoute = navBackStackEntry?.destination?.route
+                    // Sports alerts read playback / the open game from the route: no alert over a film by default,
+                    // none for the game whose page is open.
+                    LaunchedEffect(navBackStackEntry) {
+                        val entry = navBackStackEntry
+                        val args = entry?.arguments
+                        sportsAlertController.onRoute(
+                            com.nuvio.tv.core.radar.alerts.SportsAlertRouteContext.from(
+                                route = entry?.destination?.route,
+                                contentType = args?.getString("contentType"),
+                                contentId = args?.getString("contentId"),
+                                gameId = args?.getString("gameId"),
+                            )
+                        )
+                    }
                     val currentRoute = optimisticRoute ?: actualRoute
                     startupDestination = startupDestinationForRoute(actualRoute ?: startDestination)
 
@@ -1363,6 +1380,11 @@ open class MainActivity : ComponentActivity() {
                                     autoNextOverlay != null
                             )
 
+                            // Sports alerts: top-right, not focusable, never moves focus (hold OK acts, see dispatchKeyEvent).
+                            val sportsAlertViewModel: com.nuvio.tv.ui.components.SportsAlertBannerViewModel =
+                                hiltViewModel(this@MainActivity)
+                            com.nuvio.tv.ui.components.SportsAlertBannerHost(viewModel = sportsAlertViewModel)
+
                             val isTrailerPlaying by trailerPlayerPool.isTrailerPlaying.collectAsState()
                             LaunchedEffect(isTrailerPlaying) {
                                 if (!isTrailerPlaying) ambientIdleController.onInteraction()
@@ -1493,6 +1515,9 @@ open class MainActivity : ComponentActivity() {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (ambientIdleController.consumeKeyEvent(event)) return true
+        // Sports alert banner up: a HOLD of OK runs its action and swallows the rest of that press; a short press
+        // (and every other key) returns false here and flows on exactly as without a banner.
+        if (sportsAlertController.onKeyEvent(event)) return true
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (longPressBackHeld.value) {
                 if (event.action == KeyEvent.ACTION_UP) longPressBackHeld.value = false

@@ -121,6 +121,9 @@ fun GameDetailScreen(
     val revealed by viewModel.revealed.collectAsStateWithLifecycle()
     // While the "Scores hidden" chip holds focus, plain D-pad focus search drives it (the custom map below knows only the other controls).
     var scoreChipFocused by remember { mutableStateOf(false) }
+    // The Alerts chip is a second control in the same header row: it gets the same plain D-pad treatment.
+    var alertsChipFocused by remember { mutableStateOf(false) }
+    val gameFixture by viewModel.gameFixture.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -233,7 +236,7 @@ fun GameDetailScreen(
             withFrame()
             runCatching { revealRequester.requestFocus() }
             kotlinx.coroutines.delay(80L * (attempt + 1))
-            if (scoreChipFocused) return@repeat
+            if (scoreChipFocused || alertsChipFocused) return@repeat
         }
         autoFocusing = false
     }
@@ -265,7 +268,7 @@ fun GameDetailScreen(
                     else -> null
                 }
                 val from = focusedKey
-                if (scoreChipFocused || e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown || dir == null || from == null || chipSections.isEmpty()) false
+                if (scoreChipFocused || alertsChipFocused || e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown || dir == null || from == null || chipSections.isEmpty()) false
                 else {
                     val to = GameDetailFocus.move(from, dir, controls, shownSection?.let { FocusKey.of(it) })
                     if (to != null) { runCatching { requesters.getValue(to).requestFocus() }; true } else false
@@ -304,6 +307,18 @@ fun GameDetailScreen(
                             onReveal = viewModel::revealThisGame,
                             onHideAgain = viewModel::hideThisGameAgain,
                             onChipFocus = { scoreChipFocused = it },
+                            alertsChip = {
+                                gameFixture?.let { fx ->
+                                    com.nuvio.tv.ui.screens.radar.GameAlertsChip(
+                                        eventId = com.nuvio.tv.core.radar.RadarCalendarGames.gameId(fx),
+                                        leagueId = fx.leagueId,
+                                        homeId = fx.homeId,
+                                        awayId = fx.awayId,
+                                        kickoffMs = fx.startEpochMs,
+                                        modifier = Modifier.onFocusChanged { alertsChipFocused = it.isFocused },
+                                    )
+                                }
+                            },
                         )
                         model.field?.let { FootballFieldStrip(it, model.sides, colors, moments) }
                         model.soccer?.let { SoccerStrip(it, model.sides, colors, moments) }
@@ -475,6 +490,7 @@ private fun ScoreboardCard(
     onReveal: () -> Unit = {},
     onHideAgain: () -> Unit = {},
     onChipFocus: (Boolean) -> Unit = {},
+    alertsChip: @Composable () -> Unit = {},
 ) {
     // Screen readers: only a score change is announced ("Dallas 2, Buffalo 0"), at most once per update; the description changes only with the score.
     // Hidden / delayed-and-pending: never spoken (the spoken score is a spoiler too).
@@ -501,6 +517,8 @@ private fun ScoreboardCard(
                 )
                 Spacer(Modifier.width(12.dp))
             }
+            // Per-game alerts override (Default / All / Off): only drawn for a followed game.
+            alertsChip()
             StatePill(model)
         }
         Spacer(Modifier.height(10.dp))

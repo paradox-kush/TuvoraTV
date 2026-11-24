@@ -296,6 +296,8 @@ fun SportsHubScreen(
                     viewModel.repository.setScoreDelaySeconds(ScoreSpoilerSettings.nextDelay(state.spoiler.delaySeconds))
                 },
             )
+            Spacer(Modifier.width(NuvioTheme.spacing.sm))
+            SportsAlertsHubChip()
         }
         NuvioTextField(
             value = searchQuery,

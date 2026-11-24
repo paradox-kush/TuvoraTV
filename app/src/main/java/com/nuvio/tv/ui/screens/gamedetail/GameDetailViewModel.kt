@@ -132,6 +132,9 @@ class GameDetailViewModel @Inject constructor(
 
     private val pollerReady = CompletableDeferred<GameDetailPoller>()
     @Volatile private var fixture: RadarFixture? = null
+    private val _gameFixture = MutableStateFlow<RadarFixture?>(null)
+    /** The fixture once resolved: the page's own alerts chip needs its league, teams and kick-off. */
+    val gameFixture: StateFlow<RadarFixture?> = _gameFixture.asStateFlow()
     @Volatile private var matches: List<RadarChannelMatcher.ChannelMatch> = emptyList()
     @Volatile private var matching = true
     @Volatile private var matchingFailed = false
@@ -176,6 +179,7 @@ class GameDetailViewModel @Inject constructor(
             return
         }
         fixture = found
+        _gameFixture.value = found
         finished = found.isFinishedOrOff
         val ref = GameDetailEntry.refFor(found, live = repository.uiState.value.isLive(found, RadarTime.nowMs()))
         pollerReady.complete(

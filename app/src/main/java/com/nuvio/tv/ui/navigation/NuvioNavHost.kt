@@ -26,6 +26,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
@@ -231,6 +232,32 @@ private fun PlaybackNavHost(
         return from.startsWith("player/") && to.startsWith("stream/")
     }
 
+    // Sports alert banner action (hold OK): open the game page, play its channel, or open Sports. Only this host
+    // collects the one-shot flow, so an action can never run twice.
+    val sportsAlertViewModel = androidx.hilt.navigation.compose.hiltViewModel<com.nuvio.tv.ui.components.SportsAlertBannerViewModel>()
+    LaunchedEffect(navController) {
+        sportsAlertViewModel.actions.collect { action ->
+            val owner = navController.currentBackStackEntry ?: return@collect
+            when (action) {
+                is com.nuvio.tv.core.radar.alerts.AlertAction.OpenGame ->
+                    navController.navigate(Screen.GameDetail.createRoute(action.gameId)) { launchSingleTop = true }
+                com.nuvio.tv.core.radar.alerts.AlertAction.OpenSports ->
+                    navController.navigate(Screen.SportsHub.route) { launchSingleTop = true }
+                is com.nuvio.tv.core.radar.alerts.AlertAction.Watch ->
+                    if (sportsAlertViewModel.publishLineup(action.gameId)) {
+                        dispatchLiveOrElse(
+                            owner = owner,
+                            contentId = action.contentId,
+                            origin = CleanLiveLaunchOrigin.SPORTS,
+                            onNonLive = {},
+                        )
+                    } else {
+                        // The matched lineup is gone (profile switch): the game page runs its own lookup.
+                        navController.navigate(Screen.GameDetail.createRoute(action.gameId)) { launchSingleTop = true }
+                    }
+            }
+        }
+    }
     fun openPartyMedia(media: PartyMedia) {
         if (navController.currentDestination?.route?.startsWith("player/") == true) navController.popBackStack()
         navController.navigate(
@@ -1758,6 +1785,12 @@ private fun PlaybackNavHost(
 
         composable(Screen.Tracking.route) {
             TrackingSettingsScreen(
+                onBackPress = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.SportsAlertsSettings.route) {
+            com.nuvio.tv.ui.screens.settings.SportsAlertsSettingsScreen(
                 onBackPress = { navController.popBackStack() }
             )
         }
