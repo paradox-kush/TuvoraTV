@@ -57,6 +57,7 @@ class SettingsStructureTest {
                 LayoutSection.HOME_CONTENT,
                 LayoutSection.SIDEBAR,
                 LayoutSection.CONTINUE_WATCHING,
+                LayoutSection.TV_HOME_SCREEN,
                 LayoutSection.FOCUSED_POSTER,
                 LayoutSection.POSTER_CARD,
                 LayoutSection.CARD_DEPTH,
