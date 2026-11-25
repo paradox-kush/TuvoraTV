@@ -18,6 +18,11 @@ import kotlinx.coroutines.launch
 private const val TAG = "TvLauncherRemoval"
 
 /**
+ * NOTE: Google TV launchers may never send this broadcast (it is only sent via the @SystemApi
+ * TvInputManager.notifyWatchNextProgramBrowsableDisabled); they just set COLUMN_BROWSABLE=0 on the row.
+ * The launcher-hidden row itself keeps a removed item off (reconcile updates it in place), and the
+ * played-in-app path re-inserts a fresh row. This receiver is the best-effort path where it does arrive.
+ *
  * The launcher tells us when the viewer removes one of our programs: it sets the program
  * non-browsable and sends this broadcast with the program's row id. We remember the item so the
  * next reconcile does not put it back, and delete the hidden row so a later replay inserts a fresh,

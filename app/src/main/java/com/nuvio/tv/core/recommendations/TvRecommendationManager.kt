@@ -201,8 +201,9 @@ class TvRecommendationManager @Inject constructor(
             try {
                 val decorated = progress.withCustomPosterArt(recommendationPosterPattern())
                 val id = programBuilder.watchNextId(decorated)
-                // Playing something is the replay that lets a removed item come back, so no removal
-                // check here. A resume is CONTINUE only with a real position and duration.
+                // Playing something is the replay that lets a removed item come back: PLAYED replaces the
+                // row, so a launcher-hidden one turns visible again. The fingerprint cache is in-memory, so
+                // the first played write per id after process start always writes. No removal check here. A resume is CONTINUE only with a real position and duration.
                 val item = LauncherItem(decorated, ResumeRankPolicy.Kind.Resume)
                 val newFingerprint = fingerprintOf(item)
                 val oldFingerprint = syncedFingerprints[id]
@@ -220,7 +221,7 @@ class TvRecommendationManager @Inject constructor(
                 }
 
                 val program = programBuilder.buildWatchNextProgram(item)
-                programBuilder.upsertWatchNextProgram(program, id)
+                programBuilder.upsertWatchNextProgram(program, id, WatchNextWritePolicy.WriteSource.PLAYED)
                 syncedFingerprints[id] = newFingerprint
             } catch (e: Exception) {
                 Log.w(TAG, "updateSingleWatchNextProgram failed", e)

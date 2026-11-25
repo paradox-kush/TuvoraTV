@@ -74,25 +74,66 @@ class ProgramBuilder @Inject constructor(
         return builder.build()
     }
 
-    fun upsertWatchNextProgram(program: WatchNextProgram, internalId: String) {
+    /**
+     * Writes [program] per [WatchNextWritePolicy]: RECONCILE updates an existing row in place (a row the
+     * launcher hid stays hidden); PLAYED replaces it so a hidden row becomes visible again.
+     */
+    fun upsertWatchNextProgram(
+        program: WatchNextProgram,
+        internalId: String,
+        source: WatchNextWritePolicy.WriteSource = WatchNextWritePolicy.WriteSource.RECONCILE
+    ) {
         try {
             val existingId = findWatchNextByInternalId(internalId)
-            val values = program.toContentValues()
-            if (existingId != null) {
-                // An UPDATE leaves unset columns alone, so clear a duration/position that is no longer
-                // known instead of keeping a stale (or previously invented) one.
-                if (!values.containsKey("duration_millis")) values.putNull("duration_millis")
-                if (!values.containsKey("last_playback_position_millis")) values.putNull("last_playback_position_millis")
-                val uri = TvContractCompat.buildWatchNextProgramUri(existingId)
-                context.contentResolver.update(uri, values, null, null)
-            } else {
-                context.contentResolver.insert(
-                    TvContractCompat.WatchNextPrograms.CONTENT_URI,
-                    values
-                )
+            when (WatchNextWritePolicy.modeFor(source, existingId != null)) {
+                WatchNextWritePolicy.WriteMode.REPLACE -> replaceWatchNextProgram(program, internalId)
+                WatchNextWritePolicy.WriteMode.UPDATE -> {
+                    val values = program.toContentValues()
+                    // An UPDATE leaves unset columns alone, so clear a duration/position that is no longer
+                    // known instead of keeping a stale (or previously invented) one.
+                    if (!values.containsKey("duration_millis")) values.putNull("duration_millis")
+                    if (!values.containsKey("last_playback_position_millis")) values.putNull("last_playback_position_millis")
+                    val uri = TvContractCompat.buildWatchNextProgramUri(requireNotNull(existingId))
+                    context.contentResolver.update(uri, values, null, null)
+                }
+                WatchNextWritePolicy.WriteMode.INSERT -> insertWatchNext(program)
             }
         } catch (_: Exception) {
         }
+    }
+
+    /** Deletes every row with [internalId], then inserts a fresh one (visible even if the launcher hid the old). */
+    fun replaceWatchNextProgram(program: WatchNextProgram, internalId: String) {
+        try {
+            findAllWatchNextByInternalId(internalId).forEach { rowId ->
+                context.contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(rowId), null, null)
+            }
+            insertWatchNext(program)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun insertWatchNext(program: WatchNextProgram) {
+        context.contentResolver.insert(TvContractCompat.WatchNextPrograms.CONTENT_URI, program.toContentValues())
+    }
+
+    private fun findAllWatchNextByInternalId(internalId: String): List<Long> {
+        val ids = mutableListOf<Long>()
+        context.contentResolver.query(
+            TvContractCompat.WatchNextPrograms.CONTENT_URI,
+            arrayOf(
+                TvContractCompat.WatchNextPrograms._ID,
+                TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID
+            ),
+            null, null, null
+        )?.use {
+            val pIdx = it.getColumnIndex(TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID)
+            val idIdx = it.getColumnIndex(TvContractCompat.WatchNextPrograms._ID)
+            if (pIdx >= 0 && idIdx >= 0) {
+                while (it.moveToNext()) if (it.getString(pIdx) == internalId) ids.add(it.getLong(idIdx))
+            }
+        }
+        return ids
     }
 
     fun removeWatchNextProgram(internalId: String) {

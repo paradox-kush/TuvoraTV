@@ -7,6 +7,10 @@ package com.nuvio.tv.core.recommendations
  * A different episode of the same show is a different item (`wn_<id>_sXeY`) and may publish.
  * Removing from the launcher never touches the in-app Continue Watching list.
  *
+ * On Google TV launchers the removal broadcast may never arrive: "Remove from Play Next" only sets the
+ * row's COLUMN_BROWSABLE=0 (apps cannot write it). That hidden row is what keeps the item off: reconcile
+ * updates it in place, and only real playback re-inserts it (see [WatchNextWritePolicy]).
+ *
  * Removals are tracked per item, shared by both launcher surfaces: the Watch Next row id is
  * `wn_<key>` and the preview channel id is `<key>`, so both normalise to `<key>`.
  *
