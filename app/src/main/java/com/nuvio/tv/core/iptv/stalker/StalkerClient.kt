@@ -86,8 +86,12 @@ class StalkerClient @Inject constructor(
     // UX147/UX164: playlists whose series probe ended with positive evidence of "no series section".
     private val seriesAbsentIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    // B294: the portal's page size per accountId:type, learned from a page-1 reply (row windows).
+    private val pageSizes = ConcurrentHashMap<String, Int>()
+
     /** Drop an account's cached lineup/rows (portal or MAC edited, playlist removed). */
     fun evictCaches(accountId: String) {
+        pageSizes.keys.removeAll { it.startsWith("$accountId:") }
         epgUnsupported.remove(accountId)
         seasonCache.keys.removeAll { it.startsWith("$accountId:") }
         seriesDialects.remove(accountId)
@@ -377,7 +381,7 @@ class StalkerClient @Inject constructor(
 
     /** F48: the same search, but a failed request throws — the IPTV hub's search ends Failed + Retry instead of "no matches". */
     suspend fun searchMoviesOrThrow(acc: XtreamAccount, query: String): List<XtreamMovie> = run {
-        val items = orderedList(acc, "vod", null, search = query, maxItems = SEARCH_ITEMS, failFast = true)
+        val items = orderedList(acc, "vod", null, search = query, maxItems = SEARCH_ITEMS, failFast = true, maxPages = SEARCH_PAGES)
             .filterNot(StalkerSeriesDialect::isSeriesRow)   // B02: a Ministra series is not a movie source
         writeThroughVod(acc, items)   // a searched-then-favorited movie must survive a cold start too
         items.map { movieOf(acc, it) }.filter { it.streamId > 0 }
@@ -397,7 +401,11 @@ class StalkerClient @Inject constructor(
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = runCatching {
         val fetched = seriesRows(acc, categoryId, search = null, maxItems = CATEGORY_ITEMS)
         writeThroughSeries(acc, fetched)
-        fetched.map { item ->
+        seriesItemsOf(acc, fetched)
+    }
+
+    private fun seriesItemsOf(acc: XtreamAccount, rows: List<JsonObject>): List<XtreamSeriesItem> =
+        rows.map { item ->
             XtreamSeriesItem(
                 seriesId = item.int("id") ?: 0,
                 name = item.str("name").orEmpty(),
@@ -409,6 +417,69 @@ class StalkerClient @Inject constructor(
                 year = item.str("year")?.trim()?.take(4)?.toIntOrNull()
             )
         }.filter { it.seriesId > 0 }
+
+    /**
+     * B294: ONE portal page of a Movies category for a hub row, starting at raw [offset]. Throws on a
+     * failed request / non-object reply / missing data array (never "empty"); an empty data array is a
+     * genuine empty window. [StalkerRowWindow.consumed] is the RAW rows on the page.
+     */
+    suspend fun vodMoviesWindow(acc: XtreamAccount, categoryId: String?, offset: Int): StalkerRowWindow<XtreamMovie> {
+        val (page, items) = shownPage(acc, "vod", categoryId, offset) { rows -> rows.filterNot(StalkerSeriesDialect::isSeriesRow) }
+        writeThroughVod(acc, items)
+        return StalkerRowWindow(items.map { movieOf(acc, it) }.filter { it.streamId > 0 }, page.hasMore, page.consumed)
+    }
+
+    /** B294: the Series twin of [vodMoviesWindow] — XC `type=series`, or Ministra vod rows flagged is_series. */
+    suspend fun seriesWindow(acc: XtreamAccount, categoryId: String?, offset: Int): StalkerRowWindow<XtreamSeriesItem> {
+        val ministra = seriesDialect(acc) == StalkerSeriesDialect.Dialect.MINISTRA
+        val (page, items) = shownPage(acc, if (ministra) "vod" else "series", categoryId, offset) { rows ->
+            if (ministra) rows.filter(StalkerSeriesDialect::isSeriesRow) else rows
+        }
+        writeThroughSeries(acc, items)
+        return StalkerRowWindow(seriesItemsOf(acc, items), page.hasMore, page.consumed)
+    }
+
+    /**
+     * One portal page per window - except when [keep] filters the whole page away (a Ministra portal shares
+     * `vod` rows between Movies and Series) while the category goes on: then read on, up to
+     * [MAX_EMPTY_WINDOW_PAGES] more pages, so a row never comes back empty (loadMore fires only from a
+     * non-empty row). The returned page's `consumed` sums the RAW rows of every page read; `hasMore` is the
+     * last page's. A failed page throws.
+     */
+    private suspend fun shownPage(
+        acc: XtreamAccount, type: String, categoryId: String?, offset: Int,
+        keep: (List<JsonObject>) -> List<JsonObject>,
+    ): Pair<OrderedPage, List<JsonObject>> {
+        var consumed = 0
+        var extraPages = 0
+        while (true) {
+            val page = orderedPage(acc, type, categoryId, offset + consumed)
+            consumed += page.consumed
+            val shown = keep(page.rows)
+            if (shown.isNotEmpty() || !page.hasMore || page.consumed <= 0 || extraPages >= MAX_EMPTY_WINDOW_PAGES) {
+                return OrderedPage(page.rows, page.hasMore, consumed) to shown
+            }
+            extraPages++
+        }
+    }
+
+    private class OrderedPage(val rows: List<JsonObject>, val hasMore: Boolean, val consumed: Int)
+
+    private suspend fun orderedPage(acc: XtreamAccount, type: String, categoryId: String?, offset: Int): OrderedPage {
+        val sizeKey = "${acc.id}:$type"
+        val knownSize = pageSizes[sizeKey]
+        val page = StalkerRowPaging.pageFor(offset, knownSize ?: StalkerRowPaging.DEFAULT_PAGE_SIZE)
+        val js = browse(acc, StalkerListParams.forPage(type, categoryId, null, page))
+        val obj = js as? JsonObject
+            ?: throw StalkerSessionUnavailableException("${acc.name} answered a $type page with something other than an object")
+        val data = obj.get("data") as? com.google.gson.JsonArray
+            ?: throw StalkerSessionUnavailableException("${acc.name} answered a $type page with no data list")
+        val rows = data.mapNotNull { it as? JsonObject }
+        val size = if (page == 1) {
+            StalkerRowPaging.pageSizeOf(obj.int("max_page_items"), data.size()).also { pageSizes[sizeKey] = it }
+        } else knownSize ?: StalkerRowPaging.DEFAULT_PAGE_SIZE
+        cacheRows(acc.id, type, rows)
+        return OrderedPage(rows, StalkerRowPaging.hasMore(page, size, data.size(), obj.int("total_items")), data.size())
     }
 
     /**
@@ -725,11 +796,11 @@ class StalkerClient @Inject constructor(
      * the `vod` rows flagged `is_series` (the cap counts every row walked, so a category heavy on
      * movies shows fewer series — the same bound the Movies tab has).
      */
-    private suspend fun seriesRows(acc: XtreamAccount, categoryId: String?, search: String?, maxItems: Int, failFast: Boolean = false): List<JsonObject> =
+    private suspend fun seriesRows(acc: XtreamAccount, categoryId: String?, search: String?, maxItems: Int, failFast: Boolean = false, maxPages: Int = MAX_PAGES): List<JsonObject> =
         if (seriesDialect(acc) == StalkerSeriesDialect.Dialect.MINISTRA) {
-            orderedList(acc, "vod", categoryId, search = search, maxItems = maxItems, failFast = failFast).filter(StalkerSeriesDialect::isSeriesRow)
+            orderedList(acc, "vod", categoryId, search = search, maxItems = maxItems, failFast = failFast, maxPages = maxPages).filter(StalkerSeriesDialect::isSeriesRow)
         } else {
-            orderedList(acc, "series", categoryId, search = search, maxItems = maxItems, failFast = failFast)
+            orderedList(acc, "series", categoryId, search = search, maxItems = maxItems, failFast = failFast, maxPages = maxPages)
         }
 
     /** Every episode of a Ministra series: seasons (`movie_id`), then each season's pages (`season_id`). */
@@ -884,7 +955,7 @@ class StalkerClient @Inject constructor(
 
     /** F48: the same search, but a failed request throws — the IPTV hub's search ends Failed + Retry instead of "no matches". */
     suspend fun searchSeriesOrThrow(acc: XtreamAccount, query: String): List<XtreamSeriesItem> = run {
-        val fetched = seriesRows(acc, null, search = query, maxItems = SEARCH_ITEMS, failFast = true)
+        val fetched = seriesRows(acc, null, search = query, maxItems = SEARCH_ITEMS, failFast = true, maxPages = SEARCH_PAGES)
         writeThroughSeries(acc, fetched)
         fetched.map { item ->
             XtreamSeriesItem(
@@ -1102,11 +1173,12 @@ class StalkerClient @Inject constructor(
         onPage: (() -> Unit)? = null,
         /** F48: a failed FIRST page throws (the hub search shows Failed + Retry) instead of reading as an empty list. */
         failFast: Boolean = false,
+        maxPages: Int = MAX_PAGES,
     ): List<JsonObject> {
         val out = ArrayList<JsonObject>()
         var page = 1
         var total = Int.MAX_VALUE
-        while (out.size < total && out.size < maxItems && page <= MAX_PAGES) {
+        while (out.size < total && out.size < maxItems && page <= maxPages) {
             val params = StalkerListParams.forPage(type, categoryId, search, page)
             val browsed = runCatching { browse(acc, params) }
             if (failFast && page == 1) browsed.exceptionOrNull()?.let { throw it }
@@ -1173,6 +1245,7 @@ class StalkerClient @Inject constructor(
         internal const val UNREACHABLE_MESSAGE = "The portal could not be reached"
         private const val MAX_ITEMS = 8000    // ponytail: categories are the browse path; don't slurp 26k
         private const val MAX_PAGES = 200
+        private const val MAX_EMPTY_WINDOW_PAGES = 4
         /** Pages per Ministra season/episode level: 14 rows a page, so 20 = 280 episodes in a season. */
         private const val MINISTRA_TREE_PAGES = 20
         private const val MAX_CACHED_ROWS = 10_000
@@ -1186,6 +1259,11 @@ class StalkerClient @Inject constructor(
 
         // Live lineup freshness follows the playlist interval, from foreground browsing only.
         private const val SEARCH_ITEMS = 100  // search results: a page or two is plenty
+
+        // B294: a search pages SEQUENTIALLY (14 rows a page) under the hub's 20 s HUB_SEARCH deadline, on a
+        // session that allows only a couple of concurrent requests; 8 pages never made it. 2 pages = 28 rows,
+        // the same cap for the TMDB->stream name lookup (a title match is in the first rows).
+        private const val SEARCH_PAGES = 2
 
         // get_epg_info window + snapshot freshness. 3h covers now/next; re-fetched every 30 min so
         // "now" keeps up.

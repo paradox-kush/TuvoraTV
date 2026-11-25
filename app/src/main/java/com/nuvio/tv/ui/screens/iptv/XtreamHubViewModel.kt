@@ -660,7 +660,7 @@ class XtreamHubViewModel @Inject constructor(
      *  - Xtream w/ built catalog: local index window; stream URLs rebuilt from creds.
      *  - Xtream first-run (no index yet): the old full network fetch, once, kept to one window.
      *  - M3U + the Stalker live lineup: paged reads over IptvContentDb.
-     *  - Stalker VOD/series: the portal's bounded page (70) — the protocol's own window.
+     *  - Stalker VOD/series: ONE portal page per window at the raw offset (B294).
      */
     private suspend fun fetchWindow(
         acc: XtreamAccount,
@@ -784,6 +784,41 @@ class XtreamHubViewModel @Inject constructor(
                     }.let { RawWindow(it, rows.size > PAGE_SIZE, rows.take(PAGE_SIZE).size) }
                 }
             }
+        }
+        // B294: Stalker Movies/Series rows read ONE portal page per window (14 rows), at the RAW offset. The old
+        // full fetch paged 5 pages sequentially behind a session that allows ~2 concurrent requests, so rows
+        // timed out although every page answered. A failed page throws -> the row shows Retry, never "empty".
+        if (acc.sourceType == XtreamAccount.SOURCE_STALKER && section != XtreamSection.LIVE) {
+            val stalker = clientFactory.stalker()
+            if (section == XtreamSection.MOVIES) {
+                val w = stalker.vodMoviesWindow(acc, categoryId, offset)
+                val items = w.items.map { m ->
+                    val id = XtreamItemRegistry.vodId(acc.id, m.streamId)
+                    registry.register(
+                        XtreamResolvedItem(
+                            id = id, type = ContentType.MOVIE, name = m.name, poster = m.poster,
+                            imdbRating = m.rating?.toFloatOrNull(), streamUrl = m.streamUrl,
+                            accountId = acc.id, streamId = m.streamId
+                        )
+                    )
+                    XtreamHubItem(id, m.name, m.poster, isLive = false, contentId = id, streamUrl = null)
+                }
+                return RawWindow(items, w.hasMore, w.consumed)
+            }
+            val w = stalker.seriesWindow(acc, categoryId, offset)
+            val items = w.items.map { s ->
+                val id = XtreamItemRegistry.seriesId(acc.id, s.seriesId)
+                registry.register(
+                    XtreamResolvedItem(
+                        id = id, type = ContentType.SERIES, name = s.name, poster = s.poster,
+                        description = s.plot, imdbRating = s.rating?.toFloatOrNull(),
+                        streamUrl = "", kind = com.nuvio.tv.core.iptv.XtreamKind.SERIES,
+                        accountId = acc.id, streamId = s.seriesId
+                    )
+                )
+                XtreamHubItem(id, s.name, s.poster, isLive = false, contentId = id, streamUrl = null, detailType = "series")
+            }
+            return RawWindow(items, w.hasMore, w.consumed)
         }
         // Fallbacks (Xtream before its index exists; Stalker VOD/series): the old full fetch,
         // once — bounded to one window for Xtream, see fetchCategoryItemsLegacy.
