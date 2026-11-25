@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -259,16 +260,23 @@ internal fun PitchPanel(model: GameDetailTvModel, colors: TeamColors, modifier: 
                 pitch.home.forEach { dot(it, true) }
                 pitch.away.forEach { dot(it, false) }
             }
-            // Shirt numbers sit on the dots; positioned with the same maths as the canvas, in dp via the measured box.
-            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
-                (pitch.home.map { it to true } + pitch.away.map { it to false }).forEach { (spot, home) ->
-                    val x = if (home) spot.x * (maxWidth.value / 2) else maxWidth.value - spot.x * (maxWidth.value / 2)
-                    Text(
-                        spot.player.number.orEmpty(), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center, maxLines = 1,
-                        modifier = Modifier.padding(start = (x - 13).dp, top = (spot.y * maxHeight.value - 8).dp).width(26.dp),
-                    )
-                }
-            }
+            PitchShirtNumbers(pitch.home, pitch.away)
+        }
+    }
+}
+
+/** Shirt numbers sit on the dots; positioned with the same maths as the canvas, in dp via the measured box. */
+@Composable
+internal fun PitchShirtNumbers(home: List<PitchSpot>, away: List<PitchSpot>) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        (home.map { it to true } + away.map { it to false }).forEach { (spot, isHome) ->
+            val x = if (isHome) spot.x * (maxWidth.value / 2) else maxWidth.value - spot.x * (maxWidth.value / 2)
+            Text(
+                spot.player.number.orEmpty(), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center, maxLines = 1,
+                // B284: offset, not padding — a dot on the pitch edge puts the label's corner at a negative position,
+                // which offset draws and padding rejects ("Padding must be non-negative" crashed the game screen).
+                modifier = Modifier.offset(x = (x - 13).dp, y = (spot.y * maxHeight.value - 8).dp).width(26.dp),
+            )
         }
     }
 }

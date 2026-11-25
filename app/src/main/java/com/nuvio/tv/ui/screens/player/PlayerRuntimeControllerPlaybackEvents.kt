@@ -1859,9 +1859,11 @@ fun PlayerRuntimeController.onEvent(
                     showSubtitleDelayOverlay = false
                 )
             }
-            if (isTorrentStream && currentInfoHash != null) {
-                releasePlayer()
-                stopTorrentStream()
+            // B285: stopTorrentStream() clears currentInfoHash/currentFileIdx, so the target is read before teardown.
+            val retriedTorrent = retryTorrent(
+                current = { if (isTorrentStream) currentInfoHash?.let { TorrentRetryTarget(it, currentFileIdx) } else null },
+                teardown = { releasePlayer(); stopTorrentStream() },
+            ) { target ->
                 launchTorrentSourceStream(
                     stream = com.nuvio.tv.domain.model.Stream(
                         name = _uiState.value.currentStreamName,
@@ -1869,17 +1871,18 @@ fun PlayerRuntimeController.onEvent(
                         description = null,
                         url = null,
                         ytId = null,
-                        infoHash = currentInfoHash,
-                        fileIdx = currentFileIdx,
+                        infoHash = target.infoHash,
+                        fileIdx = target.fileIdx,
                         externalUrl = null,
                         behaviorHints = null,
                         addonName = currentAddonName ?: "",
                         addonLogo = currentAddonLogo
                     ),
-                    infoHash = currentInfoHash!!,
+                    infoHash = target.infoHash,
                     loadSavedProgress = true
                 )
-            } else {
+            }
+            if (!retriedTorrent) {
                 releasePlayer()
                 reinitializeCurrentStream()
             }
