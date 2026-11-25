@@ -282,6 +282,8 @@ internal fun PlayerRuntimeController.initializePlayer(
             } else if (overrideInternalPlayerEngine != null) {
                 resolvedAutoPlayerEngine = null
             }
+            // B287: a device whose libmpv will not load plays on ExoPlayer instead of crashing in mpv's constructor.
+            effectiveInternalPlayerEngine = com.nuvio.tv.core.nativelib.LibmpvAvailabilityPolicy.engineFor(effectiveInternalPlayerEngine)
             currentInternalPlayerEngine = effectiveInternalPlayerEngine
             // Re-apply on every (re)initialization without dropping the user's tweak on the current stream.
             // After the engine is resolved: the applied range depends on it (AudioDelayRangePolicy, C5).

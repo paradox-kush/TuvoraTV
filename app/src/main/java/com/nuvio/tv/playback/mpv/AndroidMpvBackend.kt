@@ -173,13 +173,27 @@ internal class AndroidMpvBackendFactory(
     private val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
     private val dispatcher: CoroutineDispatcher? = null,
     private val coreFactory: () -> MpvNativeCore = { AndroidMpvNativeCore() },
+    private val libmpvLoadable: () -> Boolean = { com.nuvio.tv.core.nativelib.LibmpvNativeProbe.loadable },
 ) : MpvBackendFactory {
     private val appContext = context.applicationContext
 
     override suspend fun create(plan: MpvAdapterPlan): PlaybackResult<MpvBackend> =
-        PlaybackResult.Success(
-            AndroidMpvBackend(appContext, plan, dispatcher ?: Dispatchers.IO.limitedParallelism(1), coreFactory(), externalSubtitleResolver),
-        )
+        // B287: libmpv that will not load is a hand-off to ExoPlayer, never an UnsatisfiedLinkError in mpv's constructor.
+        if (!com.nuvio.tv.core.nativelib.LibmpvAvailabilityPolicy.usable(wanted = true, loadable = libmpvLoadable)) {
+            PlaybackResult.Failure(
+                PlaybackFailure(
+                    code = FailureCode.NO_ELIGIBLE_GRAPH,
+                    domain = FailureDomain.DEVICE_RESOURCE,
+                    phase = FailurePhase.ENGINE_START,
+                    retryability = Retryability.HANDOFF_ELIGIBLE,
+                    deterministic = true,
+                ),
+            )
+        } else {
+            PlaybackResult.Success(
+                AndroidMpvBackend(appContext, plan, dispatcher ?: Dispatchers.IO.limitedParallelism(1), coreFactory(), externalSubtitleResolver),
+            )
+        }
 }
 
 internal class AndroidMpvBackend(

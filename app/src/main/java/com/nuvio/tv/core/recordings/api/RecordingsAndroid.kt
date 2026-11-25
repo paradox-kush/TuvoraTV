@@ -8,12 +8,13 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.util.Log
-import androidx.core.content.ContextCompat
 import com.nuvio.tv.core.recordings.internal.AndroidRecordingAlarms
 import com.nuvio.tv.core.recordings.internal.AndroidRecordingFiles
 import com.nuvio.tv.core.recordings.internal.AndroidRecordingSaver
 import com.nuvio.tv.core.recordings.internal.RecordingNotifications
 import com.nuvio.tv.core.recordings.internal.RecordingService
+import com.nuvio.tv.core.recordings.internal.RecordingServiceLaunch
+import com.nuvio.tv.core.recordings.internal.RecordingStartOrigin
 import com.nuvio.tv.core.recordings.internal.RecordingsRepository
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -91,7 +92,7 @@ object RecordingsAndroid {
                 port.start(now)
                 for (id in port.overdueIds(now)) {
                     try {
-                        ContextCompat.startForegroundService(app, RecordingService.fireIntent(app, id))
+                        RecordingServiceLaunch.start(app, RecordingService.fireIntent(app, id), RecordingStartOrigin.VISIBLE_APP)
                     } catch (e: IllegalStateException) {
                         // ForegroundServiceStartNotAllowedException (API 31+) is an IllegalStateException.
                         RecordingNotifications.couldNotStart(app)
