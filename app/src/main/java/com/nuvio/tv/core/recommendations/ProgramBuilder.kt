@@ -8,6 +8,7 @@ import androidx.tvprovider.media.tv.WatchNextProgram
 import com.nuvio.tv.MainActivity
 import com.nuvio.tv.data.mediaserver.plex.PlexArtworkLink
 import com.nuvio.tv.domain.model.WatchProgress
+import com.nuvio.tv.ui.screens.home.ResumeRankPolicy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,7 +24,15 @@ class ProgramBuilder @Inject constructor(
         else
             "wn_${progress.contentId}"
 
-    fun buildWatchNextProgram(progress: WatchProgress): WatchNextProgram {
+    fun buildWatchNextProgram(progress: WatchProgress): WatchNextProgram =
+        buildWatchNextProgram(LauncherItem(progress, ResumeRankPolicy.Kind.Resume))
+
+    fun buildWatchNextProgram(item: LauncherItem): WatchNextProgram {
+        val progress = item.progress
+        val positionMs = WatchNextTypePolicy.resolvePositionMs(
+            progress.position, progress.duration, progress.progressPercent
+        )
+        val watchNextType = WatchNextTypePolicy.typeFor(item.kind, positionMs, progress.duration)
         val isMovie = progress.contentType == "movie"
         val programType = if (isMovie) {
             TvContractCompat.WatchNextPrograms.TYPE_MOVIE
@@ -33,9 +42,9 @@ class ProgramBuilder @Inject constructor(
 
         val builder = WatchNextProgram.Builder()
             .setType(programType)
-            .setWatchNextType(TvContractCompat.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE)
+            .setWatchNextType(watchNextType.contractValue)
             .setTitle(progress.name)
-            .setLastEngagementTimeUtcMillis(progress.lastWatched)
+            .setLastEngagementTimeUtcMillis(item.engagementTimeMs)
             .setInternalProviderId(watchNextId(progress))
             .setIntentUri(buildPlayUri(progress))
 
@@ -49,19 +58,11 @@ class ProgramBuilder @Inject constructor(
             builder.setPosterArtUri(uriWithCacheBuster)
         }
 
+        // Only a real duration is published. A percent-only resume used to get an invented 100,000 ms
+        // duration here, which made the launcher draw a progress bar for a made-up length.
         if (progress.duration > 0) {
-            val positionMs = if (progress.position > 0) {
-                progress.position.toInt()
-            } else {
-                (progress.progressPercent?.let { it / 100f * progress.duration }?.toLong() ?: 0L).toInt()
-            }
-            builder.setLastPlaybackPositionMillis(positionMs)
             builder.setDurationMillis(progress.duration.toInt())
-        } else if (progress.progressPercent != null && progress.progressPercent > 0f) {
-            val syntheticDuration = 100_000
-            val syntheticPosition = (progress.progressPercent / 100f * syntheticDuration).toInt()
-            builder.setDurationMillis(syntheticDuration)
-            builder.setLastPlaybackPositionMillis(syntheticPosition)
+            if (positionMs > 0L) builder.setLastPlaybackPositionMillis(positionMs.toInt())
         }
 
         if (!isMovie) {
@@ -76,13 +77,18 @@ class ProgramBuilder @Inject constructor(
     fun upsertWatchNextProgram(program: WatchNextProgram, internalId: String) {
         try {
             val existingId = findWatchNextByInternalId(internalId)
+            val values = program.toContentValues()
             if (existingId != null) {
+                // An UPDATE leaves unset columns alone, so clear a duration/position that is no longer
+                // known instead of keeping a stale (or previously invented) one.
+                if (!values.containsKey("duration_millis")) values.putNull("duration_millis")
+                if (!values.containsKey("last_playback_position_millis")) values.putNull("last_playback_position_millis")
                 val uri = TvContractCompat.buildWatchNextProgramUri(existingId)
-                context.contentResolver.update(uri, program.toContentValues(), null, null)
+                context.contentResolver.update(uri, values, null, null)
             } else {
                 context.contentResolver.insert(
                     TvContractCompat.WatchNextPrograms.CONTENT_URI,
-                    program.toContentValues()
+                    values
                 )
             }
         } catch (_: Exception) {
