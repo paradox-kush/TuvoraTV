@@ -424,8 +424,7 @@ class StalkerClient @Inject constructor(
      * genuine empty window. [StalkerRowWindow.consumed] is the RAW rows on the page.
      */
     suspend fun vodMoviesWindow(acc: XtreamAccount, categoryId: String?, offset: Int): StalkerRowWindow<XtreamMovie> {
-        val page = orderedPage(acc, "vod", categoryId, offset)
-        val items = page.rows.filterNot(StalkerSeriesDialect::isSeriesRow)
+        val (page, items) = shownPage(acc, "vod", categoryId, offset) { rows -> rows.filterNot(StalkerSeriesDialect::isSeriesRow) }
         writeThroughVod(acc, items)
         return StalkerRowWindow(items.map { movieOf(acc, it) }.filter { it.streamId > 0 }, page.hasMore, page.consumed)
     }
@@ -433,10 +432,35 @@ class StalkerClient @Inject constructor(
     /** B294: the Series twin of [vodMoviesWindow] — XC `type=series`, or Ministra vod rows flagged is_series. */
     suspend fun seriesWindow(acc: XtreamAccount, categoryId: String?, offset: Int): StalkerRowWindow<XtreamSeriesItem> {
         val ministra = seriesDialect(acc) == StalkerSeriesDialect.Dialect.MINISTRA
-        val page = orderedPage(acc, if (ministra) "vod" else "series", categoryId, offset)
-        val items = if (ministra) page.rows.filter(StalkerSeriesDialect::isSeriesRow) else page.rows
+        val (page, items) = shownPage(acc, if (ministra) "vod" else "series", categoryId, offset) { rows ->
+            if (ministra) rows.filter(StalkerSeriesDialect::isSeriesRow) else rows
+        }
         writeThroughSeries(acc, items)
         return StalkerRowWindow(seriesItemsOf(acc, items), page.hasMore, page.consumed)
+    }
+
+    /**
+     * One portal page per window - except when [keep] filters the whole page away (a Ministra portal shares
+     * `vod` rows between Movies and Series) while the category goes on: then read on, up to
+     * [MAX_EMPTY_WINDOW_PAGES] more pages, so a row never comes back empty (loadMore fires only from a
+     * non-empty row). The returned page's `consumed` sums the RAW rows of every page read; `hasMore` is the
+     * last page's. A failed page throws.
+     */
+    private suspend fun shownPage(
+        acc: XtreamAccount, type: String, categoryId: String?, offset: Int,
+        keep: (List<JsonObject>) -> List<JsonObject>,
+    ): Pair<OrderedPage, List<JsonObject>> {
+        var consumed = 0
+        var extraPages = 0
+        while (true) {
+            val page = orderedPage(acc, type, categoryId, offset + consumed)
+            consumed += page.consumed
+            val shown = keep(page.rows)
+            if (shown.isNotEmpty() || !page.hasMore || page.consumed <= 0 || extraPages >= MAX_EMPTY_WINDOW_PAGES) {
+                return OrderedPage(page.rows, page.hasMore, consumed) to shown
+            }
+            extraPages++
+        }
     }
 
     private class OrderedPage(val rows: List<JsonObject>, val hasMore: Boolean, val consumed: Int)
@@ -1221,6 +1245,7 @@ class StalkerClient @Inject constructor(
         internal const val UNREACHABLE_MESSAGE = "The portal could not be reached"
         private const val MAX_ITEMS = 8000    // ponytail: categories are the browse path; don't slurp 26k
         private const val MAX_PAGES = 200
+        private const val MAX_EMPTY_WINDOW_PAGES = 4
         /** Pages per Ministra season/episode level: 14 rows a page, so 20 = 280 episodes in a season. */
         private const val MINISTRA_TREE_PAGES = 20
         private const val MAX_CACHED_ROWS = 10_000

@@ -33,6 +33,9 @@ class StalkerRowWindowTest {
     private lateinit var server: MockWebServer
     private val requests = CopyOnWriteArrayList<Map<String, String>>()
     @Volatile private var failPages = false
+    @Volatile private var ministra = false
+    /** Pages (1-based) whose rows are all flagged is_series; null = default portal rows. */
+    @Volatile private var seriesPages: Set<Int>? = null
 
     @Before
     fun setUp() {
@@ -73,11 +76,19 @@ class StalkerRowWindowTest {
             "handshake" -> return """{"js":{"token":"T"}}"""
             "get_profile" -> return """{"js":{"id":"1","status":0}}"""
             "get_modules" -> return """{"js":{"all_modules":[],"disabled_modules":[]}}"""
-            "get_categories" -> return """{"js":[{"id":"*","title":"All"},{"id":"5","title":"Drama"}]}"""
+            "get_categories" -> return if (ministra && q["type"] == "series") """{"js":[]}""" else """{"js":[{"id":"*","title":"All"},{"id":"5","title":"Drama"}]}"""
         }
         if (q["action"] == "get_ordered_list") {
             if (failPages) return """{"js":"nope"}"""
             val page = q["p"]?.toInt() ?: 1
+            seriesPages?.let { sp ->
+                val flag = if (page in sp) "1" else "0"
+                val data = (1..14).joinToString(",", "[", "]") { i ->
+                    val id = page * 100 + i
+                    """{"id":"$id","name":"R$id","cmd":"/media/$id.mpg","category_id":"5","is_series":"$flag"}"""
+                }
+                return """{"js":{"total_items":200,"max_page_items":14,"data":$data}}"""
+            }
             return """{"js":{"total_items":100,"max_page_items":14,"data":${rows(q["type"].orEmpty(), page)}}}"""
         }
         return """{"js":[]}"""
@@ -165,5 +176,54 @@ class StalkerRowWindowTest {
             // expected
         }
         Unit
+    }
+
+    @Test
+    fun `a ministra movie window that shows nothing reads the next page`() = runBlocking {
+        ministra = true
+        seriesPages = setOf(1)
+        val c = client()
+        val w = c.vodMoviesWindow(acc, "5", 0)
+        assertEquals("pages asked", listOf("1", "2"), lists("vod").map { it["p"] })
+        assertEquals("page two movies", 14, w.items.size)
+        assertEquals("first id", 201, w.items.first().streamId)
+        assertEquals("raw rows of both pages", 28, w.consumed)
+        assertTrue("more pages", w.hasMore)
+    }
+
+    @Test
+    fun `a ministra series window that shows nothing reads the next page`() = runBlocking {
+        ministra = true
+        seriesPages = setOf(2)
+        val c = client()
+        c.seriesCategories(acc).getOrThrow()
+        requests.clear()
+        val w = c.seriesWindow(acc, "5", 0)
+        assertEquals("pages asked", listOf("1", "2"), lists("vod").map { it["p"] })
+        assertEquals("items", 14, w.items.size)
+        assertEquals("first id", 201, w.items.first().seriesId)
+        assertEquals("raw rows of both pages", 28, w.consumed)
+        assertTrue("more pages", w.hasMore)
+    }
+
+    @Test
+    fun `a window that keeps showing nothing stops after five pages`() = runBlocking {
+        ministra = true
+        seriesPages = (1..20).toSet()
+        val c = client()
+        val w = c.vodMoviesWindow(acc, "5", 0)
+        assertEquals("pages asked", listOf("1", "2", "3", "4", "5"), lists("vod").map { it["p"] })
+        assertEquals("no items", 0, w.items.size)
+        assertEquals("raw rows of five pages", 70, w.consumed)
+        assertTrue("portal says more", w.hasMore)
+    }
+
+    @Test
+    fun `an xc series window stays one request`() = runBlocking {
+        val c = client()
+        c.seriesCategories(acc).getOrThrow()
+        requests.clear()
+        c.seriesWindow(acc, "5", 0)
+        assertEquals("one get_ordered_list", 1, requests.count { it["action"] == "get_ordered_list" })
     }
 }
