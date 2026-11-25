@@ -10,6 +10,7 @@ import com.nuvio.tv.playback.core.EngineType
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.PlaybackSignalKind
 import com.nuvio.tv.playback.core.PlaybackSignalSink
+import com.nuvio.tv.playback.core.PlaybackStallOutcome
 
 /**
  * Maps the clean pipeline's playback signals onto the playback telemetry counts. Only enum values and
@@ -22,10 +23,14 @@ object PlaybackTelemetrySignals : PlaybackSignalSink {
     override fun handoff(from: EngineType, to: EngineType, cause: FailureCode?) =
         PlaybackTelemetry.fallback(from.toPlayEngine(), to.toPlayEngine(), triggerOf(cause))
 
-    override fun stall(kind: PlaybackSignalKind, recovered: Boolean, ms: Long) =
+    override fun stall(kind: PlaybackSignalKind, outcome: PlaybackStallOutcome, ms: Long) =
         PlaybackTelemetry.stall(
             kind.toPlayKind(),
-            if (recovered) StallOutcome.RECOVERED else StallOutcome.GAVE_UP,
+            when (outcome) {
+                PlaybackStallOutcome.RECOVERED -> StallOutcome.RECOVERED
+                PlaybackStallOutcome.GAVE_UP -> StallOutcome.GAVE_UP
+                PlaybackStallOutcome.ABANDONED -> StallOutcome.ABANDONED
+            },
             ms,
         )
 

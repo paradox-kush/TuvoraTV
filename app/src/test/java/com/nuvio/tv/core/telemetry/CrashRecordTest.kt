@@ -22,6 +22,14 @@ class CrashRecordTest {
     }
 
     @Test
+    fun memorySampleSurvivesTheRoundTripAndOldRecordsHaveNone() {
+        val record = CrashRecord("id-2", 1L, "1.19.0", "main", "java.lang.OutOfMemoryError", null, emptyList(), mem = "412,88,120,301,96,210")
+        assertEquals("round trip with memory", record, CrashRecord.fromJson(record.toJson()))
+        val old = """{"schema_version":1,"crash_id":"x","crashed_at_ms":1,"app_version":"1","thread":"t","exception_type":"e","message":null,"frames":[],"trail":""}"""
+        assertEquals("a record written before this field has no memory", "", CrashRecord.fromJson(old)?.mem)
+    }
+
+    @Test
     fun unknownSchemaVersionIsIgnored() {
         assertNull("future schema", CrashRecord.fromJson("""{"schema_version":99}"""))
         assertNull("garbage", CrashRecord.fromJson("not json"))

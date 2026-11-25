@@ -5,6 +5,8 @@ import android.content.Context
 import android.os.Looper
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
+import com.nuvio.tv.core.analytics.AppExitReporter
+import com.nuvio.tv.core.telemetry.playback.PlaybackTelemetry
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.multiview.DecoderCeilingStore
@@ -157,12 +159,36 @@ internal class MultiviewViewModel @Inject constructor(
     /** Every tile's channel is "playing" for sports alerts; this screen clears only what it published. */
     private var publishedChannels: Set<String> = emptySet()
 
+    private var persistedTiles = 0
+
     init {
         ownerScope.launch {
             controller.state.collect { state ->
                 surfaces.retain(state.tileIds.toSet())
                 publishPlayingChannels(state.tiles.mapNotNull { it.channelKey }.toSet())
+                observeForTelemetry(state)
             }
+        }
+    }
+
+    /**
+     * Playback telemetry: tiles open / playing / newly failed feed the session tracker (counts only, one
+     * `multiview_session` event at close), and the open tile count is kept for the next launch's `app_exit`
+     * (`prev_tiles`) whenever it changes. No I/O beyond one SharedPreferences write per change.
+     */
+    private fun observeForTelemetry(state: MultiviewUiState) {
+        if (!started || !state.started) return
+        PlaybackTelemetry.multiviewTiles(
+            tileCount = state.tileCount,
+            playing = state.tiles.count { it.status == com.nuvio.tv.core.multiview.TileStatus.PLAYING },
+            failedTileIds = state.tiles
+                .filter { it.status == com.nuvio.tv.core.multiview.TileStatus.FAILED }
+                .map { it.tileId }
+                .toSet(),
+        )
+        if (state.tileCount != persistedTiles) {
+            persistedTiles = state.tileCount
+            AppExitReporter.recordMultiviewTiles(appContext, state.tileCount)
         }
     }
 
@@ -184,6 +210,7 @@ internal class MultiviewViewModel @Inject constructor(
     fun start(startKey: String?) {
         if (started) return
         started = true
+        PlaybackTelemetry.multiviewOpened()
         ownerScope.launch {
             // The playlists decide which channels this profile may watch: they must be known before tiles restore.
             allowedPrefixes = accountStore.accounts.first().map { XtreamItemRegistry.accountPrefix(it.id) }
@@ -193,6 +220,9 @@ internal class MultiviewViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        // Before the controller releases the tiles: the last observed state is what the session ended with.
+        PlaybackTelemetry.multiviewClosed()
+        AppExitReporter.recordMultiviewTiles(appContext, 0)
         publishPlayingChannels(emptySet())
         controller.release()
         coordinator.release()

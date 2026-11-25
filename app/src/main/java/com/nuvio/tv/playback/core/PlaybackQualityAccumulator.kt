@@ -50,6 +50,7 @@ class PlaybackQualityAccumulator(
     private var pendingHandoffGraph: PlaybackGraph? = null
     private var stallStartedAt = -1L
     private var stallGeneration = -1L
+    private var stallKind = PlaybackSignalKind.LIVE
 
     fun observe(snapshot: PlaybackSnapshot) {
         val at = now()
@@ -123,8 +124,8 @@ class PlaybackQualityAccumulator(
 
     /**
      * A stall is a buffering or reconnect stretch after the picture started that lasts at least
-     * [MIN_STALL_MS]. It ends `recovered` when playback resumes and `gave_up` when the session fails; a stall
-     * the viewer ends by leaving (new generation, stop, release) is nobody's outcome and is not reported.
+     * [MIN_STALL_MS]. It ends `recovered` when playback resumes, `gave_up` when the session fails and `abandoned`
+     * when the viewer leaves (zaps, stops, Back / release) while the picture is still stalled.
      */
     private fun observeStallTelemetry(snapshot: PlaybackSnapshot, at: Long) {
         val inStall = viewStarted && viewGeneration == snapshot.generation &&
@@ -133,20 +134,27 @@ class PlaybackQualityAccumulator(
             if (stallStartedAt < 0) {
                 stallStartedAt = at
                 stallGeneration = snapshot.generation
+                stallKind = kindOf(snapshot)
             }
             return
         }
         if (stallStartedAt < 0) return
         val duration = at - stallStartedAt
         val sameView = stallGeneration == snapshot.generation
+        val kind = stallKind
         stallStartedAt = -1L
-        if (!sameView || duration < MIN_STALL_MS) return
-        val recovered = when (snapshot.state) {
-            PlaybackState.PLAYING, PlaybackState.DEGRADED -> true
-            PlaybackState.FAILED -> false
+        if (duration < MIN_STALL_MS) return
+        val outcome = when {
+            // The viewer moved on (zapped to another channel) while the picture was still stalled.
+            !sameView -> PlaybackStallOutcome.ABANDONED
+            snapshot.state == PlaybackState.PLAYING || snapshot.state == PlaybackState.DEGRADED -> PlaybackStallOutcome.RECOVERED
+            snapshot.state == PlaybackState.FAILED -> PlaybackStallOutcome.GAVE_UP
+            // Stopped or released mid-stall: the viewer left (Back).
+            snapshot.state == PlaybackState.STOPPED || snapshot.state == PlaybackState.IDLE ||
+                snapshot.state == PlaybackState.RELEASING -> PlaybackStallOutcome.ABANDONED
             else -> return
         }
-        signal { signals.stall(kindOf(snapshot), recovered, duration) }
+        signal { signals.stall(kind, outcome, duration) }
     }
 
     private fun kindOf(snapshot: PlaybackSnapshot): PlaybackSignalKind = when {
@@ -175,6 +183,12 @@ class PlaybackQualityAccumulator(
         closeView(at)
         previous = null
         pendingHandoffFrom = null
+        // The host is released while a stall is still open: the viewer left a frozen picture.
+        if (stallStartedAt >= 0 && at - stallStartedAt >= MIN_STALL_MS) {
+            val duration = at - stallStartedAt
+            val kind = stallKind
+            signal { signals.stall(kind, PlaybackStallOutcome.ABANDONED, duration) }
+        }
         stallStartedAt = -1L
         return PlaybackQualitySummary(
             views = views,

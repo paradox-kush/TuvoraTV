@@ -34,7 +34,7 @@ class PlaybackTelemetryRecorder(
     }
 
     fun fallback(from: PlayEngine, to: PlayEngine, trigger: FallbackTrigger) {
-        qa.emit("fallback", mapOf("from_engine" to from.wire, "to_engine" to to.wire, "trigger" to trigger.wire))
+        qa.emit("fallback", mapOf("from" to from.wire, "to" to to.wire, "trigger" to trigger.wire))
         if (!consent()) return
         count(PlaybackTelemetryKeys.fallback(from, to, trigger))
     }
@@ -126,4 +126,12 @@ object PlaybackTelemetry {
     fun stall(kind: PlayKind, outcome: StallOutcome, ms: Long) { recorder?.stall(kind, outcome, ms) }
     fun teardown(engine: PlayEngine, durationMs: Long, failed: Boolean) { recorder?.teardown(engine, durationMs, failed) }
     fun diagnosticExtras(extras: Map<String, Any>) { recorder?.diagnosticExtras(extras) }
+    fun multiviewOpened() { recorder?.multiviewOpened() }
+    fun multiviewTiles(tileCount: Int, playing: Int, failedTileIds: Set<Int>) {
+        recorder?.multiviewTiles(tileCount, playing, failedTileIds)
+    }
+    fun multiviewBackgrounded() { recorder?.multiviewBackgrounded() }
+    fun multiviewForegrounded() { recorder?.multiviewForegrounded() }
+    fun multiviewClosed() { recorder?.multiviewClosed() }
+    fun memoryTrim() { recorder?.memoryTrim() }
 }

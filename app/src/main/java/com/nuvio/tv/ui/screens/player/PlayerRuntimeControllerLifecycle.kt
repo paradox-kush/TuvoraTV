@@ -48,6 +48,13 @@ internal fun PlayerRuntimeController.releasePlayer(
         }
     }
 
+    // Playback telemetry: how long this release takes (the player's own shutdown is the slow part).
+    val teardownEngine = when {
+        _exoPlayer != null -> com.nuvio.tv.core.telemetry.playback.PlayEngine.MEDIA3
+        mpvView != null && isUsingMpvEngine() -> com.nuvio.tv.core.telemetry.playback.PlayEngine.LIBMPV
+        else -> null
+    }
+    val teardownStartedAtMs = android.os.SystemClock.elapsedRealtime()
     isReleasingPlayer = true
     // Every rebuild and exit releases here: the viewing that started on this player ends now.
     playbackBreadcrumbs.stop()
@@ -124,6 +131,13 @@ internal fun PlayerRuntimeController.releasePlayer(
     playbackSpeedAwareAudioSink = null
     resetPlaybackTimeline()
     isReleasingPlayer = false
+    teardownEngine?.let {
+        com.nuvio.tv.core.telemetry.playback.PlaybackTelemetry.teardown(
+            engine = it,
+            durationMs = android.os.SystemClock.elapsedRealtime() - teardownStartedAtMs,
+            failed = false,
+        )
+    }
 }
 
 internal fun PlayerRuntimeController.notifyAudioSessionUpdate(active: Boolean) {

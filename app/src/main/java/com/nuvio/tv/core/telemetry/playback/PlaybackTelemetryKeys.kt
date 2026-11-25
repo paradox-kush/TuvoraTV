@@ -31,7 +31,8 @@ enum class FallbackTrigger(val wire: String) {
     OTHER("other");
 }
 
-enum class StallOutcome(val wire: String) { RECOVERED("recovered"), GAVE_UP("gave_up") }
+/** `abandoned`: the viewer left (Back / zapped away) while the picture was still stalled. */
+enum class StallOutcome(val wire: String) { RECOVERED("recovered"), GAVE_UP("gave_up"), ABANDONED("abandoned") }
 enum class TeardownOutcome(val wire: String) { CLEAN("clean"), SLOW("slow"), FAILED("failed") }
 enum class MultiviewEvent(val wire: String) { OPENED("opened"), CLOSED("closed"), TILE_FAILED("tile_failed") }
 enum class MultiviewEndReason(val wire: String) {

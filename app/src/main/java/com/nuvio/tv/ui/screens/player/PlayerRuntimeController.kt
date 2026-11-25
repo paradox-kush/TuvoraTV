@@ -574,6 +574,8 @@ class PlayerRuntimeController(
     internal val loadingDiagnosticRawEventLines: ArrayDeque<String> = ArrayDeque()
     internal val pendingPlaybackRawEventLines: ArrayDeque<String> = ArrayDeque()
     internal var loadingDiagnosticsStartedAtMs: Long = 0L
+    /** The load attempt ([loadingDiagnosticsStartedAtMs]) whose time to first frame was already counted. */
+    internal var ttffReportedForLoadAtMs: Long = -1L
     internal var currentLoadingPhase: String = "idle"
     internal var currentLoadingPhaseStartedAtMs: Long = 0L
     internal var currentLoadingMessageForReport: String? = null

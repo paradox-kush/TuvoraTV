@@ -3,6 +3,9 @@ package com.nuvio.tv.playback.core
 /** Which surface a playback view ran on, for the playback telemetry counts. */
 enum class PlaybackSignalKind { LIVE, VOD, PREVIEW, MULTIVIEW_TILE }
 
+/** How a stall ended: playback resumed, the session failed, or the viewer left while it was still stalled. */
+enum class PlaybackStallOutcome { RECOVERED, GAVE_UP, ABANDONED }
+
 /**
  * Port the clean pipeline reports playback facts through (first frame, engine hand-off, stall, teardown).
  * The core stays pure: the Android wiring maps these to the telemetry counts. Implementations must be
@@ -15,8 +18,8 @@ interface PlaybackSignalSink {
     /** The one engine hand-off of an incident completed: [from] failed with [cause], [to] took over. */
     fun handoff(from: EngineType, to: EngineType, cause: FailureCode?) {}
 
-    /** A buffering / reconnect stall of [ms] ended: [recovered] true when playback resumed, false when it failed. */
-    fun stall(kind: PlaybackSignalKind, recovered: Boolean, ms: Long) {}
+    /** A buffering / reconnect stall of [ms] ended with [outcome]. */
+    fun stall(kind: PlaybackSignalKind, outcome: PlaybackStallOutcome, ms: Long) {}
 
     /** A host released its player after [durationMs]; [failed] when the release threw or its barrier did not hold. */
     fun teardown(engine: EngineType, durationMs: Long, failed: Boolean) {}

@@ -33,6 +33,7 @@ internal fun PlayerRuntimeController.maybeAutoSwitchInternalPlayerOnStartupError
     rememberCurrentTrackPreferenceForEngineSwitch()
     Log.w(PlayerRuntimeController.TAG, "Startup playback error; auto-switching engine: $detailedError")
     startupEngineFailoverTriggered = true
+    reportEngineFallback(targetEngine, byUser = false)
 
     val targetEngineLabel = targetEngineLabel(targetEngine)
     val switchMessage = context.getString(R.string.player_engine_switching_message, targetEngineLabel)
@@ -76,6 +77,7 @@ internal fun PlayerRuntimeController.switchToInternalPlayerEngine(
     if (currentStreamUrl.isBlank()) return
 
     beginSwitchTraceSession(reason = reason, targetEngine = targetEngine)
+    reportEngineFallback(targetEngine, byUser = true)
     val targetEngineLabel = targetEngineLabel(targetEngine)
     val switchMessage = context.getString(R.string.player_engine_switching_manual_message, targetEngineLabel)
     // An extra of a disc gives way to its feature, where it was left: libmpv plays only the stream.

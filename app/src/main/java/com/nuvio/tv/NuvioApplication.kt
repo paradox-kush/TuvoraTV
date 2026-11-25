@@ -298,10 +298,15 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         // Background -> one session_health summary and a durable copy of the on-device log.
         registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
             private var started = 0
-            override fun onActivityStarted(activity: android.app.Activity) { started++ }
+            override fun onActivityStarted(activity: android.app.Activity) {
+                started++
+                com.nuvio.tv.core.telemetry.playback.PlaybackTelemetry.multiviewForegrounded()
+            }
             override fun onActivityStopped(activity: android.app.Activity) {
                 if (--started <= 0) {
                     started = 0
+                    // A multiview session still open now ends because the app left the screen.
+                    com.nuvio.tv.core.telemetry.playback.PlaybackTelemetry.multiviewBackgrounded()
                     telemetry.flushHealth()
                     telemetry.flushNow()
                 }
@@ -440,6 +445,11 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
             level == android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
         ) {
             com.nuvio.tv.core.memory.AppMemory.trimCaches()
+        }
+        // Foreground pressure (the RUNNING_* levels, which Android 14+ no longer sends) ends a multiview session as `memory`;
+        // UI_HIDDEN / BACKGROUND only mean the app left the screen.
+        if (level in android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE..android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+            com.nuvio.tv.core.telemetry.playback.PlaybackTelemetry.memoryTrim()
         }
         AppExitReporter.recordMemorySnapshot(this, "trim_memory", level)
     }
