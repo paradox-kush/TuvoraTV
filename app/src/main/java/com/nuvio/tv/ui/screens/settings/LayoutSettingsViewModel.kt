@@ -92,6 +92,8 @@ data class LayoutSettingsUiState(
     val nextUpFromFurthestEpisode: Boolean = true,
     val showUnairedNextUp: Boolean = true,
     val continueWatchingEnabled: Boolean = true,
+    val tvHomePublishEnabled: Boolean = true,
+    val tvHomeIncludeNextUp: Boolean = true,
     val continueWatchingSortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT,
     val continueWatchingClickAction: ContinueWatchingClickAction = ContinueWatchingClickAction.STREAM,
     val continueWatchingCardStyle: ContinueWatchingCardStyle = ContinueWatchingCardStyle.CARD,
@@ -161,6 +163,8 @@ sealed class LayoutSettingsEvent {
     data class SetNextUpFromFurthestEpisode(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetShowUnairedNextUp(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetContinueWatchingEnabled(val enabled: Boolean) : LayoutSettingsEvent()
+    data class SetTvHomePublishEnabled(val enabled: Boolean) : LayoutSettingsEvent()
+    data class SetTvHomeIncludeNextUp(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetContinueWatchingSortMode(val mode: ContinueWatchingSortMode) : LayoutSettingsEvent()
     data class SetContinueWatchingClickAction(val action: ContinueWatchingClickAction) : LayoutSettingsEvent()
     data class SetContinueWatchingCardStyle(val style: ContinueWatchingCardStyle) : LayoutSettingsEvent()
@@ -428,6 +432,20 @@ class LayoutSettingsViewModel @Inject constructor(
                 }
         }
         viewModelScope.launch {
+            layoutPreferenceDataStore.tvHomePublishEnabled
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    updateUiStateIfChanged { it.copy(tvHomePublishEnabled = enabled) }
+                }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.tvHomeIncludeNextUp
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    updateUiStateIfChanged { it.copy(tvHomeIncludeNextUp = enabled) }
+                }
+        }
+        viewModelScope.launch {
             layoutPreferenceDataStore.continueWatchingSortMode
                 .distinctUntilChanged()
                 .collect { mode ->
@@ -530,6 +548,12 @@ class LayoutSettingsViewModel @Inject constructor(
             is LayoutSettingsEvent.SetNextUpFromFurthestEpisode -> setNextUpFromFurthestEpisode(event.enabled)
             is LayoutSettingsEvent.SetShowUnairedNextUp -> setShowUnairedNextUp(event.enabled)
             is LayoutSettingsEvent.SetContinueWatchingEnabled -> setContinueWatchingEnabled(event.enabled)
+            is LayoutSettingsEvent.SetTvHomePublishEnabled -> viewModelScope.launch {
+                layoutPreferenceDataStore.setTvHomePublishEnabled(event.enabled)
+            }
+            is LayoutSettingsEvent.SetTvHomeIncludeNextUp -> viewModelScope.launch {
+                layoutPreferenceDataStore.setTvHomeIncludeNextUp(event.enabled)
+            }
             is LayoutSettingsEvent.SetContinueWatchingSortMode -> setContinueWatchingSortMode(event.mode)
             is LayoutSettingsEvent.SetContinueWatchingClickAction -> setContinueWatchingClickAction(event.action)
             is LayoutSettingsEvent.SetContinueWatchingCardStyle -> setContinueWatchingCardStyle(event.style)

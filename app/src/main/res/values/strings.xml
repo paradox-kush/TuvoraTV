@@ -1142,6 +1142,12 @@
     <string name="layout_cw_card_style_card">Card</string>
     <string name="layout_cw_card_style_wide">Wide</string>
     <string name="layout_cw_card_style_poster">Poster</string>
+    <string name="layout_section_tv_home">TV home screen</string>
+    <string name="layout_section_tv_home_desc">What Tuvora puts on your TV\'s own home screen</string>
+    <string name="layout_tv_home_show">Show on the TV home screen</string>
+    <string name="layout_tv_home_show_sub">Puts Continue Watching in your TV\'s Play Next row so you can resume without opening Tuvora. Anyone holding the remote can see it.</string>
+    <string name="layout_tv_home_next_episodes">Include next episodes</string>
+    <string name="layout_tv_home_next_episodes_sub">Adds the next episode of shows you\'ve finished one of. Only ones that have aired.</string>
     <string name="layout_cw_sort_mode">Sort Order</string>
     <string name="layout_cw_sort_mode_sub">How Continue Watching items are arranged</string>
     <string name="layout_cw_sort_resume_first">Pick up where I left off</string>

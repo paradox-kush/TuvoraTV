@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.RoundedCorner
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -24,6 +25,7 @@ internal enum class LayoutSection(
     HOME_CONTENT(R.string.layout_section_content, R.string.layout_section_content_desc, Icons.Default.ViewAgenda),
     SIDEBAR(R.string.layout_section_sidebar, R.string.layout_section_sidebar_desc, Icons.AutoMirrored.Filled.ViewSidebar),
     CONTINUE_WATCHING(R.string.layout_section_continue_watching, R.string.layout_section_continue_watching_desc, Icons.Default.History),
+    TV_HOME_SCREEN(R.string.layout_section_tv_home, R.string.layout_section_tv_home_desc, Icons.Default.Tv),
     FOCUSED_POSTER(R.string.layout_section_focused, R.string.layout_section_focused_desc, Icons.Default.CenterFocusStrong),
     POSTER_CARD(R.string.layout_section_card_style, R.string.layout_section_card_style_desc, Icons.Default.RoundedCorner),
     CARD_DEPTH(R.string.settings_card_depth_title, R.string.layout_section_card_depth_desc, Icons.Default.ViewInAr),

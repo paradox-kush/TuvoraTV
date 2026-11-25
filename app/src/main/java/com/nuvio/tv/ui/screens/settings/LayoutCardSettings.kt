@@ -190,6 +190,31 @@ internal fun LayoutContinueWatchingSection(
     }
 }
 
+/**
+ * What Tuvora puts on the TV's own home screen. Both rows are standard settings toggles, so they
+ * get the standard TV focus highlight. Turning the first one off clears both launcher surfaces.
+ */
+@Composable
+internal fun LayoutTvHomeScreenSection(
+    uiState: LayoutSettingsUiState,
+    onEvent: (LayoutSettingsEvent) -> Unit
+) {
+    SettingsToggleRow(
+        title = stringResource(R.string.layout_tv_home_show),
+        subtitle = stringResource(R.string.layout_tv_home_show_sub),
+        checked = uiState.tvHomePublishEnabled,
+        onToggle = { onEvent(LayoutSettingsEvent.SetTvHomePublishEnabled(!uiState.tvHomePublishEnabled)) }
+    )
+    if (uiState.tvHomePublishEnabled) {
+        SettingsToggleRow(
+            title = stringResource(R.string.layout_tv_home_next_episodes),
+            subtitle = stringResource(R.string.layout_tv_home_next_episodes_sub),
+            checked = uiState.tvHomeIncludeNextUp,
+            onToggle = { onEvent(LayoutSettingsEvent.SetTvHomeIncludeNextUp(!uiState.tvHomeIncludeNextUp)) }
+        )
+    }
+}
+
 internal fun LayoutSettingsUiState.focusedPosterHasOptions(): Boolean {
     val modernLandscape = selectedLayout == HomeLayout.MODERN && modernLandscapePostersEnabled
     return selectedLayout != HomeLayout.GRID && (!modernLandscape || AppFeaturePolicy.inAppTrailerPlaybackEnabled)

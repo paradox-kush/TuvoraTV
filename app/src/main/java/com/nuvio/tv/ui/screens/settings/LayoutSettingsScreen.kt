@@ -180,6 +180,7 @@ private fun LayoutSectionContent(
         LayoutSection.HOME_CONTENT -> LayoutHomeContentSection(uiState, onEvent)
         LayoutSection.SIDEBAR -> LayoutSidebarSection(uiState, onEvent)
         LayoutSection.CONTINUE_WATCHING -> LayoutContinueWatchingSection(uiState, onEvent)
+        LayoutSection.TV_HOME_SCREEN -> LayoutTvHomeScreenSection(uiState, onEvent)
         LayoutSection.FOCUSED_POSTER -> LayoutFocusedPosterSection(uiState, onEvent)
         LayoutSection.POSTER_CARD -> LayoutPosterCardSection(uiState, onEvent)
         LayoutSection.CARD_DEPTH -> LayoutCardDepthSection(uiState, onEvent)
