@@ -90,6 +90,15 @@
         </provider>
 
         <receiver
+            android:name=".core.sync.androidtv.LauncherRemovalReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.tv.action.WATCH_NEXT_PROGRAM_BROWSABLE_DISABLED" />
+                <action android:name="android.media.tv.action.PREVIEW_PROGRAM_BROWSABLE_DISABLED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name=".core.sync.androidtv.TvChannelBootReceiver"
             android:exported="true">
             <intent-filter>
