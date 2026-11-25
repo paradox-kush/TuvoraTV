@@ -1817,9 +1817,12 @@ private fun parseTimedEpisodeReleaseInstant(raw: String?): Instant? {
 
 internal fun sortContinueWatchingItems(
     items: List<ContinueWatchingItem>,
-    mode: ContinueWatchingSortMode
+    mode: ContinueWatchingSortMode,
+    nowMs: Long = System.currentTimeMillis()
 ): List<ContinueWatchingItem> {
     return when (mode) {
+        ContinueWatchingSortMode.RESUME_FIRST -> resumeFirstOrder(items, nowMs)
+
         ContinueWatchingSortMode.DEFAULT, ContinueWatchingSortMode.SPLIT_UPCOMING -> items.sortedByDescending { item ->
             when (item) {
                 is ContinueWatchingItem.InProgress -> item.progress.lastWatched

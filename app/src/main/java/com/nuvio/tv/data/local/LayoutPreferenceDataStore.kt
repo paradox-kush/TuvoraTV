@@ -27,6 +27,7 @@ import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.ContinueWatchingCardStyle
 import com.nuvio.tv.domain.model.ContinueWatchingClickAction
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
+import com.nuvio.tv.domain.model.CwOrderDefaultPolicy
 import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_COVERAGE
 import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_STRENGTH
 import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_SHEEN_STRENGTH
@@ -40,12 +41,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -53,7 +57,8 @@ import javax.inject.Singleton
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class LayoutPreferenceDataStore @Inject constructor(
     private val factory: ProfileDataStoreFactory,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    private val cwOrderCohortStore: CwOrderCohortStore
 ) {
     companion object {
         private const val TAG = "LayoutPreferenceDS"
@@ -126,6 +131,8 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val nextUpFromFurthestEpisodeKey = booleanPreferencesKey("next_up_from_furthest_episode")
     private val blurContinueWatchingNextUpKey = booleanPreferencesKey("blur_continue_watching_next_up")
     private val continueWatchingSortModeKey = stringPreferencesKey("continue_watching_sort_mode")
+    private val tvHomePublishEnabledKey = booleanPreferencesKey("tv_home_publish_enabled")
+    private val tvHomeIncludeNextUpKey = booleanPreferencesKey("tv_home_include_next_up")
     private val continueWatchingClickActionKey = stringPreferencesKey("continue_watching_click_action")
     private val detailPageTrailerButtonEnabledKey = booleanPreferencesKey("detail_page_trailer_button_enabled")
     private val preferExternalMetaAddonDetailKey = booleanPreferencesKey("prefer_external_meta_addon_detail")
@@ -145,6 +152,20 @@ class LayoutPreferenceDataStore @Inject constructor(
         profileManager.activeProfileId.flatMapLatest { pid ->
             factory.get(pid, FEATURE).data.map { prefs -> extract(prefs) }
         }
+
+    init {
+        // One-time, per install: was this app in use before "Pick up where I left off" existed?
+        // Until decided, an unset order resolves to the old default, so nothing flips under anyone.
+        scope.launch {
+            runCatching {
+                val prefs = store().data.first()
+                cwOrderCohortStore.decideOnce(
+                    layoutAlreadyChosen = prefs[hasChosenKey] == true,
+                    hasStoredOrder = prefs[continueWatchingSortModeKey] != null
+                )
+            }
+        }
+    }
 
     private fun Preferences.getStringOrMigrateSet(key: Preferences.Key<String>): String? {
         return try {
@@ -417,10 +438,22 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[blurContinueWatchingNextUpKey] ?: false
     }
 
-    val continueWatchingSortMode: Flow<ContinueWatchingSortMode> = profileFlow { prefs ->
-        val stored = prefs[continueWatchingSortModeKey] ?: ContinueWatchingSortMode.DEFAULT.name
-        runCatching { ContinueWatchingSortMode.valueOf(stored) }
-            .getOrDefault(ContinueWatchingSortMode.DEFAULT)
+    /** An explicit choice always wins; an unset order follows [CwOrderDefaultPolicy] (new installs only). */
+    val continueWatchingSortMode: Flow<ContinueWatchingSortMode> =
+        combine(
+            profileFlow { prefs -> prefs[continueWatchingSortModeKey] },
+            cwOrderCohortStore.cohort
+        ) { stored, cohort -> CwOrderDefaultPolicy.resolve(stored, cohort) }
+            .distinctUntilChanged()
+
+    /** Whether Continue Watching is published to the TV launcher (Watch Next row and preview channel). */
+    val tvHomePublishEnabled: Flow<Boolean> = profileFlow { prefs ->
+        prefs[tvHomePublishEnabledKey] ?: true
+    }
+
+    /** Whether next episodes (not just half-watched items) are published to the TV launcher. */
+    val tvHomeIncludeNextUp: Flow<Boolean> = profileFlow { prefs ->
+        prefs[tvHomeIncludeNextUpKey] ?: true
     }
 
     val continueWatchingClickAction: Flow<ContinueWatchingClickAction> = profileFlow { prefs ->
@@ -904,6 +937,14 @@ class LayoutPreferenceDataStore @Inject constructor(
         store().edit { prefs ->
             prefs[blurContinueWatchingNextUpKey] = enabled
         }
+    }
+
+    suspend fun setTvHomePublishEnabled(enabled: Boolean) {
+        store().edit { prefs -> prefs[tvHomePublishEnabledKey] = enabled }
+    }
+
+    suspend fun setTvHomeIncludeNextUp(enabled: Boolean) {
+        store().edit { prefs -> prefs[tvHomeIncludeNextUpKey] = enabled }
     }
 
     suspend fun setContinueWatchingSortMode(mode: ContinueWatchingSortMode) {

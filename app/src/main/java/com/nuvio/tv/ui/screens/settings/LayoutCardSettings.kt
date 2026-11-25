@@ -158,6 +158,7 @@ internal fun LayoutContinueWatchingSection(
             title = stringResource(R.string.layout_cw_sort_mode),
             subtitle = stringResource(R.string.layout_cw_sort_mode_sub),
             value = when (uiState.continueWatchingSortMode) {
+                ContinueWatchingSortMode.RESUME_FIRST -> stringResource(R.string.layout_cw_sort_resume_first)
                 ContinueWatchingSortMode.DEFAULT -> stringResource(R.string.layout_cw_sort_default)
                 ContinueWatchingSortMode.STREAMING_STYLE -> stringResource(R.string.layout_cw_sort_streaming)
                 ContinueWatchingSortMode.SPLIT_UPCOMING -> stringResource(R.string.layout_cw_sort_split_upcoming)
@@ -550,6 +551,11 @@ private fun ContinueWatchingSortModeDialog(
 ) {
     val options = listOf(
         SettingsPickerOption(
+            ContinueWatchingSortMode.RESUME_FIRST,
+            stringResource(R.string.layout_cw_sort_resume_first),
+            stringResource(R.string.layout_cw_sort_resume_first_desc)
+        ),
+        SettingsPickerOption(
             ContinueWatchingSortMode.DEFAULT,
             stringResource(R.string.layout_cw_sort_default),
             stringResource(R.string.layout_cw_sort_default_desc)
@@ -573,7 +579,7 @@ private fun ContinueWatchingSortModeDialog(
         onOptionSelected = onModeSelected,
         onDismiss = onDismiss,
         width = 420.dp,
-        maxHeight = 320.dp
+        maxHeight = 400.dp
     )
 }
 

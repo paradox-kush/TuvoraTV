@@ -79,7 +79,10 @@ private val catalogKeysExcludedFromProfileSettingsBlob = setOf(
 )
 
 private val localOnlyLayoutProfileSettingsKeys = setOf(
-    "last_non_off_discover_location"
+    "last_non_off_discover_location",
+    // What this TV shows on its own home screen is a decision about this room, not the account.
+    "tv_home_publish_enabled",
+    "tv_home_include_next_up"
 )
 
 private val localOnlyPlayerProfileSettingsKeys = setOf(
