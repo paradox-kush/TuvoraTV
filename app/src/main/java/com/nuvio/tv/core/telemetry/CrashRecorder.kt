@@ -57,6 +57,8 @@ object CrashRecorder {
         trail = runCatching {
             DiagTrailPolicy.render(TelemetryHolder.recorder?.snapshotOrEmpty(TelemetryGate.TRAIL_ON_REPORT).orEmpty(), TelemetryGate.TRAIL_ON_REPORT)
         }.getOrDefault(""),
+        // The ring is in memory: reading its newest sample never blocks or allocates much.
+        mem = runCatching { TelemetryHolder.memoryRing?.last()?.toCompact().orEmpty() }.getOrDefault(""),
     )
 
     /**
@@ -93,17 +95,20 @@ object CrashRecorder {
     private fun capture(record: CrashRecord, supportCode: String) {
         PostHog.capture(
             event = EVENT,
-            properties = mapOf(
-                "schema_version" to CrashRecord.SCHEMA_VERSION,
-                "crash_id" to record.crashId,
-                "support_code" to supportCode,
-                "crashed_at_ms" to record.crashedAtMs,
-                "crashed_app_version" to record.appVersion,
-                "thread" to record.thread,
-                "exception_type" to record.exceptionType,
-                "stack" to record.frames.joinToString("\n"),
-                "diag_trail" to record.trail,
-            ),
+            properties = buildMap<String, Any> {
+                put("schema_version", CrashRecord.SCHEMA_VERSION)
+                put("crash_id", record.crashId)
+                put("support_code", supportCode)
+                put("crashed_at_ms", record.crashedAtMs)
+                put("crashed_app_version", record.appVersion)
+                put("thread", record.thread)
+                put("exception_type", record.exceptionType)
+                put("stack", record.frames.joinToString("\n"))
+                put("diag_trail", record.trail)
+                // Playback telemetry contract: the last memory sample before the crash.
+                com.nuvio.tv.core.telemetry.playback.MemorySample.fromCompact(record.mem.takeIf { it.isNotEmpty() })
+                    ?.let { putAll(it.toProperties()) }
+            },
             timestamp = Date(record.crashedAtMs),
         )
         PostHog.flush()

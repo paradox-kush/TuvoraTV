@@ -104,6 +104,9 @@ internal data class ProductionPlaybackHost(
     val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
     /** Multiview tile mode ([TileHostComposition]); null is the single full-screen / guide host. */
     val tile: com.nuvio.tv.playback.core.TileHostConfig? = null,
+    /** Per-host facts the session's failure diagnostics carry (provider kind); written by the host. */
+    val diagnosticContext: com.nuvio.tv.playback.core.PlaybackDiagnosticContext =
+        com.nuvio.tv.playback.core.PlaybackDiagnosticContext(),
 ) {
     init {
         require(!surfaceCapabilities.secureNativeEmbedSupported) {
@@ -218,7 +221,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
             engineRegistry = PlaybackEngineRegistry { engines[it] },
             outputController = host.outputController,
             clock = clock,
-            diagnostics = diagnostics,
+            diagnostics = ContextualPlaybackDiagnostics(diagnostics, host.diagnosticContext),
             lifecycle = host.lifecycle,
             audioFocus = TileHostComposition.audioFocus(tilePlan) { AndroidAudioFocusPort(appContext) },
             compatibilityRecording = CompatibilityRecordingEnvironment(

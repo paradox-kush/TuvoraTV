@@ -42,11 +42,12 @@ class PlaybackDiagnosticsAdapterTest {
         assertEquals(
             setOf(
                 "schema_version", "generation", "diagnostic_code", "engine", "attempt", "failure_code",
-                "failure_domain", "failure_phase", "retryability", "deterministic",
+                "failure_domain", "failure_phase", "retryability", "deterministic", "http_class",
                 PostHogPrivacy.GEOIP_DISABLE_PROPERTY,
             ),
             formatted.properties.keys,
         )
+        assertEquals("a failure with no HTTP answer says so", "none", formatted.properties["http_class"])
         assertEquals("VIDEO_DECODER", formatted.properties["failure_domain"])
         assertEquals("HANDOFF_ELIGIBLE", formatted.properties["retryability"])
         assertEquals(true, formatted.properties[PostHogPrivacy.GEOIP_DISABLE_PROPERTY])

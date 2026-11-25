@@ -10,6 +10,9 @@ import com.nuvio.tv.playback.core.PlaybackDiagnostics
 import com.nuvio.tv.playback.core.PlaybackDiagnosticCode
 import com.nuvio.tv.playback.core.PlaybackQualitySummary
 import com.nuvio.tv.core.analytics.PostHogPrivacy
+import com.nuvio.tv.core.telemetry.playback.PlaybackTelemetry
+import com.nuvio.tv.core.telemetry.playback.PlaybackTelemetryBuckets
+import com.nuvio.tv.core.telemetry.playback.PlaybackTelemetryKeys
 import com.posthog.PostHog
 
 data class FormattedPlaybackDiagnostic(
@@ -94,6 +97,9 @@ object PlaybackDiagnosticFormatter {
             properties["deterministic"] = failure.deterministic
             // The status number only (never the response line, URL or host).
             failure.httpStatus?.let { properties["http_status"] = it }
+            // Playback telemetry contract: the status as a class (also `none` when there was no HTTP answer).
+            properties["http_class"] = PlaybackTelemetryBuckets.httpClass(failure.httpStatus)
+            event.sourceType?.let { PlaybackTelemetryKeys.sourceType(it.name) }?.let { properties["source_type"] = it }
             failure.statusProvenance?.let { properties["status_provenance"] = it.name }
             failure.graphRejection?.let { rejection ->
                 // Closed enums, wire codes and counts only (never a mime type, URL or host).
@@ -138,11 +144,36 @@ class FormattingPlaybackDiagnostics(
             // channel, request header, cookie, or DRM value can cross this debug boundary.
             Log.d(DEBUG_LOG_TAG, "${formatted.eventName} ${formatted.properties}")
         }
+        // QA mirror (local logcat, only when debug.tuvora.qa=1): the contract's failure extras, exact values.
+        if (event.failure != null) {
+            PlaybackTelemetry.diagnosticExtras(
+                formatted.properties.filterKeys {
+                    it in QA_DIAGNOSTIC_KEYS
+                },
+            )
+        }
         sink.capture(formatted)
     }
 
     private companion object {
         const val DEBUG_LOG_TAG = "CleanPlaybackDiag"
+        val QA_DIAGNOSTIC_KEYS = setOf(
+            "failure_code", "http_class", "source_type", "attempt", "stream_container", "stream_height", "engine",
+        )
+    }
+}
+
+/**
+ * Adds what only the host knows (the provider kind) to every event its session records. One per session;
+ * the shared formatter stays stateless.
+ */
+class ContextualPlaybackDiagnostics(
+    private val delegate: PlaybackDiagnostics,
+    private val context: com.nuvio.tv.playback.core.PlaybackDiagnosticContext,
+) : PlaybackDiagnostics {
+    override fun record(event: PlaybackDiagnosticEvent) {
+        val source = context.sourceType
+        delegate.record(if (event.sourceType == null && source != null) event.copy(sourceType = source) else event)
     }
 }
 

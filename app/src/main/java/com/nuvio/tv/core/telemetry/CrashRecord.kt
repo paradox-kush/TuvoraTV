@@ -18,6 +18,8 @@ data class CrashRecord(
     val frames: List<String>,
     /** Rendered on-device trail leading up to the crash (see [DiagTrailPolicy.render]); empty when none. */
     val trail: String = "",
+    /** Last memory sample of the dying process, compact (`MemorySample.toCompact`); empty when none was taken. */
+    val mem: String = "",
 ) {
     fun toJson(): String = JSONObject()
         .put("schema_version", SCHEMA_VERSION)
@@ -29,6 +31,7 @@ data class CrashRecord(
         .put("message", message ?: JSONObject.NULL)
         .put("frames", JSONArray(frames))
         .put("trail", trail)
+        .put("mem", mem)
         .toString()
 
     companion object {
@@ -49,6 +52,7 @@ data class CrashRecord(
                 message = if (o.isNull("message")) null else o.getString("message"),
                 frames = List(arr.length()) { arr.getString(it) },
                 trail = o.optString("trail", ""),
+                mem = o.optString("mem", ""),
             )
         }.getOrNull()
 

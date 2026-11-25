@@ -8,7 +8,13 @@ package com.nuvio.tv.playback.core
  * enum names only: no URL, host, account, provider or channel. Time between two snapshots is
  * attributed to the earlier one, which is exact because the snapshot only changes on transitions.
  */
-class PlaybackQualityAccumulator(private val now: () -> Long) {
+class PlaybackQualityAccumulator(
+    private val now: () -> Long,
+    /** Playback telemetry counts (first frame, hand-off, stall); default reports nothing. */
+    private val signals: PlaybackSignalSink = PlaybackSignalSink.None,
+    /** True for a multiview tile host: its views are `multiview_tile`, whatever the profile says. */
+    private val isTile: Boolean = false,
+) {
     private var views = 0
     private var viewsStarted = 0
     private val startupBuckets = IntArray(STARTUP_BUCKET_LIMITS_MS.size + 1)
@@ -37,6 +43,14 @@ class PlaybackQualityAccumulator(private val now: () -> Long) {
     private var viewStarted = false
     private var viewFailed = false
 
+    // Playback telemetry: the one hand-off of an incident (reported when the new graph is chosen) and the
+    // buffering / reconnect stall in progress. Both are per view generation and dropped when it changes.
+    private var pendingHandoffFrom: EngineType? = null
+    private var pendingHandoffCause: FailureCode? = null
+    private var pendingHandoffGraph: PlaybackGraph? = null
+    private var stallStartedAt = -1L
+    private var stallGeneration = -1L
+
     fun observe(snapshot: PlaybackSnapshot) {
         val at = now()
         attributeElapsed(at)
@@ -50,19 +64,29 @@ class PlaybackQualityAccumulator(private val now: () -> Long) {
             viewStartedAt = at
             viewStarted = false
             viewFailed = false
+            pendingHandoffFrom = null
         }
         if (viewGeneration == snapshot.generation) {
             if (!viewStarted && snapshot.hasStarted()) {
                 viewStarted = true
                 viewsStarted += 1
                 startupBuckets[startupBucket(at - viewStartedAt)] += 1
+                // A local live-buffer playlist is the app's own file: not a source start.
+                if (snapshot.requestSummary?.scheme != LOCAL_SCHEME) {
+                    signal { signals.firstFrame(kindOf(snapshot), snapshot.graph?.engine, at - viewStartedAt) }
+                }
             }
             if (viewStarted && snapshot.isBuffering && prior?.isBuffering != true) rebufferCount += 1
         }
         if (snapshot.isReconnecting && prior?.isReconnecting != true) reconnects += 1
         if (snapshot.state == PlaybackState.HANDING_OFF_ONCE && prior?.state != PlaybackState.HANDING_OFF_ONCE) {
             handoffs += 1
+            pendingHandoffFrom = snapshot.graph?.engine ?: prior?.graph?.engine
+            pendingHandoffCause = snapshot.failure?.code ?: prior?.failure?.code
+            pendingHandoffGraph = snapshot.graph
         }
+        observeHandoffTelemetry(snapshot)
+        observeStallTelemetry(snapshot, at)
         if (snapshot.playbackOutputStatus == PlaybackOutputStatus.APPLIED &&
             prior?.playbackOutputStatus != PlaybackOutputStatus.APPLIED
         ) {
@@ -81,6 +105,65 @@ class PlaybackQualityAccumulator(private val now: () -> Long) {
         previousAt = at
     }
 
+    /** Reported once the hand-off has chosen its new graph; dropped when the incident ended without one. */
+    private fun observeHandoffTelemetry(snapshot: PlaybackSnapshot) {
+        val from = pendingHandoffFrom ?: return
+        if (snapshot.state == PlaybackState.HANDING_OFF_ONCE) return
+        val graph = snapshot.graph
+        when {
+            snapshot.state == PlaybackState.FAILED || snapshot.state == PlaybackState.STOPPED ||
+                snapshot.state == PlaybackState.IDLE -> pendingHandoffFrom = null
+            graph != null && graph != pendingHandoffGraph -> {
+                val cause = pendingHandoffCause
+                pendingHandoffFrom = null
+                signal { signals.handoff(from, graph.engine, cause) }
+            }
+        }
+    }
+
+    /**
+     * A stall is a buffering or reconnect stretch after the picture started that lasts at least
+     * [MIN_STALL_MS]. It ends `recovered` when playback resumes and `gave_up` when the session fails; a stall
+     * the viewer ends by leaving (new generation, stop, release) is nobody's outcome and is not reported.
+     */
+    private fun observeStallTelemetry(snapshot: PlaybackSnapshot, at: Long) {
+        val inStall = viewStarted && viewGeneration == snapshot.generation &&
+            (snapshot.isBuffering || snapshot.isReconnecting)
+        if (inStall) {
+            if (stallStartedAt < 0) {
+                stallStartedAt = at
+                stallGeneration = snapshot.generation
+            }
+            return
+        }
+        if (stallStartedAt < 0) return
+        val duration = at - stallStartedAt
+        val sameView = stallGeneration == snapshot.generation
+        stallStartedAt = -1L
+        if (!sameView || duration < MIN_STALL_MS) return
+        val recovered = when (snapshot.state) {
+            PlaybackState.PLAYING, PlaybackState.DEGRADED -> true
+            PlaybackState.FAILED -> false
+            else -> return
+        }
+        signal { signals.stall(kindOf(snapshot), recovered, duration) }
+    }
+
+    private fun kindOf(snapshot: PlaybackSnapshot): PlaybackSignalKind = when {
+        isTile -> PlaybackSignalKind.MULTIVIEW_TILE
+        snapshot.profile == SessionProfile.GUIDE -> PlaybackSignalKind.PREVIEW
+        snapshot.requestSummary?.contentType == ContentType.LIVE -> PlaybackSignalKind.LIVE
+        else -> PlaybackSignalKind.VOD
+    }
+
+    /** Telemetry must never break the pipeline. */
+    private inline fun signal(block: () -> Unit) {
+        try {
+            block()
+        } catch (_: Exception) {
+        }
+    }
+
     /** Decode-health totals for the session so far (cumulative; the latest call wins). */
     fun observeDecodeHealth(totals: DecodeHealthTotals) {
         decodeHealth = totals
@@ -91,6 +174,8 @@ class PlaybackQualityAccumulator(private val now: () -> Long) {
         attributeElapsed(at)
         closeView(at)
         previous = null
+        pendingHandoffFrom = null
+        stallStartedAt = -1L
         return PlaybackQualitySummary(
             views = views,
             viewsStarted = viewsStarted,
@@ -164,6 +249,8 @@ class PlaybackQualityAccumulator(private val now: () -> Long) {
     private companion object {
         val STARTUP_BUCKET_LIMITS_MS = longArrayOf(500, 1_000, 2_000, 4_000, 8_000)
         const val QUICK_ZAP_MS = 1_000L
+        const val MIN_STALL_MS = 1_000L
+        const val LOCAL_SCHEME = "file"
         const val RESOLUTION_CLASSES = 4
         const val MAX_FAILURE_CODES = 5
     }

@@ -14,7 +14,10 @@ object DeviceProfile {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val mem = ActivityManager.MemoryInfo().also { am?.getMemoryInfo(it) }
         return buildMap {
-            put("hw_ram_total_mb", (mem.totalMem / (1024 * 1024)).toInt())
+            val totalMb = (mem.totalMem / (1024 * 1024)).toInt()
+            put("hw_ram_total_mb", totalMb)
+            // Playback telemetry contract: the RAM class as a super property, so every failure diagnostic carries it.
+            put("ram_class", com.nuvio.tv.core.telemetry.playback.PlaybackTelemetryBuckets.ramClass(totalMb))
             put("hw_low_ram", am?.isLowRamDevice ?: false)
             put("hw_heap_limit_mb", am?.memoryClass ?: 0)
             put("hw_large_heap_limit_mb", am?.largeMemoryClass ?: 0)

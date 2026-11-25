@@ -368,6 +368,8 @@ data class PlaybackDiagnosticEvent(
     val engineAtStart: EngineType? = null,
     /** Set on [PlaybackDiagnosticCode.DECODE_HEALTH_ISSUE]. */
     val decodeHealth: DecodeHealthReport? = null,
+    /** Which kind of provider the playing channel came from (filled by the host's diagnostics wrapper), enum only. */
+    val sourceType: ProviderSourceType? = null,
 )
 
 fun interface PlaybackDiagnostics {

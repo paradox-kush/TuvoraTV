@@ -4,6 +4,12 @@ import android.content.Context
 import android.os.Debug
 import android.os.Handler
 import android.os.HandlerThread
+import com.nuvio.tv.core.analytics.AppExitReporter
+import com.nuvio.tv.core.telemetry.playback.MemorySamplePolicy
+import com.nuvio.tv.core.telemetry.playback.MemorySampleRing
+import com.nuvio.tv.core.telemetry.playback.PlaybackTelemetry
+import com.nuvio.tv.core.telemetry.playback.PlaybackTelemetryRecorder
+import com.nuvio.tv.core.telemetry.playback.QaMirror
 import com.nuvio.tv.data.local.SentrySettingsDataStore
 import com.posthog.PostHog
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -18,6 +24,9 @@ object TelemetryHolder {
 
     /** Mirrors the "Crash & usage reports" switch. False until startup has read it. */
     @Volatile var consentEnabled: Boolean = false
+
+    /** The newest process memory samples, read by the crash handler (outside DI) and by reports. */
+    @Volatile var memoryRing: MemorySampleRing? = null
 }
 
 @Singleton
@@ -28,6 +37,26 @@ class TelemetryService @Inject constructor(
 
     val recorder = FlightRecorder()
     val health = SessionHealth()
+
+    /** Tiny ring of process memory samples (every 10 s while playing); the last one rides on exits, crashes and reports. */
+    val memoryRing = MemorySampleRing()
+    private val memorySampler = ProcessMemorySampler()
+
+    /**
+     * Playback telemetry (time to first frame, fallbacks, stalls, teardown, multiview). Routine successes are only
+     * counted into [health]; the one event it sends is `multiview_session`. The "Crash & usage reports" switch
+     * ([TelemetryHolder.consentEnabled]) disables counting and sending; the QA mirror is local logcat only.
+     */
+    val playbackTelemetry = PlaybackTelemetryRecorder(
+        consent = { TelemetryHolder.consentEnabled },
+        count = { health.increment(it) },
+        sendEvent = { event, properties -> PostHog.capture(event = event, properties = properties) },
+        qa = QaMirror(
+            enabled = QaMirror.parseEnabled(readQaProperty()),
+            sink = { line -> android.util.Log.i(QaMirror.TAG, line) },
+        ),
+        lastMemory = { memoryRing.last() },
+    )
     private val rateLimit = ReportRateLimit()
 
     override val supportCode: String by lazy { SupportCodeStore.get(context) }
@@ -72,6 +101,8 @@ class TelemetryService @Inject constructor(
         previousRun = runCatching { DiagTrailPolicy.fromJson(ringFile.takeIf { it.exists() }?.readText().orEmpty()) }
             .getOrDefault(emptyList())
         TelemetryHolder.recorder = recorder
+        TelemetryHolder.memoryRing = memoryRing
+        PlaybackTelemetry.recorder = playbackTelemetry
         val thread = HandlerThread("telemetry-io", android.os.Process.THREAD_PRIORITY_BACKGROUND).also { it.start() }
         worker = thread
         handler = Handler(thread.looper).also { scheduleWrite(it) }
@@ -154,19 +185,39 @@ class TelemetryService @Inject constructor(
         handler?.let { scheduleWrite(it) }
     }
 
-    /** One sampling loop per playback; a stale loop (older generation) never reschedules itself. */
+    /**
+     * One sampling loop per playback; a stale loop (older generation) never reschedules itself. It runs on the
+     * telemetry worker (never Main) every [MEMORY_SAMPLE_INTERVAL_MS]: one process memory sample into the ring (and
+     * the QA mirror), the flight-recorder line every [FLIGHT_RECORDER_EVERY] samples as before, and the compact
+     * sample persisted every [PERSIST_EVERY] samples so a kill still leaves one for the next launch's `app_exit`.
+     */
     private inner class SampleTask(private val generation: Int) : Runnable {
+        private var tick = 0
+
         override fun run() {
             if (!sampling || generation != samplingGeneration) return
-            val rt = Runtime.getRuntime()
-            recorder.record(
-                DiagArea.MEMORY, "sample",
-                mapOf(
-                    "heap_used_mb" to (rt.totalMemory() - rt.freeMemory()) / MB,
-                    "heap_max_mb" to rt.maxMemory() / MB,
-                    "native_mb" to Debug.getNativeHeapAllocatedSize() / MB,
-                ),
-            )
+            if (TelemetryHolder.consentEnabled || playbackTelemetry.qaEnabled) {
+                runCatching {
+                    val sample = memorySampler.sample()
+                    memoryRing.add(sample)
+                    playbackTelemetry.memorySampled(sample)
+                    if (TelemetryHolder.consentEnabled && tick % PERSIST_EVERY == 0) {
+                        AppExitReporter.recordMemoryContext(context, sample)
+                    }
+                }
+            }
+            if (tick % FLIGHT_RECORDER_EVERY == 0) {
+                val rt = Runtime.getRuntime()
+                recorder.record(
+                    DiagArea.MEMORY, "sample",
+                    mapOf(
+                        "heap_used_mb" to (rt.totalMemory() - rt.freeMemory()) / MB,
+                        "heap_max_mb" to rt.maxMemory() / MB,
+                        "native_mb" to Debug.getNativeHeapAllocatedSize() / MB,
+                    ),
+                )
+            }
+            tick++
             handler?.postDelayed(this, MEMORY_SAMPLE_INTERVAL_MS)
         }
     }
@@ -204,6 +255,8 @@ class TelemetryService @Inject constructor(
                     put("heap_used_mb", (rt.totalMemory() - rt.freeMemory()) / MB)
                     put("heap_max_mb", rt.maxMemory() / MB)
                     put("native_mb", Debug.getNativeHeapAllocatedSize() / MB)
+                    // Playback telemetry contract: the last on-device memory sample (one taken now when none exists yet).
+                    (memoryRing.last() ?: runCatching { memorySampler.sample() }.getOrNull())?.let { putAll(it.toProperties()) }
                     // A report carries the long trail (80 lines); the gate keeps a trail that is already set.
                     put("diag_trail", DiagTrailPolicy.render(recorder.snapshot(), TelemetryGate.TRAIL_ON_REPORT))
                 },
@@ -217,7 +270,22 @@ class TelemetryService @Inject constructor(
     companion object {
         private const val MB = 1024L * 1024L
         private const val RING_WRITE_INTERVAL_MS = 30_000L
-        private const val MEMORY_SAMPLE_INTERVAL_MS = 60_000L
+        private const val MEMORY_SAMPLE_INTERVAL_MS = MemorySamplePolicy.MIN_INTERVAL_MS
+        private const val FLIGHT_RECORDER_EVERY = 6 // 60 s, as before
+        private const val PERSIST_EVERY = 3 // 30 s
+
+        /**
+         * `debug.tuvora.qa` read once: reflection on the framework's SystemProperties, else `getprop`. Anything but
+         * a literal `1` (or a failed read) leaves the QA mirror off.
+         */
+        private fun readQaProperty(): String? = runCatching {
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java, String::class.java)
+                .invoke(null, QaMirror.ANDROID_PROPERTY, "") as? String
+        }.getOrNull() ?: runCatching {
+            val process = ProcessBuilder("getprop", QaMirror.ANDROID_PROPERTY).redirectErrorStream(true).start()
+            process.inputStream.bufferedReader().use { it.readText() }.trim()
+        }.getOrNull()
     }
 }
 

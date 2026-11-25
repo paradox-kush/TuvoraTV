@@ -136,6 +136,29 @@ object AppExitReporter {
         recordMemorySnapshot(context, "playback_started")
     }
 
+    /**
+     * Persists the newest playback-telemetry memory sample (compact, ~20 bytes) so the NEXT launch can attach
+     * it to `app_exit`. `apply()` is asynchronous; callers pass it at most every 30 s while playing.
+     */
+    fun recordMemoryContext(context: Context, sample: com.nuvio.tv.core.telemetry.playback.MemorySample) {
+        synchronized(lock) {
+            val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val runStart = prefs.getLong(KEY_CURRENT_RUN_START, 0L)
+            if (runStart <= 0L) return
+            prefs.edit().putString(runKey(runStart, "mem_ctx"), sample.toCompact()).apply()
+        }
+    }
+
+    /** Persists how many multiview tiles are open (0 on close), for `prev_tiles` on the next launch's `app_exit`. */
+    fun recordMultiviewTiles(context: Context, tiles: Int) {
+        synchronized(lock) {
+            val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val runStart = prefs.getLong(KEY_CURRENT_RUN_START, 0L)
+            if (runStart <= 0L) return
+            prefs.edit().putInt(runKey(runStart, "pb_tiles"), tiles.coerceAtLeast(0)).apply()
+        }
+    }
+
     fun recordPlaybackStopped(context: Context) {
         synchronized(lock) {
             val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -345,6 +368,26 @@ object AppExitReporter {
             run.maxMpvActiveInstances?.let { put("max_mpv_active_instances", it) }
             run.mpvDestroyWaitMs?.let { put("mpv_destroy_wait_ms", it) }
             run.mpvLifecycleHistory?.let { put("mpv_lifecycle_history", it) }
+            // Playback telemetry contract: memory context under the shared names (the last sample the run
+            // persisted, else the older PSS / heap / fd breadcrumbs above) and the `prev_*` playback state.
+            putAll(
+                com.nuvio.tv.core.telemetry.playback.MemoryContext.forExit(
+                    compact = run.memoryContext,
+                    pssKb = run.lastPssKb,
+                    javaKb = run.lastJavaHeapKb,
+                    nativeKb = run.lastNativeHeapKb,
+                    fds = run.lastFdCount,
+                ),
+            )
+            putAll(
+                com.nuvio.tv.core.telemetry.playback.MemoryContext.previousRun(
+                    wasPlaying = run.wasPlaying,
+                    kind = run.playbackKind,
+                    surface = run.playbackSurface,
+                    engine = run.playbackEngine,
+                    tiles = run.multiviewTiles,
+                ),
+            )
         }
     }
 
@@ -486,6 +529,8 @@ object AppExitReporter {
                     mpvDestroyWaitMs = prefs.getLong(runKey(startedAt, "mpv_destroy_wait"), -1L)
                         .takeIf { it >= 0L },
                     mpvLifecycleHistory = prefs.getString(runKey(startedAt, "mpv_history"), null),
+                    memoryContext = prefs.getString(runKey(startedAt, "mem_ctx"), null),
+                    multiviewTiles = prefs.getInt(runKey(startedAt, "pb_tiles"), 0),
                 )
             }
         }
@@ -736,7 +781,7 @@ object AppExitReporter {
         "proc_top", "proc_top_delta", "proc_interval", "self_cpu", "self_cpu_delta",
         "fd_at", "fd_trigger", "fd_total", "fd_max", "fd_limit", "fd_pct", "fd_inventory",
         "mpv_id", "mpv_stage", "mpv_stage_at", "mpv_active", "mpv_waiting",
-        "mpv_active_max", "mpv_destroy_wait", "mpv_history",
+        "mpv_active_max", "mpv_destroy_wait", "mpv_history", "mem_ctx", "pb_tiles",
     )
 
     private val MPV_WARNING_STAGES = setOf(
@@ -798,6 +843,10 @@ internal data class AppRunContext(
     val maxMpvActiveInstances: Int? = null,
     val mpvDestroyWaitMs: Long? = null,
     val mpvLifecycleHistory: String? = null,
+    /** Last on-device memory sample of the run, compact (`MemorySample.toCompact`). */
+    val memoryContext: String? = null,
+    /** Tiles open in multiview when the run last reported; 0 outside multiview. */
+    val multiviewTiles: Int = 0,
 )
 
 private object LogMpvLifecycle {

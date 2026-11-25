@@ -39,7 +39,9 @@ class SessionHealth {
     }
 
     companion object {
-        const val MAX_KEYS = 64
+        // 64 was enough for the load/outcome counts; the playback counts (ttff by kind x engine x bucket, fallbacks,
+        // stalls) are enum-bounded but need room.
+        const val MAX_KEYS = 192
         const val EVENT = "session_health"
     }
 }

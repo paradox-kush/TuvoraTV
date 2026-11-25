@@ -70,12 +70,20 @@ internal class CleanLivePlaybackHost private constructor(
     private val qualityReporter: PlaybackQualityReporter,
     private val preferenceProfileId: PlaybackProfileId,
     private val userRetry: ProviderUserRetryPort,
+    private val signals: com.nuvio.tv.playback.core.PlaybackSignalSink,
+    private val clockMs: () -> Long,
+    private val diagnosticContext: com.nuvio.tv.playback.core.PlaybackDiagnosticContext,
 ) {
     private val commandMutex = Mutex()
 
     /** UX345: the provider selection the session is on, for the viewer's Retry. Null on VOD / local buffer. */
     @Volatile
     private var providerSelection: ProviderPlaybackSelection? = null
+        set(value) {
+            field = value
+            // The session's diagnostics read the provider kind from here (`source_type` on failures).
+            diagnosticContext.sourceType = value?.sourceType
+        }
 
     @Volatile
     private var released = false
@@ -208,9 +216,21 @@ internal class CleanLivePlaybackHost private constructor(
         commandMutex.withLock {
             if (released) return@withLock
             releaseStarted = true
-            releaseAuthority.release()
-            check(surfaces.disposeAfterSessionRelease()) {
-                "Clean playback surfaces still have an attached lease after session release"
+            // Playback telemetry: how long the release took and whether it held (a slow or failed release
+            // is the signal; a clean one is only counted). Reported after the barrier, never inside it.
+            val releasingEngine = controller.snapshot.value.graph?.engine
+            val releaseStartedAtMs = clockMs()
+            var releaseHeld = false
+            try {
+                releaseAuthority.release()
+                check(surfaces.disposeAfterSessionRelease()) {
+                    "Clean playback surfaces still have an attached lease after session release"
+                }
+                releaseHeld = true
+            } finally {
+                if (releasingEngine != null) {
+                    runCatching { signals.teardown(releasingEngine, clockMs() - releaseStartedAtMs, failed = !releaseHeld) }
+                }
             }
             released = true
             hostJob.cancel()
@@ -329,11 +349,15 @@ internal class CleanLivePlaybackHost private constructor(
             clockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
             userRetry: ProviderUserRetryPort = ProviderUserRetryPort.NONE,
             tile: com.nuvio.tv.playback.core.TileHostConfig? = null,
+            signals: com.nuvio.tv.playback.core.PlaybackSignalSink =
+                com.nuvio.tv.playback.wiring.PlaybackTelemetrySignals,
         ): CleanLivePlaybackHost {
             val parentJob = parentScope.coroutineContext[Job]
             val hostJob = SupervisorJob(parentJob)
             val hostScope = CoroutineScope(parentScope.coroutineContext + hostJob)
+            val diagnosticContext = com.nuvio.tv.playback.core.PlaybackDiagnosticContext()
             val productionHost = ProductionPlaybackHost(
+                diagnosticContext = diagnosticContext,
                 parentScope = hostScope,
                 media3SurfaceHost = surfaces.media3SurfaceHost,
                 mpvSurfaceHost = surfaces.mpvSurfaceHost,
@@ -404,7 +428,7 @@ internal class CleanLivePlaybackHost private constructor(
                     surfaces.presentFreezeFrame(LiveFreezeFramePolicy.overlay(snapshot))
                 }
             }
-            val quality = PlaybackQualityAccumulator(now = clockMs)
+            val quality = PlaybackQualityAccumulator(now = clockMs, signals = signals, isTile = tile != null)
             hostScope.launch {
                 controller.snapshot.collect { snapshot -> synchronized(quality) { quality.observe(snapshot) } }
             }
@@ -428,6 +452,9 @@ internal class CleanLivePlaybackHost private constructor(
                 qualityReporter = qualityReporter,
                 preferenceProfileId = preferenceProfileId,
                 userRetry = userRetry,
+                signals = signals,
+                clockMs = clockMs,
+                diagnosticContext = diagnosticContext,
             )
         }
 
