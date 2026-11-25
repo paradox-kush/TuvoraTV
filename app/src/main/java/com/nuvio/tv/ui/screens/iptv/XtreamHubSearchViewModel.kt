@@ -97,7 +97,7 @@ internal class XtreamHubSearchController(
                 report = mapOf("section" to type),
             ) { search(accountId, type, query) }
             mutableState.value = HubSearchUiState(
-                open = true, query = query, load = outcome.status, items = outcome.valueOrNull().orEmpty(),
+                open = true, query = query, load = outcome.status, items = outcome.valueOrNull().orEmpty().distinctBy { it.cardId }, // B282: ids are LazyRow keys
             )
         }
     }

@@ -29,7 +29,9 @@ suspend fun <T> advancePaged(
     while (state.hasMore) {
         val window = fetch(state.rawOffset) ?: return state
         val seen = state.items.mapTo(HashSet(state.items.size), id)
-        val fresh = window.items.filter { id(it) !in seen }
+        // B282: `add` (not `in`) so a provider page that lists one stream twice adds it once — a repeat
+        // INSIDE the window is a duplicate LazyRow/Grid key, which crashes Compose.
+        val fresh = window.items.filter { seen.add(id(it)) }
         // No raw progress means a stuck/overlapping source: stop rather than loop.
         val more = window.hasMore && window.consumed > 0
         state = PagedState(state.items + fresh, more, state.rawOffset + window.consumed)
