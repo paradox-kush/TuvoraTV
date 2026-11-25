@@ -9,6 +9,7 @@ import com.nuvio.tv.core.poster.withCustomPosterArt
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
+import com.nuvio.tv.ui.screens.home.ResumeRankPolicy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +56,9 @@ class TvRecommendationManager @Inject constructor(
         val poster: String?,
         val backdrop: String?,
         val season: Int?,
-        val episode: Int?
+        val episode: Int?,
+        val watchNextType: Int,
+        val engagementTimeMs: Long
     )
 
     companion object {
@@ -66,8 +69,8 @@ class TvRecommendationManager @Inject constructor(
     suspend fun updateWatchNextFromCwItems(items: List<ContinueWatchingItem>) {
         val progressList = items.mapNotNull { item ->
             when (item) {
-                is ContinueWatchingItem.InProgress -> item.progress
-                is ContinueWatchingItem.NextUp -> WatchProgress(
+                is ContinueWatchingItem.InProgress -> LauncherItem(item.progress, ResumeRankPolicy.Kind.Resume)
+                is ContinueWatchingItem.NextUp -> LauncherItem(WatchProgress(
                     contentId = item.info.contentId,
                     contentType = item.info.contentType,
                     name = item.info.name,
@@ -81,20 +84,20 @@ class TvRecommendationManager @Inject constructor(
                     position = 0L,
                     duration = 0L,
                     lastWatched = item.info.lastWatched
-                )
+                ), if (item.info.isReleaseAlert) ResumeRankPolicy.Kind.NewEpisode else ResumeRankPolicy.Kind.NextUp)
             }
         }
         updateWatchNext(progressList)
     }
 
-    suspend fun updateWatchNext(items: List<WatchProgress>) {
+    suspend fun updateWatchNext(items: List<LauncherItem>) {
         if (!isTvDevice()) return
         mutex.withLock {
             withContext(Dispatchers.IO) {
                 try {
                     val posterPattern = recommendationPosterPattern()
-                    val decorated = items.withCustomPosterArt(posterPattern)
-                    val currentInternalIds = decorated.map { programBuilder.watchNextId(it) }.toSet()
+                    val decorated = items.map { it.copy(progress = it.progress.withCustomPosterArt(posterPattern)) }
+                    val currentInternalIds = decorated.map { programBuilder.watchNextId(it.progress) }.toSet()
                     val existingInternalIds = programBuilder.getAllWatchNextInternalIds()
 
                     // Remove only stale programs that are no longer in CW
@@ -104,17 +107,10 @@ class TvRecommendationManager @Inject constructor(
                     }
 
                     // Upsert current CW programs only if they actually changed
-                    decorated.forEach { p ->
+                    decorated.forEach { item ->
+                        val p = item.progress
                         val id = programBuilder.watchNextId(p)
-                        val newFingerprint = ProgramFingerprint(
-                            title = p.name,
-                            position = p.position,
-                            duration = p.duration,
-                            poster = p.poster,
-                            backdrop = p.backdrop,
-                            season = p.season,
-                            episode = p.episode
-                        )
+                        val newFingerprint = fingerprintOf(item)
                         val oldFingerprint = syncedFingerprints[id]
                         if (oldFingerprint != null &&
                             oldFingerprint.title == newFingerprint.title &&
@@ -123,13 +119,15 @@ class TvRecommendationManager @Inject constructor(
                             oldFingerprint.season == newFingerprint.season &&
                             oldFingerprint.episode == newFingerprint.episode &&
                             oldFingerprint.duration == newFingerprint.duration &&
+                            oldFingerprint.watchNextType == newFingerprint.watchNextType &&
+                            oldFingerprint.engagementTimeMs == newFingerprint.engagementTimeMs &&
                             abs(oldFingerprint.position - newFingerprint.position) < 2_000L
                         ) {
                             // No meaningful change: skip database update to prevent waking up launcher
                             return@forEach
                         }
 
-                        val program = programBuilder.buildWatchNextProgram(p)
+                        val program = programBuilder.buildWatchNextProgram(item)
                         programBuilder.upsertWatchNextProgram(program, id)
                         syncedFingerprints[id] = newFingerprint
                     }
@@ -140,8 +138,42 @@ class TvRecommendationManager @Inject constructor(
         }
     }
 
+    private fun fingerprintOf(item: LauncherItem): ProgramFingerprint {
+        val p = item.progress
+        val positionMs = WatchNextTypePolicy.resolvePositionMs(p.position, p.duration, p.progressPercent)
+        return ProgramFingerprint(
+            title = p.name,
+            position = positionMs,
+            duration = p.duration,
+            poster = p.poster,
+            backdrop = p.backdrop,
+            season = p.season,
+            episode = p.episode,
+            watchNextType = WatchNextTypePolicy.typeFor(item.kind, positionMs, p.duration).contractValue,
+            engagementTimeMs = item.engagementTimeMs
+        )
+    }
+
+    /** Removes everything we published to Watch Next (the "Show on the TV home screen" switch turning off). */
+    suspend fun clearAll() {
+        if (!isTvDevice()) return
+        mutex.withLock {
+            pendingWatchNext = null
+            withContext(Dispatchers.IO) {
+                try {
+                    programBuilder.clearAllWatchNextPrograms()
+                    syncedFingerprints.clear()
+                } catch (e: Exception) {
+                    Log.w(TAG, "clearAll failed", e)
+                }
+            }
+        }
+    }
+
     suspend fun updateSingleWatchNextProgram(progress: WatchProgress) {
         if (!isTvDevice()) return
+        // Off means off: playback must not quietly re-publish what the viewer switched off.
+        if (!layoutPreferenceDataStore.tvHomePublishEnabled.first()) return
         mutex.withLock {
             pendingWatchNext = progress
             if (isPlaybackActive.value) return@withLock
@@ -169,15 +201,10 @@ class TvRecommendationManager @Inject constructor(
             try {
                 val decorated = progress.withCustomPosterArt(recommendationPosterPattern())
                 val id = programBuilder.watchNextId(decorated)
-                val newFingerprint = ProgramFingerprint(
-                    title = decorated.name,
-                    position = decorated.position,
-                    duration = decorated.duration,
-                    poster = decorated.poster,
-                    backdrop = decorated.backdrop,
-                    season = decorated.season,
-                    episode = decorated.episode
-                )
+                // Playing something is the replay that lets a removed item come back, so no removal
+                // check here. A resume is CONTINUE only with a real position and duration.
+                val item = LauncherItem(decorated, ResumeRankPolicy.Kind.Resume)
+                val newFingerprint = fingerprintOf(item)
                 val oldFingerprint = syncedFingerprints[id]
                 if (oldFingerprint != null &&
                     oldFingerprint.title == newFingerprint.title &&
@@ -186,12 +213,13 @@ class TvRecommendationManager @Inject constructor(
                     oldFingerprint.season == newFingerprint.season &&
                     oldFingerprint.episode == newFingerprint.episode &&
                     oldFingerprint.duration == newFingerprint.duration &&
+                    oldFingerprint.watchNextType == newFingerprint.watchNextType &&
                     abs(oldFingerprint.position - newFingerprint.position) < 2_000L
                 ) {
                     return@withContext
                 }
 
-                val program = programBuilder.buildWatchNextProgram(decorated)
+                val program = programBuilder.buildWatchNextProgram(item)
                 programBuilder.upsertWatchNextProgram(program, id)
                 syncedFingerprints[id] = newFingerprint
             } catch (e: Exception) {

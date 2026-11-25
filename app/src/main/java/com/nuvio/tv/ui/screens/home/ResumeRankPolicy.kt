@@ -13,10 +13,9 @@ package com.nuvio.tv.ui.screens.home
  * Time of day is deliberately not an input: there is no evidence it helps and it makes the order hard
  * to explain.
  *
- * Constants note: the spec table said Resume +24 h and barely-started -48 h, but its own cases 1
- * (half-watched film from yesterday beats a next-up from 2 h ago) and 4 (a 2% item from 3 days ago
- * sinks below a week-old 50% item) cannot hold with those numbers. They are +48 h and -72 h here, the
- * smallest change that satisfies every case; see ResumeRankPolicyTest.
+ * Constants note: the original spec table (+24 h / -48 h) contradicted its own cases 1 and 4. The
+ * coordinator corrected the weights to Resume +36 h and barely-started -96 h; the spec's examples are
+ * kept as tests (ResumeRankPolicyTest).
  */
 object ResumeRankPolicy {
 
@@ -42,12 +41,12 @@ object ResumeRankPolicy {
     private const val HOUR_MS = 3_600_000L
     private const val DAY_MS = 24 * HOUR_MS
 
-    internal const val RESUME_BOOST_MS = 48 * HOUR_MS
+    internal const val RESUME_BOOST_MS = 36 * HOUR_MS
     internal const val NEXT_UP_BOOST_MS = 12 * HOUR_MS
     internal const val NEW_EPISODE_BOOST_MS = 12 * HOUR_MS
     internal const val THIS_DEVICE_BOOST_MS = 6 * HOUR_MS
     internal const val NEAR_FINISHED_PENALTY_MS = 24 * HOUR_MS
-    internal const val BARELY_STARTED_PENALTY_MS = 72 * HOUR_MS
+    internal const val BARELY_STARTED_PENALTY_MS = 96 * HOUR_MS
 
     internal const val RESUME_MIN_FRACTION = 0.05
     internal const val RESUME_MAX_FRACTION = 0.90
